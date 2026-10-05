@@ -1,0 +1,14 @@
+# secrets
+.env
+
+# Go build artifacts
+/personal
+/runeharness
+*.exe
+*.test
+*.out
+*.db
+
+# temporary files
+/tmp_probe
+/cli_prototype

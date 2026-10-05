@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>s08 · Context Compact — 四层压缩管线</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+
+    .container { max-width: 1240px; margin: 0 auto; }
+
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .meta { color: #475569; font-size: 0.75rem; margin-left: 1.75rem; margin-top: 0.375rem; }
+
+    h2 {
+      font-size: 1rem; font-weight: 600; margin: 2.5rem 0 0.75rem;
+      display: flex; align-items: center; gap: 0.625rem;
+    }
+    h2 .no {
+      color: #020617; background: #22d3ee; border-radius: 4px;
+      font-size: 0.7rem; padding: 2px 7px; font-weight: 700;
+    }
+    h2 .hint { color: #64748b; font-size: 0.75rem; font-weight: 400; }
+    .lead { color: #94a3b8; font-size: 0.8125rem; margin-bottom: 1rem; max-width: 60em; line-height: 1.7; }
+    .lead code, .note code, li code { color: #e2e8f0; background: rgba(148,163,184,.12); padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
+
+    .panel {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem; border: 1px solid #1e293b;
+      padding: 1.5rem; overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 940px; display: block; }
+
+    /* ---------- message stack visuals ---------- */
+    .ba { display: flex; align-items: stretch; gap: 1.25rem; margin: 1rem 0 0.75rem; flex-wrap: wrap; }
+    .stack {
+      display: flex; flex-direction: column; gap: 5px;
+      min-width: 300px; flex: 1; max-width: 460px;
+    }
+    .stack-label { font-size: 0.6875rem; color: #64748b; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 2px; }
+    .m {
+      border-radius: 6px; border: 1px solid; padding: 6px 10px;
+      font-size: 0.75rem; display: flex; justify-content: space-between; gap: 0.75rem;
+      align-items: baseline; line-height: 1.5;
+    }
+    .m .role { font-weight: 700; font-size: 0.6875rem; letter-spacing: .05em; flex-shrink: 0; }
+    .m .body { color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .m .sz { color: #94a3b8; font-size: 0.6875rem; flex-shrink: 0; }
+    .u { border-color: #22d3ee; background: rgba(8,51,68,.4); }
+    .u .role { color: #22d3ee; }
+    .a { border-color: #34d399; background: rgba(6,78,59,.4); }
+    .a .role { color: #34d399; }
+    .t { border-color: #a78bfa; background: rgba(76,29,149,.4); }
+    .t .role { color: #a78bfa; }
+    .ph { border: 1px dashed #64748b; color: #94a3b8; font-style: italic; background: transparent; justify-content: center; }
+    .sum { border-color: #fbbf24; background: rgba(120,53,15,.3); }
+    .sum .role { color: #fbbf24; }
+    .rx { border-color: #fb7185; background: rgba(136,19,55,.4); }
+    .rx .role { color: #fb7185; }
+
+    .cutzone {
+      border: 1.5px dashed #fb7185; border-radius: 8px; padding: 6px;
+      display: flex; flex-direction: column; gap: 5px; position: relative;
+    }
+    .cutzone::before {
+      content: "✂ 裁掉"; position: absolute; top: -9px; left: 10px;
+      background: #020617; color: #fb7185; font-size: 0.625rem; padding: 0 6px; font-weight: 700;
+    }
+    .cutzone .m { opacity: 0.45; }
+    .keepzone {
+      border: 1.5px dashed #34d399; border-radius: 8px; padding: 6px;
+      display: flex; flex-direction: column; gap: 5px; position: relative;
+    }
+    .keepzone::before {
+      content: "保留"; position: absolute; top: -9px; left: 10px;
+      background: #020617; color: #34d399; font-size: 0.625rem; padding: 0 6px; font-weight: 700;
+    }
+    .ba-arrow { align-self: center; color: #64748b; font-size: 1.5rem; font-weight: 700; }
+    .ba-steps { align-self: center; color: #94a3b8; font-size: 0.6875rem; line-height: 2; text-align: left; }
+
+    .note { color: #94a3b8; font-size: 0.75rem; line-height: 1.7; border-top: 1px solid #1e293b; padding-top: 0.75rem; margin-top: 0.5rem; }
+    .note strong { color: #e2e8f0; }
+
+    .layer { background: rgba(15,23,42,.5); border: 1px solid #1e293b; border-radius: 1rem; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+    .layer-top { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+    .tag {
+      border-radius: 5px; font-size: 0.7rem; font-weight: 700; padding: 2px 8px;
+      color: #020617; flex-shrink: 0;
+    }
+    .tag.l1 { background: #22d3ee; } .tag.l2 { background: #34d399; }
+    .tag.l3 { background: #fbbf24; } .tag.l4 { background: #a78bfa; }
+    .tag.rx { background: #fb7185; }
+    .layer h3 { font-size: 0.9375rem; font-weight: 600; }
+    .cond { color: #64748b; font-size: 0.75rem; }
+    .cond b { color: #94a3b8; font-weight: 600; }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
+    .card { background: rgba(15,23,42,.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; } .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; } .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; line-height: 1.8; }
+    .card li { margin-bottom: 0.375rem; }
+    .card .k { color: #e2e8f0; }
+
+    table.cmp { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+    table.cmp th, table.cmp td { border: 1px solid #1e293b; padding: 7px 10px; text-align: left; color: #94a3b8; }
+    table.cmp th { color: #e2e8f0; background: rgba(30,41,59,.5); font-weight: 600; }
+    table.cmp td:first-child { color: #e2e8f0; white-space: nowrap; }
+
+    .legend { display: flex; gap: 1.25rem; flex-wrap: wrap; margin-top: 0.75rem; font-size: 0.6875rem; color: #94a3b8; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .chip { width: 14px; height: 9px; border-radius: 2px; display: inline-block; }
+
+    .footer { text-align: center; margin-top: 2rem; color: #475569; font-size: 0.75rem; line-height: 1.8; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ================= Header ================= -->
+  <div class="header">
+    <div class="header-row">
+      <div class="pulse-dot"></div>
+      <h1>Context Compact — 上下文压缩</h1>
+    </div>
+    <p class="subtitle">「上下文总会满，要有办法腾地方」— 四层压缩策略，便宜的先跑，贵的后跑</p>
+    <p class="meta">Learn Claude Code · s08 记忆管理 · 414 LOC · 9 个工具 · Harness 层：压缩 — 干净的记忆，无限的会话</p>
+  </div>
+
+  <!-- ================= 0. 问题 ================= -->
+  <h2><span class="no">0</span>问题：上下文一定会满 <span class="hint">— Agent 跑着跑着就不动了</span></h2>
+  <p class="lead">
+    每条命令输出、每个文件内容都堆在 <code>messages</code> 列表里：读 1 个 1000 行文件 ≈ 4000 token，
+    读 30 个文件、跑 20 条命令后，窗口被占满，API 直接拒绝：<code>prompt_too_long</code>。
+    不压缩，Agent 没法在大项目里干活。
+  </p>
+  <div class="panel">
+    <svg viewBox="0 0 1000 260">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <marker id="ah" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+        </marker>
+        <marker id="ahr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/>
+        </marker>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#grid)"/>
+
+      <!-- left: message growth -->
+      <text x="40" y="34" fill="white" font-size="12" font-weight="700">messages 列表无限膨胀</text>
+      <rect x="40" y="50" width="150" height="26" rx="5" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.2"/>
+      <text x="52" y="67" fill="#22d3ee" font-size="9" font-weight="600">user</text><text x="160" y="67" fill="#94a3b8" font-size="8" text-anchor="end">「建个 hello.py」</text>
+      <rect x="40" y="80" width="150" height="26" rx="5" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.2"/>
+      <text x="52" y="97" fill="#34d399" font-size="9" font-weight="600">assistant</text><text x="160" y="97" fill="#94a3b8" font-size="8" text-anchor="end">tool_use: read</text>
+      <rect x="40" y="110" width="150" height="40" rx="5" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.2"/>
+      <text x="52" y="126" fill="#a78bfa" font-size="9" font-weight="600">tool_result</text><text x="160" y="126" fill="#94a3b8" font-size="8" text-anchor="end">README.md</text>
+      <text x="52" y="142" fill="#94a3b8" font-size="8">~4,000 token</text>
+      <rect x="40" y="154" width="150" height="26" rx="5" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <text x="52" y="171" fill="#a78bfa" font-size="9" font-weight="600">+ 29 个文件</text><text x="160" y="171" fill="#94a3b8" font-size="8" text-anchor="end">~120K</text>
+      <rect x="40" y="184" width="150" height="26" rx="5" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <text x="52" y="201" fill="#a78bfa" font-size="9" font-weight="600">+ 20 条命令输出</text><text x="160" y="201" fill="#94a3b8" font-size="8" text-anchor="end">~60K</text>
+      <text x="115" y="232" fill="#64748b" font-size="9" text-anchor="middle">每轮调用前全部重新发送</text>
+
+      <line x1="205" y1="140" x2="285" y2="140" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- right: fixed window -->
+      <text x="330" y="34" fill="white" font-size="12" font-weight="700">上下文窗口是有限的</text>
+      <rect x="330" y="50" width="120" height="170" rx="8" fill="rgba(30,41,59,.5)" stroke="#94a3b8" stroke-width="1.5"/>
+      <rect x="330" y="50" width="120" height="140" rx="8" fill="rgba(76,29,149,.35)" stroke="none"/>
+      <text x="390" y="118" fill="#a78bfa" font-size="10" font-weight="700" text-anchor="middle">window</text>
+      <text x="390" y="133" fill="#94a3b8" font-size="8" text-anchor="middle">已占 82%</text>
+      <rect x="330" y="50" width="120" height="170" rx="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <rect x="336" y="196" width="108" height="18" rx="4" fill="rgba(136,19,55,.5)" stroke="#fb7185" stroke-width="1"/>
+      <text x="390" y="208" fill="#fb7185" font-size="8" font-weight="700" text-anchor="middle">剩余空间告急</text>
+      <text x="390" y="240" fill="#64748b" font-size="9" text-anchor="middle">固定容量 · 不会变大</text>
+
+      <line x1="470" y1="140" x2="545" y2="140" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ahr)"/>
+
+      <!-- far right: API rejection -->
+      <rect x="555" y="92" width="190" height="96" rx="8" fill="rgba(136,19,55,.4)" stroke="#fb7185" stroke-width="1.5"/>
+      <text x="650" y="120" fill="white" font-size="12" font-weight="700" text-anchor="middle">API 拒绝服务</text>
+      <text x="650" y="140" fill="#fb7185" font-size="10" font-weight="600" text-anchor="middle">413 prompt_too_long</text>
+      <text x="650" y="160" fill="#94a3b8" font-size="9" text-anchor="middle">能力还在 · 但「记忆」塞不下了</text>
+      <text x="650" y="176" fill="#94a3b8" font-size="9" text-anchor="middle">Agent 就此卡死</text>
+
+      <rect x="790" y="92" width="180" height="96" rx="8" fill="rgba(6,78,59,.25)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="880" y="118" fill="white" font-size="11" font-weight="700" text-anchor="middle">出路：压缩</text>
+      <text x="880" y="138" fill="#94a3b8" font-size="9" text-anchor="middle">主动腾地方，而不是等爆炸</text>
+      <text x="880" y="154" fill="#34d399" font-size="9" font-weight="600" text-anchor="middle">便宜的先跑 · 贵的后跑</text>
+      <text x="880" y="172" fill="#94a3b8" font-size="9" text-anchor="middle">4 层策略 ↓</text>
+    </svg>
+  </div>
+
+  <!-- ================= 1. 总览 ================= -->
+  <h2><span class="no">1</span>总览：agent_loop 里的压缩管线 <span class="hint">— 每轮 LLM 调用前先跑三层预处理器</span></h2>
+  <p class="lead">
+    保留 s07 的 hook / 技能加载 / 子 Agent 骨架。核心变动：每轮 LLM 调用前插入三层<b>纯文本预处理器（0 次 API）</b>；
+    token 仍超阈值才触发 <b>LLM 摘要（1 次 API）</b>；API 报错时走<b>应急裁剪</b>。
+  </p>
+  <div class="panel">
+    <svg viewBox="0 0 1000 668">
+      <defs>
+        <pattern id="grid2" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <marker id="ah2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+        </marker>
+        <marker id="ah2r" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/>
+        </marker>
+        <marker id="ah2v" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa"/>
+        </marker>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#grid2)"/>
+
+      <!-- loop-back bus (drawn early, behind boxes) -->
+      <path d="M 390 606 L 80 606 L 80 68 L 386 68" fill="none" stroke="#fb7185" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ah2r)"/>
+      <line x1="390" y1="530" x2="80" y2="530" stroke="#64748b" stroke-width="1.2"/>
+      <circle cx="80" cy="530" r="3" fill="#64748b"/>
+      <text x="94" y="96" fill="#64748b" font-size="9">下一轮循环（messages 继续增长）</text>
+      <text x="94" y="596" fill="#fb7185" font-size="9">compact：结束本轮，用压缩后上下文重开</text>
+
+      <!-- Node A -->
+      <rect x="390" y="46" width="220" height="44" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="500" y="64" fill="white" font-size="11" font-weight="700" text-anchor="middle">每轮循环开始</text>
+      <text x="500" y="79" fill="#94a3b8" font-size="9" text-anchor="middle">messages: list[dict]</text>
+
+      <line x1="500" y1="90" x2="500" y2="108" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah2)"/>
+
+      <!-- preprocessor boundary -->
+      <rect x="110" y="110" width="780" height="118" rx="12" fill="rgba(148,163,184,.04)" stroke="#475569" stroke-width="1" stroke-dasharray="6,4"/>
+      <text x="124" y="130" fill="#94a3b8" font-size="9" font-weight="700">预处理器管线 · 纯文本/结构操作 · 合计 0 次 API 调用</text>
+      <text x="876" y="130" fill="#64748b" font-size="8" text-anchor="end">编号 L1~L4 是逻辑分层 ≠ 执行顺序</text>
+
+      <!-- L3 -->
+      <rect x="140" y="142" width="200" height="58" rx="6" fill="#0f172a"/>
+      <rect x="140" y="142" width="200" height="58" rx="6" fill="rgba(120,53,15,.3)" stroke="#fbbf24" stroke-width="1.5"/>
+      <circle cx="156" cy="158" r="8" fill="#fbbf24"/><text x="156" y="161" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">1</text>
+      <text x="170" y="162" fill="white" font-size="10" font-weight="700">L3 tool_result_budget</text>
+      <text x="240" y="178" fill="#fbbf24" font-size="9" text-anchor="middle">大结果落盘 · ≤200KB</text>
+      <text x="240" y="192" fill="#94a3b8" font-size="8" text-anchor="middle">单条 user 消息总量超阈值才触发</text>
+
+      <line x1="340" y1="171" x2="368" y2="171" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah2)"/>
+
+      <!-- L1 -->
+      <rect x="370" y="142" width="200" height="58" rx="6" fill="#0f172a"/>
+      <rect x="370" y="142" width="200" height="58" rx="6" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1.5"/>
+      <circle cx="386" cy="158" r="8" fill="#22d3ee"/><text x="386" y="161" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">2</text>
+      <text x="400" y="162" fill="white" font-size="10" font-weight="700">L1 snip_compact</text>
+      <text x="470" y="178" fill="#22d3ee" font-size="9" text-anchor="middle">消息 &gt;50 条 → 裁中间</text>
+      <text x="470" y="192" fill="#94a3b8" font-size="8" text-anchor="middle">保留头 3 + 尾 47</text>
+
+      <line x1="570" y1="171" x2="598" y2="171" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah2)"/>
+
+      <!-- L2 -->
+      <rect x="600" y="142" width="200" height="58" rx="6" fill="#0f172a"/>
+      <rect x="600" y="142" width="200" height="58" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+      <circle cx="616" cy="158" r="8" fill="#34d399"/><text x="616" y="161" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">3</text>
+      <text x="630" y="162" fill="white" font-size="10" font-weight="700">L2 micro_compact</text>
+      <text x="700" y="178" fill="#34d399" font-size="9" text-anchor="middle">旧 tool_result → 占位符</text>
+      <text x="700" y="192" fill="#94a3b8" font-size="8" text-anchor="middle">只保留最近 3 条完整内容</text>
+
+      <line x1="500" y1="228" x2="500" y2="253" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah2)"/>
+
+      <!-- diamond 1 -->
+      <polygon points="500,255 575,288 500,321 425,288" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="500" y="284" fill="white" font-size="10" font-weight="600" text-anchor="middle">token &gt;</text>
+      <text x="500" y="297" fill="white" font-size="10" font-weight="600" text-anchor="middle">THRESHOLD?</text>
+      <text x="434" y="272" fill="#64748b" font-size="8" text-anchor="middle">估算</text>
+
+      <!-- L4 -->
+      <rect x="640" y="257" width="240" height="62" rx="6" fill="#0f172a"/>
+      <rect x="640" y="257" width="240" height="62" rx="6" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="760" y="276" fill="white" font-size="10" font-weight="700" text-anchor="middle">L4 compact_history</text>
+      <text x="760" y="291" fill="#a78bfa" font-size="9" text-anchor="middle">LLM 全量摘要 · 1 次 API</text>
+      <text x="760" y="306" fill="#94a3b8" font-size="8" text-anchor="middle">先写 .transcripts/*.jsonl · 熔断 3 次</text>
+      <line x1="575" y1="288" x2="638" y2="288" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ah2v)"/>
+      <text x="606" y="282" fill="#a78bfa" font-size="9" text-anchor="middle">是</text>
+      <path d="M 760 319 L 760 366 L 612 366" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ah2v)"/>
+
+      <line x1="500" y1="321" x2="500" y2="348" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <text x="512" y="340" fill="#64748b" font-size="9">否</text>
+
+      <!-- API call -->
+      <rect x="390" y="350" width="220" height="50" rx="6" fill="#0f172a"/>
+      <rect x="390" y="350" width="220" height="50" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="500" y="370" fill="white" font-size="11" font-weight="700" text-anchor="middle">LLM API 调用</text>
+      <text x="500" y="386" fill="#94a3b8" font-size="9" text-anchor="middle">client.messages.create(...)</text>
+
+      <line x1="500" y1="400" x2="500" y2="415" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah2)"/>
+
+      <!-- diamond 2 -->
+      <polygon points="500,417 562,445 500,473 438,445" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="500" y="441" fill="white" font-size="9" font-weight="600" text-anchor="middle">413</text>
+      <text x="500" y="453" fill="white" font-size="9" font-weight="600" text-anchor="middle">too_long?</text>
+
+      <!-- reactive -->
+      <rect x="640" y="414" width="240" height="62" rx="6" fill="#0f172a"/>
+      <rect x="640" y="414" width="240" height="62" rx="6" fill="rgba(136,19,55,.4)" stroke="#fb7185" stroke-width="1.5"/>
+      <text x="760" y="433" fill="white" font-size="10" font-weight="700" text-anchor="middle">reactive_compact（应急）</text>
+      <text x="760" y="448" fill="#fb7185" font-size="9" text-anchor="middle">摘要 + 尾部 5 条 · 更激进</text>
+      <text x="760" y="463" fill="#94a3b8" font-size="8" text-anchor="middle">重试上限 1 次 · 再失败 raise</text>
+      <line x1="562" y1="445" x2="638" y2="445" stroke="#fb7185" stroke-width="1.5" marker-end="url(#ah2r)"/>
+      <text x="600" y="439" fill="#fb7185" font-size="9" text-anchor="middle">是</text>
+      <path d="M 880 445 L 940 445 L 940 385 L 612 385" fill="none" stroke="#fb7185" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ah2r)"/>
+      <text x="928" y="415" fill="#fb7185" font-size="8" text-anchor="end">retry ≤1</text>
+
+      <line x1="500" y1="473" x2="500" y2="503" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah2)"/>
+      <text x="512" y="496" fill="#64748b" font-size="9">否</text>
+
+      <!-- tools -->
+      <rect x="390" y="505" width="220" height="50" rx="6" fill="#0f172a"/>
+      <rect x="390" y="505" width="220" height="50" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="500" y="525" fill="white" font-size="11" font-weight="700" text-anchor="middle">工具执行</text>
+      <text x="500" y="541" fill="#94a3b8" font-size="9" text-anchor="middle">bash · read · write · edit · …</text>
+
+      <!-- compact tool node -->
+      <rect x="390" y="584" width="220" height="44" rx="6" fill="transparent" stroke="#fb7185" stroke-width="1.2" stroke-dasharray="4,4"/>
+      <text x="500" y="601" fill="#fb7185" font-size="9" font-weight="700" text-anchor="middle">若模型调用 compact 工具</text>
+      <text x="500" y="615" fill="#94a3b8" font-size="8" text-anchor="middle">→ compact_history → break 本轮</text>
+      <line x1="500" y1="555" x2="500" y2="582" stroke="#fb7185" stroke-width="1.2" stroke-dasharray="4,4" marker-end="url(#ah2r)"/>
+    </svg>
+    <div class="legend">
+      <span><i class="chip" style="background:rgba(8,51,68,.6);border:1px solid #22d3ee"></i>L1 snip · 裁消息</span>
+      <span><i class="chip" style="background:rgba(6,78,59,.6);border:1px solid #34d399"></i>L2 micro / 正常流程</span>
+      <span><i class="chip" style="background:rgba(120,53,15,.6);border:1px solid #fbbf24"></i>L3 budget · 落盘</span>
+      <span><i class="chip" style="background:rgba(76,29,149,.6);border:1px solid #a78bfa"></i>L4 LLM 摘要</span>
+      <span><i class="chip" style="background:rgba(136,19,55,.6);border:1px solid #fb7185"></i>应急 / 主动 compact</span>
+    </div>
+  </div>
+
+  <!-- ================= 2. 各层详解 ================= -->
+  <h2><span class="no">2</span>各层详解：消息列表前后对比 <span class="hint">— 颜色：user 青 · assistant 绿 · tool_result 紫</span></h2>
+
+  <!-- L1 -->
+  <div class="layer">
+    <div class="layer-top">
+      <span class="tag l1">L1</span>
+      <h3>snip_compact — 裁掉无关的旧对话</h3>
+      <span class="cond">触发：<b>len(messages) &gt; 50</b> · 成本 <b>0 API</b> · 保留头 <b>3</b> 条 + 尾 <b>47</b> 条</span>
+    </div>
+    <div class="ba">
+      <div class="stack">
+        <span class="stack-label">Before · 160 条</span>
+        <div class="keepzone">
+          <div class="m u"><span class="role">user</span><span class="body">「帮我创建 hello.py」</span><span class="sz">初始上下文</span></div>
+          <div class="m a"><span class="role">assistant</span><span class="body">我来创建…</span><span class="sz"></span></div>
+          <div class="m t"><span class="role">tool_result</span><span class="body">File created</span><span class="sz"></span></div>
+        </div>
+        <div class="cutzone">
+          <div class="m u"><span class="role">user</span><span class="body">第 4 ~ 113 条：旧需求、已完成的探索</span><span class="sz"></span></div>
+          <div class="m a"><span class="role">assistant</span><span class="body">…与当前工作几乎无关…</span><span class="sz"></span></div>
+          <div class="m t"><span class="role">tool_result</span><span class="body">…但全占着位置…</span><span class="sz"></span></div>
+          <div class="m a"><span class="role">assistant</span><span class="body">110 条</span><span class="sz"></span></div>
+        </div>
+        <div class="keepzone">
+          <div class="m u"><span class="role">user</span><span class="body">最近的工作指令</span><span class="sz">尾部 47 条</span></div>
+          <div class="m a"><span class="role">assistant</span><span class="body">当前任务进行中…</span><span class="sz"></span></div>
+        </div>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="stack">
+        <span class="stack-label">After · 51 条</span>
+        <div class="m u"><span class="role">user</span><span class="body">「帮我创建 hello.py」</span><span class="sz">头 3 条</span></div>
+        <div class="m a"><span class="role">assistant</span><span class="body">我来创建…</span><span class="sz"></span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">File created</span><span class="sz"></span></div>
+        <div class="m ph"><span>[snipped 110 messages from conversation middle]</span></div>
+        <div class="m u"><span class="role">user</span><span class="body">最近的工作指令</span><span class="sz">尾 47 条</span></div>
+        <div class="m a"><span class="role">assistant</span><span class="body">当前任务进行中…</span><span class="sz"></span></div>
+      </div>
+    </div>
+    <p class="note">
+      <strong>唯一边界条件</strong>：切口不能把 <code>assistant(tool_use)</code> 和紧随的 <code>user(tool_result)</code> 拆开
+      —— 否则 API 会报孤儿 tool_result 错误。实现上 head_end / tail_start 会向前微调跳过这种配对。
+      注意裁掉的是<b>整条消息</b>；幸存消息里的旧 tool_result 内容还在 → 交给 L2。
+    </p>
+  </div>
+
+  <!-- L2 -->
+  <div class="layer">
+    <div class="layer-top">
+      <span class="tag l2">L2</span>
+      <h3>micro_compact — 旧工具结果占位</h3>
+      <span class="cond">触发：<b>tool_result &gt; 3 条</b> · 成本 <b>0 API</b> · 只替换内容 <b>&gt;120 字符</b> 的块</span>
+    </div>
+    <div class="ba">
+      <div class="stack">
+        <span class="stack-label">Before · 连续读了 5 个文件</span>
+        <div class="m t"><span class="role">tool_result</span><span class="body">README.md 完整内容…</span><span class="sz">30KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">config.json 完整内容…</span><span class="sz">12KB</span></div>
+        <div class="keepzone">
+          <div class="m t"><span class="role">tool_result</span><span class="body">main.go 完整内容…</span><span class="sz">8KB</span></div>
+          <div class="m t"><span class="role">tool_result</span><span class="body">util.go 完整内容…</span><span class="sz">2KB</span></div>
+          <div class="m t"><span class="role">tool_result</span><span class="body">agent.go 完整内容…</span><span class="sz">1KB</span></div>
+        </div>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="stack">
+        <span class="stack-label">After · 只有最近 3 条保留全文</span>
+        <div class="m ph"><span>[Earlier tool result compacted. Re-run if needed.]</span></div>
+        <div class="m ph"><span>[Earlier tool result compacted. Re-run if needed.]</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">main.go 完整内容…</span><span class="sz">8KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">util.go 完整内容…</span><span class="sz">2KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">agent.go 完整内容…</span><span class="sz">1KB</span></div>
+      </div>
+    </div>
+    <p class="note">
+      占位符告诉模型「这里曾有内容」——真需要时<b>重新跑一次工具</b>就能拿回来，代价是可能多一次工具调用。
+      但单条新结果仍可能有 500KB（一次 cat 大文件）→ 交给 L3。
+    </p>
+  </div>
+
+  <!-- L3 -->
+  <div class="layer">
+    <div class="layer-top">
+      <span class="tag l3">L3</span>
+      <h3>tool_result_budget — 大结果落盘</h3>
+      <span class="cond">触发：<b>最后一条 user 消息内 tool_result 合计 &gt; 200KB</b> · 成本 <b>0 API</b></span>
+    </div>
+    <div class="ba">
+      <div class="stack">
+        <span class="stack-label">Before · 一次读 5 个大文件，合计 500KB</span>
+        <div class="m t"><span class="role">tool_result</span><span class="body">big_log.txt</span><span class="sz">180KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">dump.sql</span><span class="sz">120KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">data.csv</span><span class="sz">90KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">trace.out</span><span class="sz">60KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">notes.md</span><span class="sz">50KB</span></div>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="stack">
+        <span class="stack-label">After · 按大小降序落盘，直到 ≤200KB</span>
+        <div class="m sum"><span class="role">persisted</span><span class="body">&lt;persisted-output&gt; + 前 2000 字符预览</span><span class="sz">180KB→盘</span></div>
+        <div class="m sum"><span class="role">persisted</span><span class="body">&lt;persisted-output&gt; + 前 2000 字符预览</span><span class="sz">120KB→盘</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">data.csv</span><span class="sz">90KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">trace.out</span><span class="sz">60KB</span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">notes.md</span><span class="sz">50KB</span></div>
+      </div>
+    </div>
+    <p class="note">
+      完整内容写入 <code>.task_outputs/tool-results/</code>，上下文里只留 <code>&lt;persisted-output&gt;</code> 标记 + 预览。
+      模型看到标记就知道完整内容在磁盘上，需要可以重新读。<strong>前三层都无法「理解」对话内容</strong>，
+      上下文可能仍超阈值 → 交给 L4。
+    </p>
+  </div>
+
+  <!-- L4 -->
+  <div class="layer">
+    <div class="layer-top">
+      <span class="tag l4">L4</span>
+      <h3>compact_history — LLM 全量摘要</h3>
+      <span class="cond">触发：<b>预处理后 token 仍 &gt; THRESHOLD</b> · 成本 <b>1 API</b> · 熔断：连续失败 3 次停</span>
+    </div>
+    <div class="ba">
+      <div class="stack">
+        <span class="stack-label">Before · 超大项目连续工作 30min+</span>
+        <div class="m u"><span class="role">user</span><span class="body">全部对话历史…</span><span class="sz"></span></div>
+        <div class="m a"><span class="role">assistant</span><span class="body">数十轮工具调用…</span><span class="sz"></span></div>
+        <div class="m t"><span class="role">tool_result</span><span class="body">仍然超过阈值</span><span class="sz">overflow</span></div>
+      </div>
+      <div class="ba-steps">
+        ① 完整对话写盘 → <b>.transcripts/*.jsonl</b><br>
+        ② LLM 生成摘要（保留目标/发现/<br>&nbsp;&nbsp;&nbsp;&nbsp;已改文件/剩余工作/用户约束）<br>
+        ③ 整条列表替换为一条消息 →
+      </div>
+      <div class="stack">
+        <span class="stack-label">After · 只剩一条</span>
+        <div class="m sum"><span class="role">user</span><span class="body">[Compacted] 摘要：当前目标 · 重要发现 · 已改文件 · 剩余工作 · 约束</span><span class="sz"></span></div>
+        <div class="m ph"><span>细节不在活跃上下文里 · transcript 是可恢复记录</span></div>
+      </div>
+    </div>
+    <p class="note">
+      教学版只保留摘要；<strong>真实 Claude Code</strong> 会在 compact 后重新附加部分最近文件、计划、agent/skill/tool
+      等上下文（post-compact restore：最多 5 个文件 × 5K token，总预算 50K token）。
+      模型也可主动调用 <code>compact</code> 工具（第 9 个工具）触发本层，随后结束本轮、用压缩后上下文重开。
+    </p>
+  </div>
+
+  <!-- reactive -->
+  <div class="layer">
+    <div class="layer-top">
+      <span class="tag rx">应急</span>
+      <h3>reactive_compact — API 报错后的兜底裁剪</h3>
+      <span class="cond">触发：<b>API 仍返回 413</b>（增长快于压缩）· 重试上限 <b>1 次</b>，再失败抛异常</span>
+    </div>
+    <div class="ba">
+      <div class="stack">
+        <span class="stack-label">Before · compact 后仍然 413</span>
+        <div class="m rx"><span class="role">error</span><span class="body">PromptTooLongError — 比 L4 更激进地砍</span><span class="sz"></span></div>
+      </div>
+      <div class="ba-arrow">→</div>
+      <div class="stack">
+        <span class="stack-label">After · 摘要 + 尾部最近 5 条</span>
+        <div class="m sum"><span class="role">user</span><span class="body">[Reactive compact] 摘要</span><span class="sz"></span></div>
+        <div class="keepzone">
+          <div class="m a"><span class="role">assistant</span><span class="body">尾部 5 条原样保留</span><span class="sz"></span></div>
+          <div class="m t"><span class="role">tool_result</span><span class="body">同样遵守配对边界保护</span><span class="sz"></span></div>
+        </div>
+        <div class="m ph"><span>超限 → raise（完整错误恢复见 s11）</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 3. 关键设计 ================= -->
+  <h2><span class="no">3</span>关键设计决策 <span class="hint">— 为什么是这个顺序、这些数字</span></h2>
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot amber"></div><h3>顺序不能换</h3></div>
+      <ul>
+        <li>• 执行顺序：<span class="k">budget → snip → micro</span>（编号 L3→L1→L2）</li>
+        <li>• micro 会把旧大结果替换成一行占位符</li>
+        <li>• 所以 budget <span class="k">必须先跑</span>，把完整内容落盘</li>
+        <li>• CC 源码同理：<code>applyToolResultBudget</code> 在最前（query.ts:379）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot cyan"></div><h3>配对不可拆</h3></div>
+      <ul>
+        <li>• <code>assistant(tool_use)</code> ↔ <code>user(tool_result)</code> 必须成对</li>
+        <li>• snip 的 head_end / tail_start、reactive 的 tail_start</li>
+        <li>&nbsp;&nbsp;都会向前微调，避开孤儿 tool_result</li>
+        <li>• 否则 API 直接报协议错误</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot emerald"></div><h3>便宜的先跑，贵的后跑</h3></div>
+      <ul>
+        <li>• L1/L2/L3：纯文本/结构操作，<span class="k">0 次 API</span>，每轮都跑</li>
+        <li>• L4：1 次 LLM 调用，仅超阈值才触发</li>
+        <li>• reactive：只在 API 报错后兜底</li>
+        <li>• 摘要提示词首尾双重防呆：<span class="k">禁止调用工具</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot rose"></div><h3>防死循环</h3></div>
+      <ul>
+        <li>• auto compact 熔断器：连续失败 <span class="k">3</span> 次即停</li>
+        <li>• reactive 重试上限 <span class="k">1</span> 次，超限 raise</li>
+        <li>• compact 工具调用后 <span class="k">break 本轮</span>，干净重开</li>
+        <li>• 杜绝「压缩→仍失败→再压缩」无限烧 API</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ================= 4. CC 对照 ================= -->
+  <h2><span class="no">4</span>对照真实 Claude Code <span class="hint">— 教学版刻意简化，核心思想不变</span></h2>
+  <div class="panel">
+    <table class="cmp">
+      <tr><th>维度</th><th>教学版 s08</th><th>Claude Code 源码</th></tr>
+      <tr><td>执行顺序</td><td>budget → snip → micro → auto</td><td>budget → snip → micro → <b>collapse</b> → auto（query.ts:379-468）</td></tr>
+      <tr><td>snip_compact</td><td>保留头 3 + 尾 47</td><td>仅主线程启用（HISTORY_SNIP gate），另有 SnipTool 供模型主动调用</td></tr>
+      <tr><td>micro_compact</td><td>按位置：最近 3 条</td><td>time-based 按 60 分钟间隔触发；cached 按计数 + API cache_edits</td></tr>
+      <tr><td>结果预算</td><td>200KB 字符</td><td>200,000 字符（toolLimits.ts:49）</td></tr>
+      <tr><td>compact 阈值</td><td>字符数估算</td><td>精确 token：<code>contextWindow − maxOutputTokens − 13,000</code></td></tr>
+      <tr><td>read_file</td><td>统一占位，需要时重读</td><td>readFileState：未变文件返回 FILE_UNCHANGED_STUB + compact 后按预算恢复</td></tr>
+      <tr><td>摘要 prompt</td><td>5 类信息</td><td>9 个部分 + <code>&lt;analysis&gt;</code>/<code>&lt;summary&gt;</code> 双标签，analysis 格式化时剥离</td></tr>
+      <tr><td>未展开机制</td><td>—</td><td>contextCollapse（接管上下文管理）· sessionMemoryCompact（先走 s09 记忆摘要，0 LLM）</td></tr>
+    </table>
+    <div class="legend">
+      <span>常量：AUTOCOMPACT_BUFFER 13K · 失败熔断 3 · 摘要输出上限 20K · 后恢复 5 文件 × 5K / 总 50K · PTL 重试按消息组回退（compact.ts:243-290）</span>
+    </div>
+  </div>
+
+  <p class="footer">
+    来源：learn.shareai.run/zh/s08 · Learn Claude Code 系列<br>
+    本地验证：<code>python s08_context_compact/code.py</code> · 连续读多文件看 L2 · 一次读目录看 L3 · 对话 20+ 轮看 auto/reactive compact
+  </p>
+</div>
+</body>
+</html>

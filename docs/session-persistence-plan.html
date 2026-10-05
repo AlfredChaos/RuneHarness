@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>计划 · 多租户会话持久化</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+    }
+
+    .header {
+      margin-bottom: 1.5rem;
+    }
+
+    .header-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .pulse-dot {
+      width: 12px;
+      height: 12px;
+      background: #22d3ee;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .5
+      }
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.875rem;
+      margin-left: 1.75rem;
+    }
+
+    .meta {
+      color: #475569;
+      font-size: 0.75rem;
+      margin-left: 1.75rem;
+      margin-top: 0.375rem;
+    }
+
+    .decisions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 1rem 0 0 1.75rem;
+    }
+
+    .chip {
+      font-size: 0.6875rem;
+      padding: 3px 10px;
+      border-radius: 99px;
+      border: 1px solid #34d399;
+      color: #34d399;
+      background: rgba(6, 78, 59, .25);
+    }
+
+    h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 2.25rem 0 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+    }
+
+    h2 .no {
+      color: #020617;
+      background: #22d3ee;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      padding: 2px 7px;
+      font-weight: 700;
+    }
+
+    h2 .hint {
+      color: #64748b;
+      font-size: 0.75rem;
+      font-weight: 400;
+    }
+
+    .lead {
+      color: #94a3b8;
+      font-size: 0.8125rem;
+      margin-bottom: 1rem;
+      max-width: 62em;
+      line-height: 1.7;
+    }
+
+    code {
+      color: #e2e8f0;
+      background: rgba(148, 163, 184, .12);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    .panel {
+      background: rgba(15, 23, 42, .5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+
+    svg {
+      width: 100%;
+      min-width: 940px;
+      display: block;
+    }
+
+    .layer {
+      background: rgba(15, 23, 42, .5);
+      border: 1px solid #1e293b;
+      border-radius: 1rem;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .layer-top {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      border-radius: 5px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      color: #020617;
+      flex-shrink: 0;
+    }
+
+    .tag.m1 {
+      background: #22d3ee
+    }
+
+    .tag.m2 {
+      background: #34d399
+    }
+
+    .tag.m3 {
+      background: #fbbf24
+    }
+
+    .tag.m4 {
+      background: #a78bfa
+    }
+
+    .tag.m5 {
+      background: #fb923c
+    }
+
+    .tag.m6 {
+      background: #f472b6
+    }
+
+    .tag.m7 {
+      background: #94a3b8
+    }
+
+    .tag.m8 {
+      background: #f87171
+    }
+
+    .layer h3 {
+      font-size: 0.9375rem;
+      font-weight: 600;
+    }
+
+    .meta-line {
+      color: #64748b;
+      font-size: 0.75rem;
+    }
+
+    .meta-line b {
+      color: #94a3b8;
+      font-weight: 600;
+    }
+
+    .why {
+      color: #94a3b8;
+      font-size: 0.78rem;
+      line-height: 1.75;
+      margin-top: 0.625rem;
+    }
+
+    .why strong {
+      color: #e2e8f0;
+    }
+
+    .why em {
+      color: #fbbf24;
+      font-style: normal;
+    }
+
+    .code {
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-top: 0.75rem;
+      font-size: 0.72rem;
+      line-height: 1.65;
+      color: #cbd5e1;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .code .c {
+      color: #475569;
+    }
+
+    .code .k {
+      color: #22d3ee;
+    }
+
+    .code .s {
+      color: #a78bfa;
+    }
+
+    .checklist {
+      list-style: none;
+      margin-top: 0.625rem;
+      color: #94a3b8;
+      font-size: 0.75rem;
+      line-height: 1.9;
+    }
+
+    .checklist li::before {
+      content: "✓ ";
+      color: #34d399;
+      font-weight: 700;
+    }
+
+    .approve {
+      margin-top: 0.625rem;
+      padding-top: 0.625rem;
+      border-top: 1px dashed #1e293b;
+      color: #64748b;
+      font-size: 0.72rem;
+    }
+
+    .approve b {
+      color: #fbbf24;
+      font-weight: 600;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .card {
+      background: rgba(15, 23, 42, .5);
+      border-radius: .75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      margin-bottom: .75rem;
+    }
+
+    .card-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .card-dot.cyan {
+      background: #22d3ee
+    }
+
+    .card-dot.emerald {
+      background: #34d399
+    }
+
+    .card-dot.violet {
+      background: #a78bfa
+    }
+
+    .card-dot.amber {
+      background: #fbbf24
+    }
+
+    .card-dot.rose {
+      background: #fb7185
+    }
+
+    .card-dot.slate {
+      background: #94a3b8
+    }
+
+    .card h3 {
+      font-size: .875rem;
+      font-weight: 600;
+    }
+
+    .card ul {
+      list-style: none;
+      color: #94a3b8;
+      font-size: .75rem;
+      line-height: 1.85;
+    }
+
+    .card .k {
+      color: #e2e8f0;
+    }
+
+    table.cmp {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .75rem;
+    }
+
+    table.cmp th,
+    table.cmp td {
+      border: 1px solid #1e293b;
+      padding: 7px 10px;
+      text-align: left;
+      color: #94a3b8;
+      vertical-align: top;
+    }
+
+    table.cmp th {
+      color: #e2e8f0;
+      background: rgba(30, 41, 59, .5);
+      font-weight: 600;
+    }
+
+    table.cmp td:first-child {
+      color: #e2e8f0;
+      white-space: nowrap;
+    }
+
+    .schema {
+      display: grid;
+      grid-template-columns: 1fr 1.6fr;
+      gap: 1rem;
+    }
+
+    @media (max-width: 900px) {
+      .schema {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .schema .tbl {
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: .75rem 1rem;
+      font-size: .72rem;
+      line-height: 1.8;
+    }
+
+    .schema .tbl b {
+      color: #22d3ee;
+    }
+
+    .schema .pk {
+      color: #fbbf24
+    }
+
+    .schema .fk {
+      color: #a78bfa
+    }
+
+    .schema .nn {
+      color: #64748b
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 2rem;
+      color: #475569;
+      font-size: .75rem;
+      line-height: 1.8;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>多租户会话持久化 · 实施计划</h1>
+      </div>
+      <p class="subtitle">SQLite 单文件库 + ctx 注入的租户隔离 · 本地与云端同一调用面 · 逐模块审批</p>
+      <p class="meta">RuneHarness · 计划文档 · 每个模块独立可验，按依赖顺序推进</p>
+      <div class="decisions">
+        <span class="chip">已锁定：逐条 append</span>
+        <span class="chip">已锁定：写失败 fail the turn</span>
+        <span class="chip">已锁定：子代理入库</span>
+        <span class="chip">已锁定：resume 本期做</span>
+        <span class="chip">已锁定：租户经 ctx 函数侧注入</span>
+      </div>
+    </div>
+
+    <!-- ═══════════ 总览 ═══════════ -->
+    <h2><span class="no">0</span>总览：一条信任链，两条数据流</h2>
+    <p class="lead">
+      <strong style="color:#e2e8f0">信任链</strong>：main.go 启动时构造一次 <code>scope.Scope</code> 塞进 ctx，
+      之后 loop / 工具 / Store 全部<b>从 ctx 取</b>——Store 的 API 上干脆没有 tenant 参数，模型给的任何参数都碰不到隔离边界。<br>
+      <strong style="color:#e2e8f0">写流</strong>：loop 内 5 个 append 点 → <code>Rec.Append</code> → SQLite；
+      <strong style="color:#e2e8f0">读流</strong>：<code>--resume</code> → <code>LoadHistory</code>（校验 tenant）→ 重建 history。
+    </p>
+    <div class="panel">
+      <svg viewBox="0 0 1000 600">
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5" />
+          </pattern>
+          <marker id="ah" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0,10 3.5,0 7" fill="#64748b" />
+          </marker>
+          <marker id="aha" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0,10 3.5,0 7" fill="#fbbf24" />
+          </marker>
+          <marker id="ahv" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0,10 3.5,0 7" fill="#a78bfa" />
+          </marker>
+          <marker id="ahr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0,10 3.5,0 7" fill="#fb7185" />
+          </marker>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ctx trust-root band -->
+        <rect x="230" y="24" width="740" height="58" rx="10" fill="rgba(120,53,15,.18)" stroke="#fbbf24"
+          stroke-width="1.2" stroke-dasharray="6,4" />
+        <text x="250" y="47" fill="#fbbf24" font-size="10" font-weight="700">ctx · 信任根（每轮调用沿途携带）</text>
+        <text x="250" y="66" fill="#e2e8f0" font-size="10">scope.Scope { TenantID · SessionID · Workspace }</text>
+        <text x="950" y="47" fill="#94a3b8" font-size="8" text-anchor="end">函数侧注入：模型参数永远碰不到</text>
+        <text x="950" y="66" fill="#94a3b8" font-size="8" text-anchor="end">缺 scope → 显式报错，无默认值兜底</text>
+
+        <!-- assembly -->
+        <rect x="30" y="24" width="170" height="58" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5" />
+        <text x="115" y="47" fill="white" font-size="10" font-weight="700" text-anchor="middle">main.go 装配</text>
+        <text x="115" y="64" fill="#94a3b8" font-size="8" text-anchor="middle">tenant=local · ws=cwd · 建会话</text>
+        <line x1="200" y1="53" x2="228" y2="53" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#aha)" />
+
+        <!-- TUI -->
+        <rect x="30" y="130" width="170" height="100" rx="6" fill="#0f172a" />
+        <rect x="30" y="130" width="170" height="100" rx="6" fill="rgba(8,51,68,.4)" stroke="#22d3ee"
+          stroke-width="1.5" />
+        <text x="115" y="152" fill="white" font-size="10" font-weight="700" text-anchor="middle">TUI submit</text>
+        <text x="115" y="170" fill="#94a3b8" font-size="8" text-anchor="middle">ctx = WithScope(Background())</text>
+        <text x="115" y="184" fill="#94a3b8" font-size="8" text-anchor="middle">+ WithCancel（中断）</text>
+        <text x="115" y="203" fill="#22d3ee" font-size="8" text-anchor="middle">自落库 system / user 消息</text>
+        <text x="115" y="217" fill="#94a3b8" font-size="8" text-anchor="middle">（不经过 loop 的两条）</text>
+        <line x1="115" y1="82" x2="115" y2="128" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4,3"
+          marker-end="url(#aha)" />
+
+        <!-- Agent loop -->
+        <rect x="290" y="120" width="310" height="200" rx="8" fill="#0f172a" />
+        <rect x="290" y="120" width="310" height="200" rx="8" fill="rgba(6,78,59,.3)" stroke="#34d399"
+          stroke-width="1.5" />
+        <text x="445" y="143" fill="white" font-size="11" font-weight="700" text-anchor="middle">Agent.Run · 5 个 append
+          点</text>
+        <text x="305" y="168" fill="#34d399" font-size="9">① PreChat 注入（nag / 系统提示）</text>
+        <text x="305" y="186" fill="#34d399" font-size="9">② assistant 消息（含 tool_calls）</text>
+        <text x="305" y="204" fill="#34d399" font-size="9">③ Stop hook 强制续跑注入</text>
+        <text x="305" y="222" fill="#34d399" font-size="9">④ 中断占位结果（InterruptedError）</text>
+        <text x="305" y="240" fill="#34d399" font-size="9">⑤ 每条 tool_result</text>
+        <text x="445" y="266" fill="#94a3b8" font-size="8" text-anchor="middle">每处：history = append(...) +
+          Rec.Append(ctx, msg)</text>
+        <text x="445" y="282" fill="#fb7185" font-size="8" text-anchor="middle">Append 返回 error → fail the turn（partial
+          不丢）</text>
+        <text x="445" y="306" fill="#64748b" font-size="8" text-anchor="middle">悬挂式回调不够：assistant 消息没有 hook 点 → Rec
+          字段直挂</text>
+        <line x1="200" y1="180" x2="288" y2="200" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)" />
+        <text x="243" y="184" fill="#94a3b8" font-size="8" text-anchor="middle">Run(ctx,…)</text>
+
+        <!-- Store -->
+        <rect x="680" y="150" width="150" height="110" rx="6" fill="#0f172a" />
+        <rect x="680" y="150" width="150" height="110" rx="6" fill="rgba(76,29,149,.4)" stroke="#a78bfa"
+          stroke-width="1.5" />
+        <text x="755" y="172" fill="white" font-size="10" font-weight="700" text-anchor="middle">session.Store</text>
+        <text x="755" y="190" fill="#a78bfa" font-size="8" text-anchor="middle">Append / CreateSession</text>
+        <text x="755" y="203" fill="#a78bfa" font-size="8" text-anchor="middle">LoadHistory / ListSessions</text>
+        <text x="755" y="222" fill="#94a3b8" font-size="8" text-anchor="middle">tenant+session 全从 ctx 读</text>
+        <text x="755" y="235" fill="#fb7185" font-size="8" text-anchor="middle">跨租户读 → 直接拒绝</text>
+        <text x="755" y="248" fill="#94a3b8" font-size="8" text-anchor="middle">同一实例服务所有代理</text>
+        <line x1="600" y1="205" x2="678" y2="205" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#ahv)" />
+        <text x="639" y="199" fill="#a78bfa" font-size="8" text-anchor="middle">Append</text>
+        <line x1="330" y1="82" x2="330" y2="118" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4,3"
+          marker-end="url(#aha)" />
+        <line x1="755" y1="82" x2="755" y2="148" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4,3"
+          marker-end="url(#aha)" />
+
+        <!-- SQLite -->
+        <rect x="870" y="170" width="110" height="70" rx="6" fill="#0f172a" />
+        <rect x="870" y="170" width="110" height="70" rx="6" fill="rgba(30,41,59,.6)" stroke="#94a3b8"
+          stroke-width="1.5" />
+        <text x="925" y="192" fill="white" font-size="10" font-weight="700" text-anchor="middle">SQLite</text>
+        <text x="925" y="208" fill="#94a3b8" font-size="8" text-anchor="middle">sessions.db · WAL</text>
+        <text x="925" y="222" fill="#94a3b8" font-size="8" text-anchor="middle">单写者连接</text>
+        <line x1="830" y1="205" x2="868" y2="205" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)" />
+
+        <!-- tools -->
+        <rect x="680" y="300" width="190" height="80" rx="6" fill="#0f172a" />
+        <rect x="680" y="300" width="190" height="80" rx="6" fill="rgba(120,53,15,.3)" stroke="#fbbf24"
+          stroke-width="1.5" />
+        <text x="775" y="322" fill="white" font-size="10" font-weight="700" text-anchor="middle">tools · fs / shell /
+          …</text>
+        <text x="775" y="340" fill="#fbbf24" font-size="8" text-anchor="middle">路径 clamp 在 scope.Workspace 内</text>
+        <text x="775" y="353" fill="#94a3b8" font-size="8" text-anchor="middle">模型给的 path 不可逃逸租户根</text>
+        <text x="775" y="366" fill="#94a3b8" font-size="8" text-anchor="middle">本地 workspace=cwd（行为不变）</text>
+        <path d="M 445 320 L 445 340 L 770 340 L 770 380" fill="none" stroke="none" />
+        <line x1="520" y1="320" x2="700" y2="330" stroke="#64748b" stroke-width="1.2" marker-end="url(#ah)" />
+        <text x="610" y="318" fill="#94a3b8" font-size="8" text-anchor="middle">toolCtx（ctx 派生）</text>
+        <line x1="700" y1="82" x2="700" y2="300" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="4,3"
+          marker-end="url(#aha)" />
+
+        <!-- subagent -->
+        <rect x="290" y="390" width="310" height="130" rx="8" fill="#0f172a" />
+        <rect x="290" y="390" width="310" height="130" rx="8" fill="rgba(136,19,55,.25)" stroke="#fb7185"
+          stroke-width="1.5" />
+        <text x="445" y="412" fill="white" font-size="10" font-weight="700" text-anchor="middle">task.Run · 子代理
+          spawn</text>
+        <text x="305" y="434" fill="#e2e8f0" font-size="9">① CreateSession(parent = ctx.SessionID)</text>
+        <text x="305" y="452" fill="#e2e8f0" font-size="9">② runCtx = WithSession(ctx, subID)</text>
+        <text x="305" y="470" fill="#e2e8f0" font-size="9">③ sub.Rec = 同一个 Store</text>
+        <text x="445" y="494" fill="#94a3b8" font-size="8" text-anchor="middle">runCtx 本就派生自父 ctx → tenant 不变</text>
+        <text x="445" y="508" fill="#94a3b8" font-size="8" text-anchor="middle">嵌套 depth=2 自动成立（child() 拷贝字段）</text>
+        <line x1="445" y1="320" x2="445" y2="388" stroke="#64748b" stroke-width="1.5" marker-end="url(#ah)" />
+        <text x="455" y="360" fill="#94a3b8" font-size="8">task 工具调用</text>
+        <path d="M 600 455 L 755 455 L 755 262" fill="none" stroke="#fb7185" stroke-width="1.2" stroke-dasharray="5,4"
+          marker-end="url(#ahr)" />
+        <text x="682" y="449" fill="#fb7185" font-size="8" text-anchor="middle">子代理 append → 子 session</text>
+
+        <!-- resume -->
+        <path d="M 925 240 L 925 545 L 130 545 L 130 232" fill="none" stroke="#34d399" stroke-width="1.2"
+          stroke-dasharray="5,4" marker-end="url(#ah)" />
+        <text x="540" y="540" fill="#34d399" font-size="9" text-anchor="middle">--resume / --continue → LoadHistory（校验
+          ctx.TenantID == session.tenant_id）→ TUI 初始 history</text>
+      </svg>
+    </div>
+
+    <!-- ═══════════ 信任边界 ═══════════ -->
+    <h2><span class="no">1</span>信任边界：为什么必须是 ctx 注入 <span class="hint">— 而不是参数或全局变量</span></h2>
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>问题：模型参数不可信</h3>
+        </div>
+        <ul>
+          <li>• 工具入参是<b>模型生成的 JSON</b>——它会幻觉出 <code>session_id=别人的</code>、<code>path=../../etc/passwd</code></li>
+          <li>• 如果 tenant/session 是参数，隔离靠模型自觉，等于没有隔离</li>
+          <li>• ctx 值由<b>调用方代码</b>写入，模型无法触碰——隔离是函数侧事实</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>现成的先例：historyCtxKey</h3>
+        </div>
+        <ul>
+          <li>• <code>agent.go</code> 已用同款机制把 history 快照塞进 toolCtx 供 task 工具读</li>
+          <li>• scope 是同一招的推广：<span class="k">WithValue + 私有 key + FromContext 读取</span></li>
+          <li>• runCtx 从父 ctx 派生 → 子代理自动继承，零额外布线</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>为什么不是全局变量</h3>
+        </div>
+        <ul>
+          <li>• 云端多租户并发时全局 tenant 是数据竞争的温床</li>
+          <li>• ctx 绑定每次调用的生命周期：中断/超时天然传播</li>
+          <li>• 缺 scope 显式报错——<b>没有「默认租户」兜底</b>，装配 bug 第一天就暴露</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>为什么 Store 不带 tenant 参数</h3>
+        </div>
+        <ul>
+          <li>• <code>CreateSession(ctx, meta)</code> / <code>Append(ctx, msg)</code>——签名里没有 tenant 可填错</li>
+          <li>• 同一个 Store 实例服务主代理与所有子代理，靠 ctx 区分写入目标</li>
+          <li>• <code>LoadHistory</code> 内部校验 <code>session.tenant_id == ctx.TenantID</code>，越权读返回错误</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ═══════════ Schema ═══════════ -->
+    <h2><span class="no">2</span>存储 Schema <span class="hint">— 两张表，raw transcript 语义</span></h2>
+    <p class="lead">
+      DB 记录的是<b>发生过的一切</b>（raw transcript），不是内存 working context 的镜像。这与将来的 context
+      compact 正交：压缩改写内存 history，落库的原文不动，摘要本身作为新消息再落库。
+    </p>
+    <div class="panel">
+      <div class="schema">
+        <div class="tbl">
+          <b>sessions</b><br>
+          <span class="pk">id</span> TEXT PRIMARY KEY <span class="nn">-- UUIDv7 时间有序，ORDER BY id ≈ 创建序</span><br>
+          <span class="nn">tenant_id TEXT NOT NULL · idx</span><br>
+          <span class="fk">parent_id TEXT → sessions.id</span> <span class="nn">-- 子代理挂父会话</span><br>
+          kind TEXT <span class="nn">-- main | subagent</span><br>
+          title TEXT <span class="nn">-- 首条 user 消息回填</span><br>
+          model TEXT · workspace TEXT<br>
+          created_at · updated_at <span class="nn">-- 每次 append 刷新</span><br>
+          depth INTEGER <span class="nn">-- 0 主代理</span>
+        </div>
+        <div class="tbl">
+          <b>messages</b><br>
+          <span class="pk">id</span> INTEGER PRIMARY KEY AUTOINCREMENT <span class="nn">-- bigint，id 即全局时序</span><br>
+          <span class="fk">session_id</span> TEXT NOT NULL → sessions.id <span class="nn">· INDEX(session_id,
+            id)</span><br>
+          role TEXT · content TEXT · thinking TEXT<br>
+          tool_calls TEXT <span class="nn">-- JSON 原文，含 id/name/arguments</span><br>
+          tool_call_id TEXT · is_error INTEGER<br>
+          created_at INTEGER<br>
+          <span class="nn">— 无需 seq 列：同会话内 ORDER BY id；多会话交错写入时 id 是全局序</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ 模块 ═══════════ -->
+    <h2><span class="no">3</span>模块拆解 <span class="hint">— 按依赖序排列，逐个审批实现</span></h2>
+
+    <!-- M1 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m1">M1</span>
+        <h3>internal/scope — 租户上下文基元</h3>
+        <span class="meta-line">新包 · <b>~70 LOC</b> · 依赖：无</span>
+      </div>
+      <p class="why">
+        <strong>为什么最先做</strong>：Store、tools、装配层都读它，是整张图的信任根，必须先冻结形状。
+        <strong>为什么带 Workspace</strong>：租户隔离不止会话数据——文件系统是另一半（M6 消费它）。
+        <strong>为什么 FromContext 返回 error 而非默认值</strong>：<em>默认租户</em>意味着装配漏了也能跑，数据就悄悄写错租户；显式失败让 bug 当天暴露。
+      </p>
+      <div class="code"><span class="k">type</span> Scope <span class="k">struct</span> {
+        TenantID <span class="k">string</span> <span class="c">// 租户（本地固定 "local"）</span>
+        SessionID <span class="k">string</span> <span class="c">// 当前会话；子代理 spawn 时被替换</span>
+        Workspace <span class="k">string</span> <span class="c">// 租户工作区根（本地 = cwd）</span>
+        }
+        <span class="k">func</span> WithScope(ctx, s Scope) ctx <span class="c">// 注入（main/TUI 用）</span>
+        <span class="k">func</span> FromContext(ctx) (Scope, error) <span class="c">// 读取；缺失 → error</span>
+        <span class="k">func</span> WithSession(ctx, id <span class="k">string</span>) ctx <span class="c">// 仅换
+          SessionID（subagent 用）</span>
+      </div>
+      <ul class="checklist">
+        <li>roundtrip：注入后可读回；WithSession 只换 SessionID、不动 TenantID/Workspace</li>
+        <li>缺失时 FromContext 返回 error；空 Scope（零值字段）也视为缺失</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：字段集合（TenantID/SessionID/Workspace 三个够不够）、缺失即错的策略。</p>
+    </div>
+
+    <!-- M2 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m2">M2</span>
+        <h3>internal/session — Store 接口与类型</h3>
+        <span class="meta-line">新包 · <b>~90 LOC</b> · 依赖：M1 + agent.Message</span>
+      </div>
+      <p class="why">
+        <strong>为什么接口先行</strong>：本地/云端同一调用面，未来换 Postgres 只换实现；
+        <em>接口签名里没有 tenant 参数</em>——隔离边界在参数层面就不存在。
+        <strong>为什么 Append 也从 ctx 读 SessionID</strong>：这样同一个 Store 实例能服务主代理和所有子代理（M7 零布线收益），
+        也天然满足「写入目标由函数侧 ctx 决定」的隔离要求。
+        <strong>为什么 LoadHistory 收 sessionID 参数但 tenant 走 ctx</strong>：resume 的会话 ID 是用户合法输入（--resume 参数），
+        tenant 是权限边界——前者可选，后者必须注入。
+      </p>
+      <div class="code"><span class="k">type</span> Store <span class="k">interface</span> {
+        CreateSession(ctx, meta Meta) (Session, error) <span class="c">// tenant 取 ctx</span>
+        Append(ctx, msg agent.Message) error <span class="c">// tenant+session 取 ctx；error→fail turn</span>
+        LoadHistory(ctx, sessionID <span class="k">string</span>) ([]agent.Message, error) <span class="c">// 越租户 →
+          error</span>
+        ListSessions(ctx, limit <span class="k">int</span>) ([]Session, error) <span class="c">// 隐式按 ctx 租户过滤</span>
+        Close() error
+        }
+        <span class="k">type</span> Meta <span class="k">struct</span> { ParentID, Title, Model, Workspace, Kind <span
+          class="k">string</span>; Depth <span class="k">int</span> }
+      </div>
+      <ul class="checklist">
+        <li>接口即文档：签名评审通过后再写实现</li>
+        <li>agent 包内另定小接口 <code>type Recorder interface{ Append(ctx, Message) error }</code>——Store 结构满足，agent 不反向依赖
+          session（无环）</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：接口面宽窄（五个方法够不够）、Kind/Depth 字段是否必要、Meta 字段。</p>
+    </div>
+
+    <!-- M3 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m3">M3</span>
+        <h3>internal/session/sqlite — SQLite 实现</h3>
+        <span class="meta-line">新包 · <b>~280 LOC + 测试</b> · 依赖：M1 M2 · 新依赖 modernc.org/sqlite</span>
+      </div>
+      <p class="why">
+        <strong>为什么 modernc.org/sqlite 而非 mattn/go-sqlite3</strong>：纯 Go 无 CGO——本地交叉编译、云端
+        distroless 镜像都不受 C 工具链拖累；性能对「每条消息一行」的写入量绰绰有余。
+        <strong>为什么 WAL + 单写者连接</strong>：WAL 让读不阻塞写；<code>SetMaxOpenConns(1)</code> +
+        <code>busy_timeout</code> 把 SQLite 的单写者限制变成显式串行，杜绝 <code>SQLITE_BUSY</code> 偶发。
+        <strong>为什么用 user_version 做迁移</strong>：两行 pragma + 一个 migration 函数，不引入迁移框架。
+        <strong>为什么 tool_calls 存 JSON 原文</strong>：schema 演化不动表结构；LoadHistory 反序列化回 <code>[]ToolCall</code>。
+        <strong>ID 方案（已确认）</strong>：sessions.id = <em>UUIDv7</em>——时间有序（ORDER BY id ≈ 创建序，
+        列表/取最新零额外索引成本）、随机位保证多实例生成不冲突；用 <code>google/uuid</code> 的
+        <code>NewV7()</code>（唯一新增依赖）。messages.id = <em>bigint AUTOINCREMENT</em>——id 本身就是全局时序，
+        <b>省掉 seq 列与 MAX(seq)+1 子查询</b>，Append 退化为纯 INSERT。
+      </p>
+      <div class="code"><span class="c">// 打开即迁移；失败即启动失败（不写半拉子记录）</span>
+        <span class="k">func</span> Open(path <span class="k">string</span>) (*Store, error)
+        <span class="c">// Append：一条 tx 内 INSERT messages + UPDATE sessions.updated_at（id 自增即时序）</span>
+        <span class="c">// LoadHistory：先查 session 校验 tenant，再按 id 升序回放全量消息</span>
+      </div>
+      <ul class="checklist">
+        <li>全部测试跑 <code>:memory:</code> 库，不落地文件</li>
+        <li>append 顺序与 id 单调一致；tool_calls / thinking / is_error 完整 roundtrip</li>
+        <li>UUIDv7 生成：两次 CreateSession 的 id 严格递增且可解析出时间</li>
+        <li>LoadHistory 越租户被拒；ListSessions 只见本租户</li>
+        <li>并发 append（模拟子代理+主代理同写）不丢序、不报 BUSY</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：driver 选型、google/uuid 依赖、schema 定稿。</p>
+    </div>
+
+    <!-- M4 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m4">M4</span>
+        <h3>Agent loop 逐条落库</h3>
+        <span class="meta-line">改 <b>agent.go</b> · <b>~+20 LOC</b> · 依赖：M2（agent.Recorder）</span>
+      </div>
+      <p class="why">
+        <strong>为什么是字段而不是 hook</strong>：现有 hook 点覆盖不全——assistant 消息没有对应 hook，
+        且 hook 语义是「只读观察/注入」，Append 是写入职责。与 <code>OnToolCall/OnInject/OnToolResult</code>
+        同为 Agent 字段，风格一致；用接口而非 func 是因为要返回 error。
+        <strong>为什么 Append 失败就 return err</strong>：已确认 fail-the-turn；partial history 里已落库的部分不丢，
+        正好与 InterruptedError 的部分进度语义对齐。
+        <strong>成本</strong>：5 个 append 点各一行 <code>a.record(ctx, msg)</code>，封装在一个私有方法里判空。
+      </p>
+      <div class="code"><span class="k">type</span> Recorder <span class="k">interface</span> { Append(ctx
+        context.Context, msg Message) error }
+        <span class="c">// Agent.Rec Recorder · 零值 nil = 不记录（测试/裸用零开销）</span>
+        <span class="k">func</span> (a *Agent) record(ctx, msg) error { <span class="c">/* Rec==nil → nil */</span> }
+      </div>
+      <ul class="checklist">
+        <li>fake LLM + spy Recorder：5 类 append 全到达、顺序与 history 一致</li>
+        <li>Recorder 返回 error → Run 返回 error，且之前 append 的已落库</li>
+        <li>Rec=nil 时行为与现状完全相同（回归）</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：字段形态（接口 vs func）、失败即返的边界。</p>
+    </div>
+
+    <!-- M5 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m5">M5</span>
+        <h3>装配：main.go + config + TUI 上下文</h3>
+        <span class="meta-line">改 3 文件 · <b>~+90 LOC</b> · 依赖：M1–M4 · <em>此处功能首次可用</em></span>
+      </div>
+      <p class="why">
+        <strong>职责</strong>：开库 → 建会话（tenant=<code>"local"</code>、workspace=cwd）→ 构造 Scope →
+        <code>a.Rec = store</code> → 把 scope+store 传进 TUI。
+        <strong>时序保证</strong>：<em>进程启动即建 session</em>（--resume/--continue 除外，见 M8）——
+        SessionID 在 tea.NewProgram 之前焊进 scope，全程不变，每条 append（含 TUI 自落的 system/user）
+        都进同一 session。
+        TUI 侧：Model 持 scope 与 store；<code>submit()</code> 把 <code>context.Background()</code> 换成
+        <code>scope.WithScope(bg, m.scope)</code> 再 WithCancel；system prompt 与每条用户消息由 TUI 自己 Append
+        （它们不经过 loop，但语义上「凡进 history 皆落库」要一致）。
+        <strong>为什么 DB 打开失败要启动即死</strong>：半拉子记录比没有记录更难排查；本地文件打不开属于装配错误。
+        <strong>配置</strong>：<code>RUNE_DB</code> 覆盖；默认 <code>~/.rune/sessions.db</code>
+        （各平台统一，目录随启动自动创建）。
+      </p>
+      <div class="code"><span class="c">// tui.New 签名扩展：传入初始 history + scope + store</span>
+        <span class="k">func</span> New(a *agent.Agent, info Info, initial []agent.Message, sc scope.Scope, st
+        session.Store) *Model
+      </div>
+      <ul class="checklist">
+        <li>跑一轮对话后 sqlite3 能查到完整消息序列（含 tool 段）</li>
+        <li>Ctrl+C 中断的轮次：已 append 的部分在库，占位结果也在</li>
+        <li>无 DB 路径权限/坏盘 → 启动报错而非静默降级</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：默认路径选址、tui.New 参数形态（散参 vs 结构体）。</p>
+    </div>
+
+    <!-- M6 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m6">M6</span>
+        <h3>工具侧 scope 化：文件与命令的租户边界</h3>
+        <span class="meta-line">改 <b>fs.go / shell.go</b> · <b>~+50 LOC</b> · 依赖：M1 · 可与 M5 并行</span>
+      </div>
+      <p class="why">
+        <strong>为什么这是隔离闭环的另一半</strong>：Store 侧保证会话数据不越租户；
+        文件侧要保证模型给的 <code>path</code> / <code>command</code> 碰不到别的租户目录——
+        本地 workspace=cwd 行为不变，云端每租户一根目录即物理隔离。
+        <strong>做法</strong>：<code>resolve(scope.Workspace, argPath)</code> = Join+Clean+
+        拒绝逃逸根目录的相对/绝对路径；RunCommand 加 <code>cmd.Dir = ws</code>。
+        <em>注意</em>：shell 命令可用 <code>cd</code>/<code>绝对路径</code> 逃逸 Dir 限制——本地单租户无碍，
+        云端真隔离需要容器/沙箱兜底（本计划不覆盖，列为已知边界）。
+      </p>
+      <ul class="checklist">
+        <li><code>../../etc/passwd</code>、绝对路径越根 → 明确错误回填给模型</li>
+        <li>scope 缺失 → 工具报错（不信任裸跑）</li>
+        <li>workspace=cwd 时全部现有行为回归通过</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：是否本期做；逃逸规则严格度（绝对路径一刀切拒 vs 允许根内绝对路径）。</p>
+    </div>
+
+    <!-- M7 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m7">M7</span>
+        <h3>子代理入库</h3>
+        <span class="meta-line">改 <b>subagent.go</b> · <b>~+40 LOC</b> · 依赖：M1–M4（可晚于 M5）</span>
+      </div>
+      <p class="why">
+        <strong>为什么几乎免费</strong>：runCtx 本就派生自父 ctx——tenant 自动继承；
+        task.Run 里三步：CreateSession(parent=ctx.SessionID) → WithSession 换绑 → <code>sub.Rec = 同一个 Store</code>。
+        <strong>嵌套自动成立</strong>：<code>child()</code> 按值拷贝 Tool 字段，depth-2 的子代理其父 ID 就是 depth-1 的会话。
+        <strong>Tool 加一个字段</strong>：<code>Store</code>（CreateSession 最小面），Wire 签名不动。
+        <strong>UI 联动</strong>：子会话 kind=subagent + depth 落库，事后可按 parent_id 还原调用树。
+      </p>
+      <p class="why">
+        <strong>初始历史的落库</strong>：子会话的首批消息不经过 loop 的 append 点（<code>initialHistory</code>
+        在 Run 之前组装），由 task.Run 在 spawn 后<b>显式 Append</b>。两型有别：
+        <code>general_purpose</code> 全落 system+task 两条；<code>normal</code> 型<b>不整份复制父会话快照</b>
+        （嵌套时 O(n²) 膨胀），只落「继承标记 + task 消息」，完整上下文经 parent_id 链回溯。
+      </p>
+      <ul class="checklist">
+        <li>spawn 后子会话 parent_id/kind/depth 正确</li>
+        <li>子代理消息落在子 session，不污染主会话</li>
+        <li>子会话首批消息完整：general_purpose = system+task；normal = 继承标记+task</li>
+        <li>嵌套 spawn 的 parent 链正确；Store=nil 时行为与现状一致</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：Tool 加 Store 字段的形态；normal 型「继承标记不落全量快照」的取舍；子会话 title 取任务描述前 N 字符。</p>
+    </div>
+
+    <!-- M8 -->
+    <div class="layer">
+      <div class="layer-top">
+        <span class="tag m8">M8</span>
+        <h3>resume / continue</h3>
+        <span class="meta-line">改 <b>main.go + tui</b> · <b>~+80 LOC</b> · 依赖：M3 M5</span>
+      </div>
+      <p class="why">
+        <strong>CLI</strong>：<code>--resume &lt;id&gt;</code> 精确恢复；<code>--continue</code> 取本租户最近会话。
+        <strong>语义</strong>：续写同一 session——<em>不新建会话</em>，LoadHistory 回放为初始 history，
+        之后的新消息继续 append（id 自增接续，天然有序）。这是「会话」而非「会话副本」的语义，审计链不中断。
+        <strong>title</strong>：首条 user 消息截前 40 字符，第一次 append 后 UPDATE 回填；
+        <code>--continue</code> 无会话时退化为新会话。
+        <strong>已知边界</strong>：resume 回放的是 raw transcript（含 compact 前原文）——将来上 s08 压缩管线时自然重新压缩，无额外工作。
+      </p>
+      <ul class="checklist">
+        <li>写入→退出→--resume：history 逐条一致，tool_calls 配对完整可直接续跑</li>
+        <li>--continue 选中最近 updated_at 的本租户会话；跨租户 ID 拒绝</li>
+        <li>resume 后新消息 id 继续递增，回放顺序无歧义</li>
+      </ul>
+      <p class="approve"><b>审批点</b>：flag 命名与交互（是否要 /sessions 列表选择器，本期建议不做）。</p>
+    </div>
+
+    <!-- ═══════════ 依赖与节奏 ═══════════ -->
+    <h2><span class="no">4</span>依赖顺序与节奏</h2>
+    <div class="panel">
+      <table class="cmp">
+        <tr>
+          <th>序</th>
+          <th>模块</th>
+          <th>产出</th>
+          <th>依赖</th>
+          <th>可验证方式</th>
+        </tr>
+        <tr>
+          <td>1</td>
+          <td>M1 scope</td>
+          <td>信任根基元</td>
+          <td>—</td>
+          <td>纯单测</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>M2 session 接口</td>
+          <td>签名冻结</td>
+          <td>M1</td>
+          <td>评审 + 编译</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>M3 sqlite 实现</td>
+          <td>可读写库</td>
+          <td>M1 M2</td>
+          <td>:memory: 单测全套</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>M4 loop 落库</td>
+          <td>每消息入库</td>
+          <td>M2</td>
+          <td>spy recorder 单测</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>M5 装配</td>
+          <td>本地端到端可用</td>
+          <td>M1–M4</td>
+          <td>跑一轮查库</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>M6 工具 scope 化</td>
+          <td>文件隔离闭环</td>
+          <td>M1（与 M5 可并行）</td>
+          <td>逃逸用例单测</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td>M7 子代理入库</td>
+          <td>调用树入库</td>
+          <td>M1–M4</td>
+          <td>spawn 后查 parent_id</td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td>M8 resume</td>
+          <td>会话恢复</td>
+          <td>M3 M5</td>
+          <td>写入-退出-回放一致性</td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- ═══════════ 风险 ═══════════ -->
+    <h2><span class="no">5</span>已知边界与开放问题</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>shell 命令的真隔离</h3>
+        </div>
+        <ul>
+          <li>• <code>cmd.Dir</code> 只定工作目录，<code>cd /</code> + 绝对路径仍可逃逸</li>
+          <li>• 云端多租户真隔离要靠容器/沙箱（每租户独立进程或命名空间）</li>
+          <li>• 本期结论：<span class="k">ctx 隔离覆盖数据面，OS 面留给部署形态</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>云端形态的缝</h3>
+        </div>
+        <ul>
+          <li>• SQLite 单写者：多租户高并发写入会成为瓶颈</li>
+          <li>• Store 接口已是缝——换 Postgres 时只动 M3 实现</li>
+          <li>• scope 由「请求入口」构造（HTTP auth → tenant），main.go 是现在的入口</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot slate"></div>
+          <h3>与 s08 compact 的接口</h3>
+        </div>
+        <ul>
+          <li>• DB=raw transcript：compact 裁掉的原文保留，摘要作为新消息落库</li>
+          <li>• resume 回放原文，下一轮 PreChat 前跑压缩即可——<span class="k">无额外联动</span></li>
+          <li>• L4 的 <code>write_transcript</code> 直接就是这张 messages 表，天然兑现</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>故意没做的</h3>
+        </div>
+        <ul>
+          <li>• 会话列表 UI（/sessions 选择器）——M8 用 CLI flag 先跑通语义</li>
+          <li>• 消息事件溯源/回放 UI、跨 session 搜索</li>
+          <li>• 加密 at-rest、消息脱敏——上了云端再谈</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      审批方式：按 M1→M8 顺序，逐模块确认后实现 · 每个模块自带验收测试<br>
+      关联文档：s08-context-compact.html（压缩管线中 transcript 的持久化落点即本设计）
+    </p>
+  </div>
+</body>
+
+</html>
