@@ -4,6 +4,7 @@
 # Go build artifacts
 /personal
 /runeharness
+/e2e
 *.exe
 *.test
 *.out
