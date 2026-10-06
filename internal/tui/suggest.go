@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/compact"
 	"runeharness/internal/scope"
 	"runeharness/internal/session"
 	"runeharness/internal/skill"
@@ -50,6 +51,7 @@ var slashCommands = []slashCmd{
 	{name: "exit", aliases: []string{"quit"}, desc: "exit the process"},
 	{name: "resume", desc: "resume a previous session", hasArgs: true},
 	{name: "todo", desc: "toggle the task list"},
+	{name: "compact", desc: "compact the conversation context [instructions]"},
 }
 
 // suggestion 是下拉框中的一行。
@@ -346,10 +348,9 @@ func (m *Model) resumeSession(s session.Session) tea.Cmd {
 	m.history = hist
 	m.sc.SessionID = s.ID
 	m.info.Session = shortID(s.ID)
-	m.turns, m.msgs, m.ctxChars = 0, len(hist), 0
+	m.turns, m.msgs, m.ctxTokens = 0, len(hist), compact.Estimate(hist, 0)
 	for _, h := range hist {
-		m.ctxChars += len(h.Content) + len(h.Thinking)
-		if h.Role == agent.RoleUser {
+		if h.Role == agent.RoleUser && h.Kind == agent.KindMessage {
 			m.turns++
 		}
 	}
@@ -382,7 +383,11 @@ func (m *Model) replayHistory(hist []agent.Message) {
 		switch msg.Role {
 		case agent.RoleUser:
 			switch {
-			case strings.HasPrefix(msg.Content, "<notice>") || strings.HasPrefix(msg.Content, "<reminder>"):
+			case msg.Kind == agent.KindSummary:
+				// 压缩摘要不回放正文：只标出"这里发生过一次压缩"
+				m.appendLine(m.rowNote("⇲", "earlier turns compacted into a summary"))
+			case msg.Kind == agent.KindInject ||
+				strings.HasPrefix(msg.Content, "<notice>") || strings.HasPrefix(msg.Content, "<reminder>"):
 				m.appendBlock(m.rowHook(msg.Content))
 			default:
 				// 附件内容块不回放全文，折成 "+N files" 标记

@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/compact"
 	"runeharness/internal/scope"
 	"runeharness/internal/session"
 	"runeharness/internal/skill"
@@ -104,6 +105,19 @@ type turnDoneMsg struct {
 	err     error
 }
 
+// compactDoneMsg 是 /compact 的完成信号；history 总是当前有效视图
+// （失败时可能已完成卸载），一律采用。
+type compactDoneMsg struct {
+	history []agent.Message
+	pre     int
+	err     error
+}
+
+// manualCompactor 是 /compact 需要的压缩能力（compact.Compactor 满足）。
+type manualCompactor interface {
+	CompactWith(ctx context.Context, history []agent.Message, extra string) ([]agent.Message, error)
+}
+
 const (
 	inputMinH = 1 // 输入框最小行高（内容行数）
 	inputMaxH = 5 // 输入框最大行高，超出后内部滚动
@@ -162,11 +176,11 @@ type Model struct {
 	ready       bool
 
 	// SESSION 卡指标：msgs 在 turnDone 时取 len(history)；
-	// ctxChars 是全部消息正文字符数的粗估（≈token/4）。
-	turns    int
-	msgs     int
-	ctxChars int
-	started  time.Time
+	// ctxTokens 是发送形态的 token 估算（与压缩阈值同一口径，不含 Thinking）。
+	turns     int
+	msgs      int
+	ctxTokens int
+	started   time.Time
 
 	width  int
 	height int
@@ -268,11 +282,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activity = ""
 		if len(msg.history) > 0 {
 			m.msgs = len(msg.history)
-			n := 0
-			for _, h := range msg.history {
-				n += len(h.Content) + len(h.Thinking)
-			}
-			m.ctxChars = n
+			m.ctxTokens = compact.Estimate(msg.history, 0)
 		}
 		var capErr *agent.MaxStepsError
 		var intErr *agent.InterruptedError
@@ -309,6 +319,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendLine(m.rowNote("·", "empty final response"))
 			}
 		}
+		return m, nil
+	case compactDoneMsg:
+		m.busy, m.cancel, m.activity = false, nil, ""
+		if len(msg.history) > 0 {
+			m.history = msg.history
+			m.msgs = len(msg.history)
+			m.ctxTokens = compact.Estimate(msg.history, 0)
+		}
+		if msg.err != nil {
+			m.appendLine(m.rowNote("✘", "compact failed: "+msg.err.Error()))
+		} else {
+			m.appendLine(m.rowNote("⇲", fmt.Sprintf("context compacted · ≈%.1fk → ≈%.1fk tokens",
+				float64(msg.pre)/1000, float64(m.ctxTokens)/1000)))
+		}
+		m.layout()
 		return m, nil
 	case spinner.TickMsg:
 		if !m.busy {
@@ -354,7 +379,14 @@ func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.busy {
-		return m, nil // 等待回复期间忽略输入
+		// Esc 中断当前轮：cancel 后 agent 在下一个检查点收 ctx.Err，
+		// 未执行的 tool_calls 补占位结果、返回 InterruptedError。
+		if msg.String() == "esc" && m.cancel != nil {
+			m.cancel()
+			m.activity = "interrupting"
+			m.layout()
+		}
+		return m, nil
 	}
 
 	// "/" 下拉激活时接管导航键：↑↓ 移动选中、Tab 补全、Enter 应用、
@@ -441,9 +473,8 @@ func (m *Model) sendUserText(display, content string) tea.Cmd {
 	if replace != "" {
 		content = replace
 	}
-	userMsg := agent.Message{Role: agent.RoleUser, Content: content}
-	m.history = append(m.history, userMsg)
-	if err := m.record(ctx, userMsg); err != nil {
+	m.history = append(m.history, agent.Message{Role: agent.RoleUser, Content: content})
+	if err := m.record(ctx, &m.history[len(m.history)-1]); err != nil {
 		cancel()
 		m.appendLine(m.rowNote("✘", "session append failed: "+err.Error()))
 		return nil
@@ -472,10 +503,9 @@ func (m *Model) resume(steps int) tea.Cmd {
 		"A fresh budget is granted now — continue the pending work, or replan with "+
 		"fewer, batched tool calls.</notice>", steps)
 	ctx, cancel := context.WithCancel(scope.WithScope(context.Background(), m.sc))
-	noticeMsg := agent.Message{Role: agent.RoleUser, Content: notice}
-	m.history = append(m.history, noticeMsg)
+	m.history = append(m.history, agent.Message{Role: agent.RoleUser, Kind: agent.KindInject, Content: notice})
 	m.appendLine(m.rowHook(notice))
-	if err := m.record(ctx, noticeMsg); err != nil {
+	if err := m.record(ctx, &m.history[len(m.history)-1]); err != nil {
 		cancel()
 		m.appendLine(m.rowNote("✘", "session append failed: "+err.Error()))
 		return nil
@@ -493,11 +523,14 @@ func (m *Model) resume(steps int) tea.Cmd {
 
 // record 把 TUI 侧追加进 history 的消息落库；store 为 nil 时不记录，
 // 失败即由调用方终止本轮（与 loop 的 fail-the-turn 语义一致）。
-func (m *Model) record(ctx context.Context, msg agent.Message) error {
+// 分配的行 id 写回 msg：压缩决策按行 id 引用消息。
+func (m *Model) record(ctx context.Context, msg *agent.Message) error {
 	if m.store == nil {
 		return nil
 	}
-	return m.store.Append(ctx, msg)
+	id, err := m.store.Append(ctx, *msg)
+	msg.ID = id
+	return err
 }
 
 // runSlash 执行 / 开头的输入：系统命令表优先，未命中再按技能名精确
@@ -527,6 +560,8 @@ func (m *Model) runSlash(input string) tea.Cmd {
 		return nil
 	case "resume":
 		return m.runResume(arg)
+	case "compact":
+		return m.runCompact(arg)
 	default:
 		if s := m.findSkill(name); s != nil {
 			return m.sendUserText(input, skillPromptText(*s, arg))
@@ -534,6 +569,24 @@ func (m *Model) runSlash(input string) tea.Cmd {
 		m.appendLine(m.rowNote("✘", "unknown command: "+input))
 		return nil
 	}
+}
+
+// runCompact 执行 /compact [指令]：轮间直接调压缩器（reason=manual），
+// 熔断断开时也执行，作为人工试探（plan §4.8）。
+func (m *Model) runCompact(extra string) tea.Cmd {
+	cm, ok := m.agent.Compactor.(manualCompactor)
+	if !ok {
+		m.appendLine(m.rowNote("✘", "compaction is not configured"))
+		return nil
+	}
+	ctx, cancel := context.WithCancel(scope.WithScope(context.Background(), m.sc))
+	m.busy, m.busySince, m.activity, m.cancel = true, time.Now(), "compacting", cancel
+	m.layout()
+	history, pre := m.history, compact.Estimate(m.history, 0)
+	return tea.Batch(m.spinner.Tick, func() tea.Msg {
+		next, err := cm.CompactWith(ctx, history, extra)
+		return compactDoneMsg{history: next, pre: pre, err: err}
+	})
 }
 
 // trackSubagent 按子代理事件更新状态栏 activity 与 AGENTS 卡状态

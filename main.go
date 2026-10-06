@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 
 	"runeharness/internal/agent"
 	"runeharness/internal/breaker"
+	"runeharness/internal/compact"
 	"runeharness/internal/config"
 	"runeharness/internal/llm"
 	"runeharness/internal/permission"
@@ -91,6 +94,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	// TUI 占着终端，日志改写到会话库旁边的 rune.log；打不开就退回 stderr。
+	if f, err := os.OpenFile(filepath.Join(filepath.Dir(dbPath), "rune.log"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+		slog.SetDefault(slog.New(slog.NewTextHandler(f, nil)))
+	}
 	// 信任根：tenant+workspace 在此确定，SessionID 待会话确定后焊入。
 	baseCtx := scope.WithScope(context.Background(),
 		scope.Scope{TenantID: localTenant, Workspace: wd})
@@ -130,7 +138,7 @@ func main() {
 	baseTools := []tools.Tool{
 		tools.CurrentTime{},
 		tools.ListDir{},
-		tools.ReadFile{},
+		tools.ReadFile{Blobs: store},
 		tools.RunCommand{},
 		todos,
 	}
@@ -145,6 +153,9 @@ func main() {
 	if cfg.SubAgent {
 		task := subagent.New(model, baseTools, subagent.DefaultPrompt, cfg.SubAgentNest)
 		task.Store = store // 子代理会话落库：spawn 时挂 parent_id 建子会话
+		task.CompactCfg = compact.Config{
+			Window: cfg.ContextTokens, MaxOutput: cfg.MaxOutputTokens, Auto: cfg.AutoCompact,
+		}
 		// 子代理复用同一权限闸：上下文隔离 ≠ 权限隔离
 		task.Wire = func(sub *agent.Agent, depth int) {
 			sub.Hooks.OnPreToolUse(permission.NewHook(desk, askAt(depth)).Check)
@@ -156,6 +167,8 @@ func main() {
 		task.OnEvent = func(ev subagent.Event) { p.Send(tui.SubagentMsg{Event: ev}) }
 		toolSet = append(toolSet, task)
 	}
+	// compact 是主代理专属工具：loop 按名特判，不进子代理的 baseTools。
+	toolSet = append(toolSet, compact.Tool{})
 	registry := tools.NewRegistry(toolSet...)
 	for _, name := range permCfg.SafeTools {
 		if !registry.Has(name) {
@@ -163,7 +176,21 @@ func main() {
 		}
 	}
 	a := agent.New(model, registry, maxToolSteps)
-	a.Rec = store // loop 逐条落库（fail the turn）；子代理经 task.Store 共享
+	a.Rec, a.Requests = store, store // loop 逐条落库 + 每次请求留痕
+	// 压缩器：thresholds/卸载/摘要/熔断都在它身上；Overhead 是每次请求
+	// 随消息一起发送的工具清单，估算时要计入。
+	specsJSON, _ := json.Marshal(registry.Specs())
+	comp, err := compact.New(model, store, compact.Config{
+		Window: cfg.ContextTokens, MaxOutput: cfg.MaxOutputTokens,
+		Auto:     cfg.AutoCompact,
+		Overhead: compact.TextTokens(string(specsJSON)),
+		Reattach: todos.Snapshot,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	a.Compactor = comp
 	// 工具段取自注册表：开启子代理时 task 自动出现在清单里，无需另行提示。
 	env.Tools = registry.Specs()
 
@@ -207,10 +234,12 @@ func main() {
 		}
 		sessID = sess.ID
 		sessCtx := scope.WithSession(baseCtx, sessID)
-		if err := store.Append(sessCtx, sysMsg); err != nil {
+		id, err := store.Append(sessCtx, sysMsg)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
+		initial[0].ID = id
 	}
 	sessScope := scope.Scope{TenantID: localTenant, SessionID: sessID, Workspace: wd}
 
@@ -234,7 +263,7 @@ func main() {
 	a.OnPartial = func(pt agent.Partial) {
 		p.Send(tui.PartialMsg(pt))
 	}
-	// hook 注入的消息（todo nag 等）经 Program.Send 在对话区留痕
+	// hook 注入的消息（todo nag、压缩提醒等）经 Program.Send 在对话区留痕
 	a.OnInject = func(msg agent.Message) {
 		p.Send(tui.InjectMsg{Content: msg.Content})
 	}
@@ -251,6 +280,9 @@ func main() {
 	a.Hooks.OnPreToolUse(brk.Check)
 	a.Hooks.OnPostToolUse(brk.Observe)
 	a.Hooks.OnPreChat(brk.Nag)
+	// 压缩提醒 hook 排在首位：用量过提醒线时每个压缩周期注入一次，
+	// 让模型择机压缩（plan §4.4）。
+	a.Hooks.OnPreChat(comp.ReminderHook())
 	// todo nag：连续 3 轮未写 todo 时注入提醒（全完成则静默）；
 	// nag 计数器随每轮用户输入归零，按对话轮次统计。
 	a.Hooks.OnPreChat(todos.Nag)

@@ -134,6 +134,19 @@ func (m *Manager) Nag(_ context.Context, _ []agent.Message) string {
 // 避免多个琐碎轮次跨 turn 累积后误触提醒。
 func (m *Manager) ResetRounds() { m.rounds = 0 }
 
+// Snapshot 返回当前任务清单文本，供压缩摘要后重挂；无任务时返回空串。
+func (m *Manager) Snapshot() string {
+	if len(m.items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Current task list:")
+	for _, t := range m.items {
+		fmt.Fprintf(&b, "\n  [%s] %s", t.Status, t.Content)
+	}
+	return b.String()
+}
+
 // unfinished 返回未完成项（pending / in_progress）的 content 列表。
 func (m *Manager) unfinished() []string {
 	var out []string

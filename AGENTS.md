@@ -7,7 +7,7 @@
 `personal/` 是手工练习目录，本身不保证可编译。构建/测试请限定范围：
 
 ```
-go build . ./internal/...
+go build . ./internal/... ./cmd/...
 go test . ./internal/...
 ```
 
@@ -31,6 +31,33 @@ go test . ./internal/...
 - 文件访问边界：读工具（read_file/list_dir）不限 workspace，模型可自主
   读任意路径；写只能经 run_command，由 permission 三道闸把关（Gate1
   ForbiddenPaths 敏感文件硬拒，Gate3 未白名单命令弹确认）。
+
+### 上下文压缩（internal/compact，设计见 docs/runeharness-compaction-plan.html）
+
+- 存储是 append-only 的消息行（含 kind 控制行），发送形态由
+  `session.Fold` 组装：system + 首部（前 3 条真实用户消息）+ 最新摘要 +
+  尾部（最近 40 个用户轮、≤40K token）。压缩只动中段。
+- 三条线（token 估算，128K 窗口为例）：提醒线 W−56K 注入"可择机压缩"
+  提醒（每周期一次）；强制压缩线 W−33K 触发卸载→摘要；阻断线 W−20K 拒发。
+- 三个入口共用 `Compactor.Compact`：模型 `compact` 工具（loop 按名特判，
+  不执行 Run）、TUI `/compact`（manual，熔断时仍可试探）、reactive
+  （端点报 ErrContextLength 后压缩一次重试一次）。
+- 卸载是写侧行为：工具结果回填时 >50K 落 blob 换 `blob://<ref>` 索引；
+  压缩时中段结果全部落 blob（过期结果与大参数先行）。`read_file` 用
+  `blob://` 读回，`blob://` 只能读当前会话及其祖先的 blob。
+- 摘要为滚动增量（旧摘要 + 新中段事件），失败三类（调用错/缺 SUMMARY 段/
+  压缩无效）计入 `session_state` 的熔断计数，连续 3 次熔断；日志在
+  `~/.rune/rune.log`（TUI 占终端，不写 stderr）。
+- 子代理共享同一压缩器：Subagent 模式把任务消息钉入首部、提醒换成
+  "收尾"文案、normal 型 spawn 前对继承快照先卸载；子会话以 `kind='fork'`
+  行记父会话水印，读侧回放 = 父视图 + 子行。
+- `Recorder.Append` 返回行 id，`Message.ID/Kind/Usage` 与 requests 表
+  （水印+视图哈希+失败 payload）支撑发送形态重放。
+- 上下文窗口解析：显式 `RUNE_CONTEXT_TOKENS` > 模型家族表（`internal/config`
+  最长前缀匹配）> 回落 200K；端点报文里的窗口数字会被动钳小并持久化。
+- `cmd/e2e` 是压缩管线的端到端驱动（真端点，需 `.env`）：
+  `go run ./cmd/e2e -w 80000 -keep`——小窗口下几轮即可触发提醒/卸载/摘要，
+  结束打印控制行、blob、requests 重放校验。不进 `go test`，仅手工运行。
 
 ### 输出约束
 

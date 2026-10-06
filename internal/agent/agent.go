@@ -63,12 +63,79 @@ type Agent struct {
 	// 不用 hook 实现的原因：现有 hook 点覆盖不全（assistant 消息没有
 	// hook 点），且 hook 语义是只读观察/注入，Append 是写入职责。
 	Rec Recorder
+
+	// Compactor 是上下文压缩能力（internal/compact 实现）；nil 表示不压缩。
+	Compactor Compactor
+
+	// Requests 记录每次 Chat 的发送留痕（水印 + 视图哈希，出错时含完整
+	// 发送形态）；nil 表示不记录。写失败按 fail the turn 处理。
+	Requests RequestLogger
 }
 
 // Recorder 接收 loop 追加进 history 的每条消息，由外部存储实现
 // （internal/session.Store 结构满足）。tenant/session 目标经 ctx 读取。
+// 返回分配的行 id，loop 写回 Message.ID，压缩决策按行 id 引用消息。
 type Recorder interface {
-	Append(ctx context.Context, msg Message) error
+	Append(ctx context.Context, msg Message) (int64, error)
+}
+
+// Compactor 是上下文压缩能力，由 internal/compact 实现。三个方法对应
+// loop 的三个挂点；返回的 history 未变化时原样返回。
+type Compactor interface {
+	// Backfill 在一批工具结果追加进 history 前规范化：空结果写固定标记、
+	// 超限结果落 blob 换指针。calls 与 results 一一对应。
+	Backfill(ctx context.Context, calls []ToolCall, results []Message) ([]Message, error)
+	// Maintain 在每次 Chat 前调用：按阈值卸载、摘要；用量超过阻断线且
+	// 无法压缩时返回 ErrContextFull。
+	Maintain(ctx context.Context, history []Message) ([]Message, error)
+	// Compact 立即执行压缩；reason 取 "model" / "manual" / "reactive"。返回的
+	// history 总是当前有效视图（失败时可能已完成卸载），调用方应一律采用；
+	// history 末尾的消息总留在尾部。
+	Compact(ctx context.Context, history []Message, reason string) ([]Message, error)
+	// NoteLimit 上报端点在超长报文里给出的真实窗口上限（被动自愈）；
+	// 实现方把有效窗口钳到 min(配置, limit) 并持久化。
+	NoteLimit(ctx context.Context, limit int)
+}
+
+// RequestLog 是一次 Chat 的发送留痕。
+type RequestLog struct {
+	ViewHash string // 发送形态的哈希，重放核对用（见 ViewHash）
+	Payload  string // 仅 Chat 出错时填：完整发送形态 JSON
+	Error    string // Chat 错误原文
+}
+
+// RequestLogger 接收每次 Chat 的留痕，由外部存储实现。
+type RequestLogger interface {
+	LogRequest(ctx context.Context, r RequestLog) error
+}
+
+// CompactToolName 是模型侧 compact 工具名：loop 对它特判（4.7），
+// 不经 Registry 执行。
+const CompactToolName = "compact"
+
+// CompactDoneText 是 compact 工具成功时回填的固定结果。
+const CompactDoneText = "context compacted"
+
+var (
+	// ErrContextLength 表示端点因上下文超长拒绝请求，由 LLM 适配器包装；
+	// loop 捕获后做一次 reactive 压缩并重试。
+	ErrContextLength = errors.New("context length exceeded")
+	// ErrContextFull 表示用量已超过阻断线且当前无法压缩，loop 拒发请求。
+	ErrContextFull = errors.New("context window is full; run /compact or start a new session")
+)
+
+// ContextLengthError 是端点上下文超长错误的结构化形态：Err 保留原始报文，
+// Limit 是从报文里解析出的真实窗口上限（0 表示没解析到）。适配器返回它，
+// loop 据此做一次 reactive 压缩并把 Limit 上报给压缩器做被动自愈。
+type ContextLengthError struct {
+	Limit int
+	Err   error
+}
+
+func (e *ContextLengthError) Error() string { return e.Err.Error() }
+func (e *ContextLengthError) Unwrap() error { return e.Err }
+func (e *ContextLengthError) Is(target error) bool {
+	return target == ErrContextLength
 }
 
 func New(llm LLM, registry *tools.Registry, maxSteps int) *Agent {
@@ -112,14 +179,42 @@ func (a *Agent) Run(ctx context.Context, history []Message) ([]Message, error) {
 		// 每次调用 LLM 前过 PreChat hook：返回非空则注入为 user 消息
 		//（如 todo nag reminder）。
 		if inject := a.Hooks.TriggerPreChat(ctx, history); inject != "" {
-			msg := Message{Role: RoleUser, Content: inject}
-			history = append(history, msg)
-			if err := a.record(ctx, msg); err != nil {
+			msg := Message{Role: RoleUser, Kind: KindInject, Content: inject}
+			if err := a.push(ctx, &history, msg); err != nil {
 				return history, err
 			}
 			a.inject(msg)
 		}
-		resp, err := a.llm.Chat(ctx, history, a.registry.Specs(), a.OnPartial)
+		// 压缩挂点：Chat 前按阈值卸载 / 摘要（plan §4.3–4.5）。
+		if a.Compactor != nil {
+			next, err := a.Compactor.Maintain(ctx, history)
+			if err != nil {
+				if ctx.Err() != nil {
+					return history, &InterruptedError{}
+				}
+				return history, err
+			}
+			history = next
+		}
+		resp, err := a.chat(ctx, history)
+		// 上下文超限：做一次 reactive 压缩后重试一次；仍失败就上抛——
+		// 压过一遍还超限，再压也不会更小（plan §4.6）。
+		if err != nil && errors.Is(err, ErrContextLength) && a.Compactor != nil && ctx.Err() == nil {
+			// 报文里若带真实窗口上限，钳小有效窗口——配置或模型表
+			// 高估时自愈（钳过的窗口持久化在 session_state）。
+			var cle *ContextLengthError
+			if errors.As(err, &cle) && cle.Limit > 0 {
+				a.Compactor.NoteLimit(ctx, cle.Limit)
+			}
+			// Compact 返回的总是当前有效视图（失败时可能已卸载），一律采用。
+			next, cerr := a.Compactor.Compact(ctx, history, "reactive")
+			history = next
+			if cerr != nil {
+				err = fmt.Errorf("%w (reactive compaction failed: %v)", err, cerr)
+			} else {
+				resp, err = a.chat(ctx, history)
+			}
+		}
 		if err != nil {
 			// ctx 取消/超时视为中断：history 原样返回（末尾是 user 消息，可续跑）。
 			if ctx.Err() != nil {
@@ -151,8 +246,7 @@ func (a *Agent) Run(ctx context.Context, history []Message) ([]Message, error) {
 			return nil, err
 		}
 		msg := resp.Message
-		history = append(history, msg)
-		if err := a.record(ctx, msg); err != nil {
+		if err := a.push(ctx, &history, msg); err != nil {
 			return history, err
 		}
 
@@ -165,9 +259,8 @@ func (a *Agent) Run(ctx context.Context, history []Message) ([]Message, error) {
 				// 退出前过 Stop hook：返回非空则注入为 user 消息强制续跑，
 				// 续跑消耗 maxSteps 预算，防止 hook 造成无限循环。
 				if force := a.Hooks.TriggerStop(ctx, history); force != "" {
-					msg := Message{Role: RoleUser, Content: force}
-					history = append(history, msg)
-					if err := a.record(ctx, msg); err != nil {
+					msg := Message{Role: RoleUser, Kind: KindInject, Content: force}
+					if err := a.push(ctx, &history, msg); err != nil {
 						return history, err
 					}
 					a.inject(msg)
@@ -193,28 +286,42 @@ func (a *Agent) Run(ctx context.Context, history []Message) ([]Message, error) {
 		// 注入历史快照（不含刚追加的 assistant 消息）；clone 切断与
 		// history 后续 append 的别名共享。
 		toolCtx := context.WithValue(ctx, historyCtxKey{}, slices.Clone(history[:len(history)-1]))
+		// 整批结果先收齐再规范化、追加：聚合预算要看整批（plan §4.2）。
+		results := make([]Message, 0, len(msg.ToolCalls))
+		calls := make([]ToolCall, 0, len(msg.ToolCalls))
+		var compactCall *ToolCall // 本批第一个 compact 调用：结果在压缩后定稿（plan §4.7）
+		interrupted := false
 		for i, tc := range msg.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				// 中断：给本批未执行的调用补占位结果，transcript 保持
 				// "每个 tool_call 都有结果"的完整形态，调用方可续跑。
 				for _, rest := range msg.ToolCalls[i:] {
-					m := Message{
+					calls = append(calls, rest)
+					results = append(results, Message{
 						Role:       RoleTool,
 						ToolCallID: rest.ID,
 						Content:    "error: execution interrupted",
 						IsError:    true,
-					}
-					history = append(history, m)
-					if err := a.record(ctx, m); err != nil {
-						return history, err
-					}
+					})
 				}
-				return history, &InterruptedError{}
+				interrupted = true
+				break
 			}
 			var result string
 			var isErr bool
 			if a.OnToolCall != nil {
 				a.OnToolCall(tc)
+			}
+			if tc.Name == CompactToolName && a.Compactor != nil {
+				if compactCall == nil {
+					compactCall = &msg.ToolCalls[i]
+					continue
+				}
+				result, isErr = "error: compact already requested in this batch", true
+				a.reportResult(ToolResult{Call: tc, Output: result, IsError: true})
+				calls = append(calls, tc)
+				results = append(results, Message{Role: RoleTool, ToolCallID: tc.ID, Content: result, IsError: true})
+				continue
 			}
 			// PreToolUse hook 返回非空原因即阻止本次调用，原因直接回填给模型；
 			// 被阻止的调用不触发 PostToolUse。
@@ -238,19 +345,104 @@ func (a *Agent) Run(ctx context.Context, history []Message) ([]Message, error) {
 					a.OnToolResult(ToolResult{Call: tc, Output: res.Output, IsError: res.IsError, Dur: time.Since(start)})
 				}
 			}
-			m := Message{
+			calls = append(calls, tc)
+			results = append(results, Message{
 				Role:       RoleTool,
 				ToolCallID: tc.ID,
 				Content:    result,
 				IsError:    isErr,
+			})
+		}
+		if compactCall != nil && interrupted {
+			calls = append(calls, *compactCall)
+			results = append(results, Message{Role: RoleTool, ToolCallID: compactCall.ID,
+				Content: "error: execution interrupted", IsError: true})
+			compactCall = nil
+		}
+		if a.Compactor != nil {
+			// 规范化写 blob 属于"已发生事实"的持久化，不随中断取消。
+			var err error
+			if results, err = a.Compactor.Backfill(context.WithoutCancel(ctx), calls, results); err != nil {
+				return history, err
 			}
-			history = append(history, m)
-			if err := a.record(toolCtx, m); err != nil {
+		}
+		for _, r := range results {
+			if err := a.push(toolCtx, &history, r); err != nil {
+				return history, err
+			}
+		}
+		if interrupted {
+			return history, &InterruptedError{}
+		}
+		if compactCall != nil {
+			var err error
+			if history, err = a.compactByModel(ctx, history, *compactCall); err != nil {
 				return history, err
 			}
 		}
 	}
 	return history, &MaxStepsError{Steps: a.maxSteps}
+}
+
+// chat 发起一次 LLM 调用并写请求留痕：成功记水印与视图哈希，失败另附
+// 完整发送形态与错误原文，作为排查 API 错误的现场证据（plan §5.3）。
+func (a *Agent) chat(ctx context.Context, history []Message) (Response, error) {
+	resp, err := a.llm.Chat(ctx, history, a.registry.Specs(), a.OnPartial)
+	if a.Requests == nil {
+		return resp, err
+	}
+	// 消息水印由 LogRequest 在落库时取 MAX(messages.id)：随请求发送的形态
+	// 由消息行与压缩控制行共同决定，水位必须连控制行一起覆盖。
+	r := RequestLog{ViewHash: ViewHash(history)}
+	if err != nil {
+		r.Payload, r.Error = ViewPayload(history), err.Error()
+	}
+	if lerr := a.Requests.LogRequest(context.WithoutCancel(ctx), r); lerr != nil {
+		return resp, errors.Join(err, fmt.Errorf("log request: %w", lerr))
+	}
+	return resp, err
+}
+
+// compactByModel 执行模型发起的压缩：同组其它调用已回填，摘要调用先于
+// compact 的结果行；结果行落在尾部、原样保留，模型下一轮能看到压缩已完成。
+// 压缩失败时结果行写失败原因，history 原样继续（plan §4.7）。
+func (a *Agent) compactByModel(ctx context.Context, history []Message, tc ToolCall) ([]Message, error) {
+	res := Message{Role: RoleTool, ToolCallID: tc.ID, Content: CompactDoneText}
+	next, err := a.Compactor.Compact(ctx, append(slices.Clone(history), res), "model")
+	// Compact 返回的总是当前有效视图（失败时可能已卸载），且末尾消息留在
+	// 尾部：去掉占位，由下方 push 落库定稿。
+	history = next[:len(next)-1]
+	switch {
+	case err == nil:
+	case ctx.Err() != nil:
+		res.Content, res.IsError = "error: execution interrupted", true
+	default:
+		res.Content, res.IsError = "error: "+err.Error(), true
+	}
+	a.reportResult(ToolResult{Call: tc, Output: res.Content, IsError: res.IsError})
+	if perr := a.push(ctx, &history, res); perr != nil {
+		return history, perr
+	}
+	if ctx.Err() != nil {
+		return history, &InterruptedError{}
+	}
+	return history, nil
+}
+
+// reportResult 把工具结果回报给 UI。
+func (a *Agent) reportResult(r ToolResult) {
+	if a.OnToolResult != nil {
+		a.OnToolResult(r)
+	}
+}
+
+// push 追加一条消息到 history 并落库，把分配的行 id 写回消息。
+// 落库失败时消息仍在 history 中（与"已发生"一致），由调用方中止本轮。
+func (a *Agent) push(ctx context.Context, history *[]Message, msg Message) error {
+	id, err := a.record(ctx, msg)
+	msg.ID = id
+	*history = append(*history, msg)
+	return err
 }
 
 // inject 通知外部（UI）一条 hook 注入的消息。
@@ -262,9 +454,13 @@ func (a *Agent) inject(msg Message) {
 
 // record 把刚追加进 history 的消息落库；Rec 为 nil 时零开销。
 // 返回非 nil 表示持久化失败，Run 中止本轮（已落库部分保留）。
-func (a *Agent) record(ctx context.Context, msg Message) error {
+// record 落库一条已进 history 的消息。ctx 只带调用方信号进 Append 是错的：
+// 中断/超时后落库会连同"已发生的事实"一起死掉——例如中断分支补的占位
+// 结果丢库，返回错误顶成 context.Canceled 而非 InterruptedError。
+// WithoutCancel 语义正解：取消停的是未来的工作，不是已发生消息的持久化。
+func (a *Agent) record(ctx context.Context, msg Message) (int64, error) {
 	if a.Rec == nil {
-		return nil
+		return 0, nil
 	}
-	return a.Rec.Append(ctx, msg)
+	return a.Rec.Append(context.WithoutCancel(ctx), msg)
 }

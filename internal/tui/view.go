@@ -224,7 +224,7 @@ func (m *Model) sessionCard() string {
 		permSt = lipgloss.NewStyle().Foreground(cAmber)
 	}
 	return m.card("▣ SESSION", "", []string{
-		kv("ctx", fmt.Sprintf("≈%.1fk", float64(m.ctxChars)/4000), lipgloss.NewStyle().Foreground(cCyan)),
+		kv("ctx", fmt.Sprintf("≈%.1fk", float64(m.ctxTokens)/1000), lipgloss.NewStyle().Foreground(cCyan)),
 		kv("msgs", fmt.Sprintf("%d", m.msgs), fgStyle),
 		kv("tools", fmt.Sprintf("%d", m.info.Tools), fgStyle),
 		kv("perm", permN, permSt),

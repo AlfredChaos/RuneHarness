@@ -53,10 +53,13 @@ func TestAppendLoadRoundtrip(t *testing.T) {
 				Arguments: json.RawMessage(`{"path":"a.go"}`)}}},
 		{Role: agent.RoleTool, ToolCallID: "c1", Content: "data", IsError: true},
 	}
-	for _, m := range want {
-		if err := s.Append(ctx, m); err != nil {
+	want[2].Usage = &agent.Usage{Prompt: 120, Completion: 30, Cached: 64}
+	for i, m := range want {
+		id, err := s.Append(ctx, m)
+		if err != nil {
 			t.Fatalf("Append: %v", err)
 		}
+		want[i].ID = id // Append 返回分配的行 id，读回时一并带出
 	}
 	got, err := s.LoadHistory(ctx, ssn.ID)
 	if err != nil {
@@ -76,7 +79,7 @@ func TestTenantIsolation(t *testing.T) {
 	if _, err := s.LoadHistory(evil, a.ID); !errors.Is(err, ErrCrossTenant) {
 		t.Fatalf("LoadHistory cross-tenant: got %v, want ErrCrossTenant", err)
 	}
-	if err := s.Append(evil, agent.Message{Role: agent.RoleUser, Content: "x"}); !errors.Is(err, ErrCrossTenant) {
+	if _, err := s.Append(evil, agent.Message{Role: agent.RoleUser, Content: "x"}); !errors.Is(err, ErrCrossTenant) {
 		t.Fatalf("Append cross-tenant: got %v, want ErrCrossTenant", err)
 	}
 	list, err := s.ListSessions(ctxFor("B", ""), 0)
@@ -97,7 +100,7 @@ func TestAppendOrder(t *testing.T) {
 	// 交错写两个会话，模拟主代理与子代理并发
 	for i := 0; i < 5; i++ {
 		for _, id := range []string{s1.ID, s2.ID} {
-			err := s.Append(ctxFor("t1", id), agent.Message{
+			_, err := s.Append(ctxFor("t1", id), agent.Message{
 				Role: agent.RoleUser, Content: id[:8] + string(rune('a'+i)),
 			})
 			if err != nil {
@@ -134,7 +137,7 @@ func TestConcurrentAppend(t *testing.T) {
 		go func(id string) {
 			defer wg.Done()
 			for i := 0; i < 20; i++ {
-				if err := s.Append(ctxFor("t1", id), agent.Message{Role: agent.RoleUser}); err != nil {
+				if _, err := s.Append(ctxFor("t1", id), agent.Message{Role: agent.RoleUser}); err != nil {
 					errs <- err
 				}
 			}
@@ -164,7 +167,7 @@ func TestSubSessionMetaAndTitle(t *testing.T) {
 		t.Fatalf("child meta not persisted: %+v", child)
 	}
 	ctx := ctxFor("t1", parent.ID)
-	if err := s.Append(ctx, agent.Message{Role: agent.RoleUser,
+	if _, err := s.Append(ctx, agent.Message{Role: agent.RoleUser,
 		Content: "这是一个很长的用户消息，用来验证标题会被截断成前四十个字符左右的内容"}); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -184,13 +187,13 @@ func TestSubSessionMetaAndTitle(t *testing.T) {
 // 失败路径：不存在的会话、缺 scope、缺 session id。
 func TestFailureModes(t *testing.T) {
 	s := open(t)
-	if err := s.Append(ctxFor("t1", "nonexistent"), agent.Message{Role: agent.RoleUser}); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Append(ctxFor("t1", "nonexistent"), agent.Message{Role: agent.RoleUser}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Append unknown session: got %v, want ErrNotFound", err)
 	}
-	if err := s.Append(context.Background(), agent.Message{}); err == nil {
+	if _, err := s.Append(context.Background(), agent.Message{}); err == nil {
 		t.Fatal("Append without scope: want error")
 	}
-	if err := s.Append(ctxFor("t1", ""), agent.Message{}); !errors.Is(err, ErrNoSession) {
+	if _, err := s.Append(ctxFor("t1", ""), agent.Message{}); !errors.Is(err, ErrNoSession) {
 		t.Fatalf("Append without session id: got %v, want ErrNoSession", err)
 	}
 	if _, err := s.LoadHistory(ctxFor("t1", ""), "nonexistent"); !errors.Is(err, ErrNotFound) {
@@ -240,7 +243,7 @@ func TestResumeAcrossReopen(t *testing.T) {
 	ssn := mustCreate(t, s1, "t1", session.Meta{Kind: session.KindMain, Model: "m"})
 	ctx := ctxFor("t1", ssn.ID)
 	for _, c := range []string{"sys", "hi", "answer"} {
-		if err := s1.Append(ctx, agent.Message{Role: agent.RoleUser, Content: c}); err != nil {
+		if _, err := s1.Append(ctx, agent.Message{Role: agent.RoleUser, Content: c}); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 	}
@@ -263,7 +266,7 @@ func TestResumeAcrossReopen(t *testing.T) {
 	if len(hist) != 3 || hist[2].Content != "answer" {
 		t.Fatalf("hist = %+v", hist)
 	}
-	if err := s2.Append(ctx, agent.Message{Role: agent.RoleUser, Content: "more"}); err != nil {
+	if _, err := s2.Append(ctx, agent.Message{Role: agent.RoleUser, Content: "more"}); err != nil {
 		t.Fatalf("resume Append: %v", err)
 	}
 	hist, _ = s2.LoadHistory(ctxFor("t1", ssn.ID), ssn.ID)

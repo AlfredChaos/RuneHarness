@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,14 +47,26 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 		Model:    c.model,
 		Messages: toParams(history),
 		Tools:    toTools(specs),
+		// 要求流末尾回传 usage，作为上下文估算锚点；不支持的端点忽略该字段。
+		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
 	})
 	defer func() { _ = stream.Close() }()
 
 	var acc openai.ChatCompletionAccumulator
 	var raw strings.Builder
+	// usage 取最后一个带 usage 的 chunk，不用 accumulator 的累加值：
+	// 部分兼容端点每个 chunk 都回传累计 usage，累加会重复计数。
+	var usage *agent.Usage
 	for stream.Next() {
 		chunk := stream.Current()
 		acc.AddChunk(chunk)
+		if chunk.Usage.PromptTokens > 0 {
+			usage = &agent.Usage{
+				Prompt:     int(chunk.Usage.PromptTokens),
+				Completion: int(chunk.Usage.CompletionTokens),
+				Cached:     int(chunk.Usage.PromptTokensDetails.CachedTokens),
+			}
+		}
 		if onPartial != nil && len(chunk.Choices) > 0 {
 			raw.WriteString(chunk.Choices[0].Delta.Content)
 			// 对累积文本整体重切：<think> 标签可能被拆到多个 chunk。
@@ -66,16 +80,68 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return agent.Response{}, err
+		return agent.Response{}, classify(err)
 	}
 	if len(acc.Choices) == 0 {
 		return agent.Response{}, errors.New("empty response from API")
 	}
 	choice := acc.Choices[0]
+	msg := fromMessage(choice.Message)
+	msg.Usage = usage
 	return agent.Response{
-		Message:      fromMessage(choice.Message),
+		Message:      msg,
 		FinishReason: agent.FinishReason(choice.FinishReason),
 	}, nil
+}
+
+// contextLengthMarkers 是各家端点"上下文超长"错误的特征串（小写匹配）。
+// OpenAI 兼容端点没有标准错误类型：多表现为 400 + context_length_exceeded，
+// 也有 prompt_too_long、413 与各种措辞。
+var contextLengthMarkers = []string{
+	"context_length_exceeded", "prompt_too_long", "maximum context length",
+	"context length", "context window", "too many tokens", "prompt is too long",
+	"reduce the length",
+}
+
+// classify 把端点的上下文超长错误包装为 agent.ContextLengthError：从报文
+// 里解析真实窗口上限（被动自愈用），保留原错误供展示；其余错误原样返回。
+func classify(err error) error {
+	var apiErr *openai.Error
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	if apiErr.StatusCode == 413 {
+		return &agent.ContextLengthError{Limit: parseLimit(apiErr), Err: err}
+	}
+	if apiErr.StatusCode != 400 {
+		return err
+	}
+	text := strings.ToLower(apiErr.Code + " " + apiErr.Type + " " + apiErr.Message + " " + apiErr.RawJSON())
+	for _, m := range contextLengthMarkers {
+		if strings.Contains(text, m) {
+			return &agent.ContextLengthError{Limit: parseLimit(apiErr), Err: err}
+		}
+	}
+	return err
+}
+
+// limitAfterMarker 匹配 "...context length... is N tokens" 类报文里的
+// 窗口上限。取第一个 4-8 位数字：这类报文通常是 "上限 N、你的请求 M"，
+// 第一个数字是上限。
+var limitAfterMarker = regexp.MustCompile(`(\d[\d,]{3,8})\s*tokens`)
+
+// parseLimit 尽力从报错正文提取窗口上限；没解析到返回 0。
+func parseLimit(apiErr *openai.Error) int {
+	for _, s := range []string{apiErr.Message, apiErr.RawJSON()} {
+		m := limitAfterMarker.FindStringSubmatch(s)
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.ReplaceAll(m[1], ",", "")); err == nil && n >= 1_000 {
+			return n
+		}
+	}
+	return 0
 }
 
 func toParams(history []agent.Message) []openai.ChatCompletionMessageParamUnion {

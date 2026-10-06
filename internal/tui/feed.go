@@ -56,7 +56,13 @@ func (m *Model) rowAgent(body string, t time.Time) string {
 }
 
 func (m *Model) rowThink(body string, t time.Time) string {
-	return m.row(tag("think", thinkStyle)+" ", tagW, thinkBody.Render(body), m.feedW(), t)
+	// 逐行渲染：整段 Render 会把每行补空格对齐到最宽行宽，
+	// 空格尾巴被 row 的硬换行折成多余空行，段间距随最长行放大。
+	lines := strings.Split(body, "\n")
+	for i, ln := range lines {
+		lines[i] = thinkBody.Render(ln)
+	}
+	return m.row(tag("think", thinkStyle)+" ", tagW, strings.Join(lines, "\n"), m.feedW(), t)
 }
 
 func (m *Model) rowHook(body string) string {

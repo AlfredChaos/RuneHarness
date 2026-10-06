@@ -75,6 +75,52 @@ func TestInterruptFillsRemainingToolCalls(t *testing.T) {
 	}
 }
 
+// ctxAwareRecorder 模拟真实 Rec 的 ctx 语义：已取消 ctx 上的 Append 报错
+// （modernc sqlite 驱动同行为）。
+type ctxAwareRecorder struct{ spyRecorder }
+
+func (s *ctxAwareRecorder) Append(ctx context.Context, m Message) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return s.spyRecorder.Append(ctx, m)
+}
+
+// 中断占位结果必须落库：占位补录走 WithoutCancel，否则 ctx 已死导致
+// 占位丢失、返回错误被顶成 context.Canceled 而非 InterruptedError。
+func TestInterruptPlaceholdersRecorded(t *testing.T) {
+	ran := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	reg := tools.NewRegistry(
+		cancelTool{spec: tools.Spec{Name: "t1"}, cancel: cancel, out: "partial"},
+		stubTool{spec: tools.Spec{Name: "t2"}, ran: &ran, out: "never"},
+	)
+	llm := &stubLLM{script: []Response{
+		toolCallResp(
+			ToolCall{ID: "1", Name: "t1", Arguments: json.RawMessage(`{}`)},
+			ToolCall{ID: "2", Name: "t2", Arguments: json.RawMessage(`{}`)},
+		),
+	}}
+	a := New(llm, reg, 10)
+	rec := &ctxAwareRecorder{}
+	a.Rec = rec
+
+	_, err := a.Run(ctx, userHistory())
+	var ie *InterruptedError
+	if !errors.As(err, &ie) {
+		t.Fatalf("err = %v, want *InterruptedError (占位落库不得顶包)", err)
+	}
+	placeholders := 0
+	for _, m := range rec.msgs {
+		if m.Role == RoleTool && m.Content == "error: execution interrupted" {
+			placeholders++
+		}
+	}
+	if placeholders != 1 {
+		t.Fatalf("recorded placeholders = %d, want 1", placeholders)
+	}
+}
+
 // Chat 阶段中断：history 原样返回（末尾是 user 消息，可续跑）。
 func TestInterruptDuringChat(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -97,14 +143,14 @@ type spyRecorder struct {
 	err  error // 非 nil 时下一次 Append 返回该错误
 }
 
-func (s *spyRecorder) Append(_ context.Context, m Message) error {
+func (s *spyRecorder) Append(_ context.Context, m Message) (int64, error) {
 	if s.err != nil {
 		err := s.err
 		s.err = nil
-		return err
+		return 0, err
 	}
 	s.msgs = append(s.msgs, m)
-	return nil
+	return int64(len(s.msgs)), nil
 }
 
 // 落库语义：loop 追加进 history 的每条消息都同步到达 Recorder，
@@ -142,6 +188,13 @@ func TestRecorderSeesEveryAppend(t *testing.T) {
 		if m.Role != want.Role || m.Content != want.Content {
 			t.Fatalf("rec[%d] = %+v, want history entry %+v", i, m, want)
 		}
+		// 分配的行 id 写回 history，压缩决策按它引用消息
+		if want.ID != int64(i+1) {
+			t.Fatalf("hist[%d].ID = %d, want %d", i+1, want.ID, i+1)
+		}
+	}
+	if hist[1].Kind != KindInject {
+		t.Fatalf("PreChat 注入应标 KindInject, got %q", hist[1].Kind)
 	}
 }
 

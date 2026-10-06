@@ -66,7 +66,8 @@ func (RunCommand) Run(ctx context.Context, raw json.RawMessage) (string, error) 
 	cmd := exec.CommandContext(ctx, "sh", "-c", args.Command)
 	cmd.Dir = sc.Workspace
 	out, err := cmd.CombinedOutput()
-	res := truncate(string(out))
+	// 不在工具侧截断：超限输出由回填层落 blob 换指针（plan §4.2）。
+	res := string(out)
 	if err != nil {
 		res += "\nexit error: " + err.Error()
 	}

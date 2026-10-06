@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/compact"
 	"runeharness/internal/scope"
 	"runeharness/internal/session"
 	"runeharness/internal/tools"
@@ -35,7 +37,9 @@ const (
 // DefaultPrompt 是 general_purpose 子代理的默认 system prompt。
 const DefaultPrompt = "You are a subagent handling a delegated subtask. " +
 	"Complete it directly with your tools, then reply with a concise conclusion. " +
-	"Do not ask the user questions; the caller only receives your final message."
+	"Do not ask the user questions; the caller only receives your final message. " +
+	"Make the conclusion self-contained: the caller cannot open blob:// references " +
+	"from your session."
 
 // maxSteps 是子代理的安全轮数上限，独立于主代理的步数预算。
 const maxSteps = 40
@@ -83,18 +87,24 @@ type Tool struct {
 	Wire func(sub *agent.Agent, depth int)
 	// OnEvent 上报子代理生命周期事件；可为 nil。
 	OnEvent func(Event)
-	// Store 为子代理会话持久化提供存储面；可为 nil（不落库）。
+	// Store 为子代理会话持久化提供存储面；不可为 nil（tradeoffs D11）：
+	// fork 行、blob、熔断计数都依赖它。
 	// spawn 时建一条 kind=subagent 的子会话，parent_id 取当前 ctx 的
 	// SessionID——runCtx 派生自父 ctx，租户自动继承，嵌套时 parent
 	// 链自动正确（depth-1 的会话即 depth-2 的父）。
 	Store SessionStore
+	// CompactCfg 是子代理压缩器配置；Window/MaxOutput/Auto 与主代理同源，
+	// Subagent 标志与 Overhead（子代理自己的工具清单）由 spawn 填。
+	CompactCfg compact.Config
 }
 
-// SessionStore 是 task 落库子会话所需的最小存储面；
-// session.Store 结构满足，子代理的 Rec 也复用它（含 Append）。
+// SessionStore 是 task 落库子会话所需的存储面：会话创建 + 消息追加 +
+// 压缩器依赖的 blob/状态读写 + 请求留痕。session.Store 结构满足。
 type SessionStore interface {
 	CreateSession(ctx context.Context, meta session.Meta) (session.Session, error)
-	Append(ctx context.Context, msg agent.Message) error
+	Append(ctx context.Context, msg agent.Message) (int64, error)
+	compact.Store
+	agent.RequestLogger
 }
 
 // New 创建主代理用的 task 工具（depth=0）。
@@ -156,56 +166,78 @@ func (t *Tool) Run(ctx context.Context, raw json.RawMessage) (string, error) {
 		return "", errors.New("unknown subagent_type: " + args.Type)
 	}
 
-	sub := agent.New(t.llm, tools.NewRegistry(t.subTools()...), maxSteps)
-	if t.Wire != nil {
-		t.Wire(sub, t.depth+1)
+	if t.Store == nil {
+		return "", errors.New("task: session store is required")
 	}
+	sub := agent.New(t.llm, tools.NewRegistry(t.subTools()...), maxSteps)
 	depth := t.depth + 1
+	// 压缩器先于 Wire 注册：收尾提醒要排在其它 hook 之前抢到注入位；
+	// 子代理不注册 compact 工具——它的目标是交结论，不是择机压缩。
+	cmpCfg := t.CompactCfg
+	cmpCfg.Subagent = true
+	subSpecs, _ := json.Marshal(tools.NewRegistry(t.subTools()...).Specs())
+	cmpCfg.Overhead = compact.TextTokens(string(subSpecs))
+	cmp, err := compact.New(t.llm, t.Store, cmpCfg)
+	if err != nil {
+		return "", err
+	}
+	sub.Compactor = cmp
+	sub.Hooks.OnPreChat(cmp.ReminderHook())
+	if t.Wire != nil {
+		t.Wire(sub, depth)
+	}
 	sub.OnToolCall = func(tc agent.ToolCall) {
 		t.emit(Event{Kind: EventToolCall, Depth: depth, Call: tc})
 	}
 
 	hist := t.initialHistory(ctx, typ, args.Description)
-	runCtx := ctx
-	if t.Store != nil {
-		sc, err := scope.FromContext(ctx)
-		if err != nil {
-			return "", fmt.Errorf("task: %w（Store 已配置但 ctx 缺 scope，属装配 bug）", err)
-		}
-		subSess, err := t.Store.CreateSession(ctx, session.Meta{
-			ParentID:  sc.SessionID,
-			Kind:      session.KindSubagent,
-			Depth:     depth,
-			Title:     titleOf(args.Description),
-			Workspace: sc.Workspace,
+	sc, err := scope.FromContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("task: %w（ctx 缺 scope，属装配 bug）", err)
+	}
+	subSess, err := t.Store.CreateSession(ctx, session.Meta{
+		ParentID:  sc.SessionID,
+		Kind:      session.KindSubagent,
+		Depth:     depth,
+		Title:     titleOf(args.Description),
+		Workspace: sc.Workspace,
+	})
+	if err != nil {
+		return "", err
+	}
+	subCtx := scope.WithSession(ctx, subSess.ID)
+	// 初始历史不经过 loop 的 append 点，显式落库：
+	// general_purpose 落 system+task；normal 不复制父会话快照
+	// （嵌套 O(n²) 膨胀），只落 fork 控制行（记父会话与水印）+task，
+	// 子会话视图 = 父会话在水印处的折叠视图 + 子会话行（plan §4.9）。
+	if typ == TypeNormal {
+		row, err := session.ControlRow(agent.KindFork, session.ForkMeta{
+			ParentSessionID: sc.SessionID,
+			ParentUptoMsgID: maxID(hist),
 		})
 		if err != nil {
 			return "", err
 		}
-		subCtx := scope.WithSession(ctx, subSess.ID)
-		// 初始历史不经过 loop 的 append 点，显式落库：
-		// general_purpose 落 system+task；normal 不复制父会话快照
-		// （嵌套 O(n²) 膨胀），只落继承标记+task，全文经 parent_id 回溯。
-		if typ == TypeNormal {
-			marker := agent.Message{Role: agent.RoleUser, Content: fmt.Sprintf(
-				"[inherited %d messages from parent session %s]", len(hist)-1, sc.SessionID)}
-			if err := t.Store.Append(subCtx, marker); err != nil {
-				return "", err
-			}
-		} else if err := t.Store.Append(subCtx, hist[0]); err != nil {
+		if _, err := t.Store.Append(subCtx, row); err != nil {
 			return "", err
 		}
-		if err := t.Store.Append(subCtx, hist[len(hist)-1]); err != nil {
-			return "", err
-		}
-		sub.Rec = t.Store
-		runCtx = subCtx
+	} else if _, err := t.Store.Append(subCtx, hist[0]); err != nil {
+		return "", err
+	}
+	if _, err := t.Store.Append(subCtx, hist[len(hist)-1]); err != nil {
+		return "", err
+	}
+	sub.Rec, sub.Requests = t.Store, t.Store
+	// 起点卸载：normal 型继承的快照过提醒线时，先卸载中段再跑——
+	// 避免子代理第一次请求就触发整轮摘要。
+	if hist, err = cmp.Prime(subCtx, hist); err != nil {
+		return "", err
 	}
 
 	t.emit(Event{Kind: EventSpawn, Depth: depth, Type: typ, Desc: args.Description})
-	runCtx2, cancel := context.WithTimeout(runCtx, t.timeout())
+	runCtx2, cancel := context.WithTimeout(subCtx, t.timeout())
 	defer cancel()
-	hist, err := sub.Run(runCtx2, hist)
+	hist, err = sub.Run(runCtx2, hist)
 	if err != nil {
 		// 区分超时与用户中断：超时给主代理一个可理解的说明。
 		if errors.Is(runCtx2.Err(), context.DeadlineExceeded) {
@@ -215,8 +247,23 @@ func (t *Tool) Run(ctx context.Context, raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	result := conclusion(hist)
+	if strings.Contains(result, "blob://") {
+		// blob:// 按调用方会话解析：父代理打不开子会话的 blob，
+		// 结论里的引用对它无效，标注清楚。
+		result += "\n\n(blob:// references above live in the subagent's session " +
+			"and cannot be opened from this conversation.)"
+	}
 	t.emit(Event{Kind: EventDone, Depth: depth, Type: typ, Result: result})
 	return result, nil
+}
+
+// maxID 返回视图里最大的行 id（fork 行的父会话水印）。
+func maxID(hist []agent.Message) int64 {
+	var m int64
+	for _, h := range hist {
+		m = max(m, h.ID)
+	}
+	return m
 }
 
 // initialHistory 构造子代理的初始对话历史。

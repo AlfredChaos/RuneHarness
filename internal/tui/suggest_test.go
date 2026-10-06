@@ -63,15 +63,16 @@ func TestCommandSuggestions(t *testing.T) {
 	}
 
 	all := got("/")
-	if len(all) != 3+2 {
-		t.Fatalf("/ = %v, want 3 commands + 2 skills", all)
+	if len(all) != 4+2 {
+		t.Fatalf("/ = %v, want 4 commands + 2 skills", all)
 	}
-	if all[0] != "/exit" || all[1] != "/resume" || all[2] != "/todo" {
+	if all[0] != "/exit" || all[1] != "/resume" || all[2] != "/todo" || all[3] != "/compact" {
 		t.Fatalf("commands should come first in registry order, got %v", all)
 	}
 
-	if got := got("/ex"); len(got) != 1 || got[0] != "/exit" {
-		t.Fatalf("/ex = %v, want [/exit]", got)
+	// /compact 的描述 "context" 里有子串 "ex"：前缀命中排在描述子串命中之前
+	if got := got("/ex"); len(got) != 2 || got[0] != "/exit" || got[1] != "/compact" {
+		t.Fatalf("/ex = %v, want [/exit /compact]", got)
 	}
 	if got := got("/res"); len(got) != 1 || got[0] != "/resume" {
 		t.Fatalf("/res = %v, want [/resume]", got)
@@ -246,7 +247,7 @@ func TestResumeSession(t *testing.T) {
 	}
 	// resume 后的新输入应落入旧会话
 	if err := m.record(scope.WithScope(context.Background(), m.sc),
-		agent.Message{Role: agent.RoleUser, Content: "next"}); err != nil {
+		&agent.Message{Role: agent.RoleUser, Content: "next"}); err != nil {
 		t.Fatal(err)
 	}
 	hist, err := st.LoadHistory(base, old.ID)

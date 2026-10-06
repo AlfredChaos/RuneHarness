@@ -292,6 +292,32 @@ func TestSplitAttachments(t *testing.T) {
 	}
 }
 
+// busy 时 Esc 取消当前轮：cancel 被调用、状态栏显示 interrupting，
+// 进程不退出（等 turnDoneMsg 收尾）。
+func TestEscInterruptsBusyTurn(t *testing.T) {
+	m, _ := newFileModel(t)
+	cancelled := false
+	m.busy = true
+	m.cancel = func() { cancelled = true }
+
+	if _, cmd := m.onKey(tea.KeyMsg{Type: tea.KeyEsc}); cmd != nil {
+		t.Fatal("esc should not produce a quit cmd")
+	}
+	if !cancelled {
+		t.Fatal("esc during busy must call m.cancel")
+	}
+	if m.activity != "interrupting" {
+		t.Errorf("activity = %q, want interrupting", m.activity)
+	}
+
+	// 其他键仍被忽略，不触发第二次取消
+	cancelled = false
+	m.onKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cancelled {
+		t.Error("non-esc key should not cancel")
+	}
+}
+
 func labelsOf(list []suggestion) []string {
 	var out []string
 	for _, s := range list {

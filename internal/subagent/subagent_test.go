@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/compact"
 	"runeharness/internal/scope"
 	"runeharness/internal/session"
 	"runeharness/internal/tools"
@@ -97,10 +98,10 @@ func TestGeneralPurposeFreshContext(t *testing.T) {
 		stopResp("done"),
 	}}
 	base := []tools.Tool{echoTool{out: "ok"}}
-	reg := tools.NewRegistry(append(slices.Clone(base), New(sub, base, "SUB PROMPT", false))...)
+	reg := tools.NewRegistry(append(slices.Clone(base), wired(sub, base, "SUB PROMPT", false, &fakeStore{}))...)
 	a := agent.New(main, reg, 10)
 
-	hist, err := a.Run(context.Background(), []agent.Message{
+	hist, err := a.Run(parentCtx(), []agent.Message{
 		{Role: agent.RoleSystem, Content: "MAIN PROMPT"},
 		{Role: agent.RoleUser, Content: "go"},
 	})
@@ -135,7 +136,7 @@ func TestNormalInheritsContext(t *testing.T) {
 		toolCallResp(taskCall("continue it", "normal")),
 		stopResp("done"),
 	}}
-	reg := tools.NewRegistry(New(sub, nil, "SUB PROMPT", false))
+	reg := tools.NewRegistry(wired(sub, nil, "SUB PROMPT", false, &fakeStore{}))
 	a := agent.New(main, reg, 10)
 
 	parent := []agent.Message{
@@ -144,7 +145,7 @@ func TestNormalInheritsContext(t *testing.T) {
 		{Role: agent.RoleAssistant, Content: "hi there"},
 		{Role: agent.RoleUser, Content: "do X"},
 	}
-	if _, err := a.Run(context.Background(), parent); err != nil {
+	if _, err := a.Run(parentCtx(), parent); err != nil {
 		t.Fatal(err)
 	}
 	got := sub.histories[0]
@@ -170,9 +171,9 @@ func TestNestingDepthCap(t *testing.T) {
 	main := &stubLLM{script: []agent.Response{
 		toolCallResp(taskCall("x", "general_purpose")), stopResp("done"),
 	}}
-	reg := tools.NewRegistry(New(sub, nil, "S", false))
+	reg := tools.NewRegistry(wired(sub, nil, "S", false, &fakeStore{}))
 	a := agent.New(main, reg, 10)
-	if _, err := a.Run(context.Background(), []agent.Message{{Role: agent.RoleUser, Content: "go"}}); err != nil {
+	if _, err := a.Run(parentCtx(), []agent.Message{{Role: agent.RoleUser, Content: "go"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range specNames(sub.specs[0]) {
@@ -192,9 +193,9 @@ func TestNestingDepthCap(t *testing.T) {
 	main2 := &stubLLM{script: []agent.Response{
 		toolCallResp(taskCall("x", "general_purpose")), stopResp("done"),
 	}}
-	reg2 := tools.NewRegistry(New(sub2, nil, "S", true))
+	reg2 := tools.NewRegistry(wired(sub2, nil, "S", true, &fakeStore{}))
 	a2 := agent.New(main2, reg2, 10)
-	if _, err := a2.Run(context.Background(), []agent.Message{{Role: agent.RoleUser, Content: "go"}}); err != nil {
+	if _, err := a2.Run(parentCtx(), []agent.Message{{Role: agent.RoleUser, Content: "go"}}); err != nil {
 		t.Fatal(err)
 	}
 	if sub2.calls != 3 {
@@ -224,8 +225,8 @@ func hasSpec(specs []tools.Spec, name string) bool {
 // 子代理失败时 task 返回 error（由 Registry.Call 转成回填字符串）。
 func TestSubagentError(t *testing.T) {
 	sub := errLLM{err: errors.New("boom")}
-	tool := New(sub, nil, "S", false)
-	_, err := tool.Run(context.Background(), json.RawMessage(`{"description":"x"}`))
+	tool := wired(sub, nil, "S", false, &fakeStore{})
+	_, err := tool.Run(parentCtx(), json.RawMessage(`{"description":"x"}`))
 	if err == nil || err.Error() != "boom" {
 		t.Fatalf("err = %v, want 'boom'", err)
 	}
@@ -233,11 +234,11 @@ func TestSubagentError(t *testing.T) {
 
 // 子代理整轮运行受 Timeout 兜底：挂住时按时返回超时错误而非无限阻塞。
 func TestSubagentTimeout(t *testing.T) {
-	tool := New(blockLLM{}, nil, "S", false)
+	tool := wired(blockLLM{}, nil, "S", false, &fakeStore{})
 	tool.Timeout = 50 * time.Millisecond
 
 	start := time.Now()
-	_, err := tool.Run(context.Background(), json.RawMessage(`{"description":"x"}`))
+	_, err := tool.Run(parentCtx(), json.RawMessage(`{"description":"x"}`))
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("took %v, Timeout not applied", elapsed)
 	}
@@ -248,15 +249,15 @@ func TestSubagentTimeout(t *testing.T) {
 
 // 参数校验与默认类型。
 func TestArgValidation(t *testing.T) {
-	tool := New(&stubLLM{script: []agent.Response{stopResp("ok")}}, nil, "S", false)
-	if _, err := tool.Run(context.Background(), json.RawMessage(`{}`)); err == nil {
+	tool := wired(&stubLLM{script: []agent.Response{stopResp("ok")}}, nil, "S", false, &fakeStore{})
+	if _, err := tool.Run(parentCtx(), json.RawMessage(`{}`)); err == nil {
 		t.Fatal("empty description should error")
 	}
-	if _, err := tool.Run(context.Background(), json.RawMessage(`{"description":"x","subagent_type":"bogus"}`)); err == nil {
+	if _, err := tool.Run(parentCtx(), json.RawMessage(`{"description":"x","subagent_type":"bogus"}`)); err == nil {
 		t.Fatal("unknown subagent_type should error")
 	}
 	// 省略 subagent_type → 默认 general_purpose（全新上下文）
-	if _, err := tool.Run(context.Background(), json.RawMessage(`{"description":"x"}`)); err != nil {
+	if _, err := tool.Run(parentCtx(), json.RawMessage(`{"description":"x"}`)); err != nil {
 		t.Fatal(err)
 	}
 	sub := tool.llm.(*stubLLM)
@@ -267,11 +268,12 @@ func TestArgValidation(t *testing.T) {
 }
 
 // fakeStore 记录建会话元数据与每次 Append 的归属会话，验证 M7 的
-// 父子建链与会话隔离。
+// 父子建链与会话隔离。blob/状态/留痕走内存，满足压缩器依赖。
 type fakeStore struct {
 	metas   []session.Meta
 	nextID  int
 	appends []recordedAppend
+	blobs   map[string]string
 }
 
 type recordedAppend struct {
@@ -285,13 +287,33 @@ func (f *fakeStore) CreateSession(_ context.Context, meta session.Meta) (session
 	return session.Session{ID: "child-" + string(rune('0'+f.nextID))}, nil
 }
 
-func (f *fakeStore) Append(ctx context.Context, msg agent.Message) error {
+func (f *fakeStore) Append(ctx context.Context, msg agent.Message) (int64, error) {
 	sc, err := scope.FromContext(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	f.appends = append(f.appends, recordedAppend{session: sc.SessionID, msg: msg})
+	return int64(len(f.appends)), nil
+}
+
+func (f *fakeStore) AppendBlob(_ context.Context, ref, content string) error {
+	if f.blobs == nil {
+		f.blobs = map[string]string{}
+	}
+	f.blobs[ref] = content
 	return nil
+}
+
+func (f *fakeStore) GetState(context.Context) (json.RawMessage, error)  { return nil, nil }
+func (f *fakeStore) PutState(context.Context, json.RawMessage) error    { return nil }
+func (f *fakeStore) LogRequest(context.Context, agent.RequestLog) error { return nil }
+
+// wired 建一个带 Store 与压缩配置的 task 工具（D11：Store 必填）。
+func wired(llm agent.LLM, base []tools.Tool, prompt string, nest bool, store *fakeStore) *Tool {
+	task := New(llm, base, prompt, nest)
+	task.Store = store
+	task.CompactCfg = compact.Config{Window: 128_000, Auto: true}
+	return task
 }
 
 func parentCtx() context.Context {
@@ -309,8 +331,7 @@ func TestSubagentSessionPersistence(t *testing.T) {
 		stopResp("done"),
 	}}
 	base := []tools.Tool{echoTool{out: "ok"}}
-	task := New(sub, base, "SUB PROMPT", false)
-	task.Store = store
+	task := wired(sub, base, "SUB PROMPT", false, store)
 	reg := tools.NewRegistry(append(slices.Clone(base), task)...)
 	a := agent.New(main, reg, 10)
 
@@ -339,7 +360,8 @@ func TestSubagentSessionPersistence(t *testing.T) {
 	}
 }
 
-// normal 子代理不落全量父快照：只落继承标记 + task，防嵌套 O(n²)。
+// normal 子代理不落全量父快照：只落 fork 控制行 + task，防嵌套 O(n²)。
+// fork 行的 meta 记父会话与水印，读侧回放 = 父视图 + 子会话行（plan §4.9）。
 func TestSubagentNormalInheritsMarker(t *testing.T) {
 	store := &fakeStore{}
 	sub := &stubLLM{script: []agent.Response{stopResp("conclusion")}}
@@ -347,8 +369,7 @@ func TestSubagentNormalInheritsMarker(t *testing.T) {
 		toolCallResp(taskCall("summarize", "normal")),
 		stopResp("done"),
 	}}
-	task := New(sub, nil, "SUB PROMPT", false)
-	task.Store = store
+	task := wired(sub, nil, "SUB PROMPT", false, store)
 	reg := tools.NewRegistry(task)
 	a := agent.New(main, reg, 10)
 
@@ -361,9 +382,14 @@ func TestSubagentNormalInheritsMarker(t *testing.T) {
 	if len(store.appends) < 2 {
 		t.Fatalf("appends = %+v", store.appends)
 	}
-	if !strings.Contains(store.appends[0].msg.Content, "inherited") {
-		t.Fatalf("first child message should be inherit marker, got %q",
-			store.appends[0].msg.Content)
+	fork := store.appends[0].msg
+	if fork.Kind != agent.KindFork {
+		t.Fatalf("first child message should be a fork control row, got kind=%q content=%q",
+			fork.Kind, fork.Content)
+	}
+	var fm session.ForkMeta
+	if err := json.Unmarshal([]byte(fork.Content), &fm); err != nil || fm.ParentSessionID != "parent-1" {
+		t.Fatalf("fork meta = %+v, %v", fm, err)
 	}
 	if store.appends[1].msg.Content != "summarize" {
 		t.Fatalf("second child message should be task, got %q",
@@ -371,10 +397,18 @@ func TestSubagentNormalInheritsMarker(t *testing.T) {
 	}
 }
 
-// Store 已配置但 ctx 缺 scope：spawn 必须报错而非静默跳过落库。
-func TestSubagentStoreWithoutScopeErrors(t *testing.T) {
+// Store 未配置：spawn 直接报错（D11：Store 必填）。
+func TestSubagentWithoutStoreErrors(t *testing.T) {
 	task := New(&stubLLM{script: []agent.Response{stopResp("x")}}, nil, "S", false)
-	task.Store = &fakeStore{}
+	task.CompactCfg = compact.Config{Window: 128_000}
+	if _, err := task.Run(parentCtx(), json.RawMessage(`{"description":"x"}`)); err == nil {
+		t.Fatal("want store-required error")
+	}
+}
+
+// ctx 缺 scope：spawn 必须报错而非静默跳过落库。
+func TestSubagentStoreWithoutScopeErrors(t *testing.T) {
+	task := wired(&stubLLM{script: []agent.Response{stopResp("x")}}, nil, "S", false, &fakeStore{})
 	_, err := task.Run(context.Background(), json.RawMessage(`{"description":"x"}`))
 	if err == nil || !strings.Contains(err.Error(), "scope") {
 		t.Fatalf("err = %v, want scope error", err)
