@@ -72,10 +72,11 @@ const Identity = `<约定>
 
 // Env 是启动时采集的运行环境。
 type Env struct {
-	Tools     []tools.Spec // 已注册工具
-	Skills    string       // skill.Catalog 渲染结果；空串则省略该段
-	Workspace string       // 进程启动时的工作目录
-	Platform  string       // 如 darwin/arm64
+	Tools       []tools.Spec // 已注册工具
+	Skills      string       // skill.Catalog 渲染结果；空串则省略该段
+	MemoryGuide string       // 记忆层说明段（画像固定，进程内不变）；空串则省略
+	Workspace   string       // 进程启动时的工作目录
+	Platform    string       // 如 darwin/arm64
 }
 
 // Build 按变化频率从低到高拼接各段：identity → tools → skills → workspace。
@@ -87,6 +88,11 @@ func Build(e Env) string {
 	b.WriteString("\n\n## 工具\n本会话可用的工具（参数定义见工具 schema）：")
 	for _, s := range e.Tools {
 		fmt.Fprintf(&b, "\n- %s: %s", s.Name, s.Description)
+	}
+
+	if e.MemoryGuide != "" {
+		b.WriteString("\n\n## 记忆\n")
+		b.WriteString(e.MemoryGuide)
 	}
 
 	if e.Skills != "" {

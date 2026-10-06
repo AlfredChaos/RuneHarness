@@ -23,7 +23,7 @@ func newSuggModel(st session.Store, skills []skill.Meta) *Model {
 	return New(agent.New(nil, tools.NewRegistry(), 1), Info{Model: "m"},
 		[]agent.Message{{Role: agent.RoleSystem, Content: "sys"}},
 		scope.Scope{TenantID: "t", Workspace: "/w", SessionID: "cur-session"},
-		st, skills)
+		st, skills, nil)
 }
 
 // typeKeys 逐字符把文本敲进输入框（走真实 onKey 路径）。
@@ -63,16 +63,18 @@ func TestCommandSuggestions(t *testing.T) {
 	}
 
 	all := got("/")
-	if len(all) != 4+2 {
-		t.Fatalf("/ = %v, want 4 commands + 2 skills", all)
+	if len(all) != 6+2 {
+		t.Fatalf("/ = %v, want 6 commands + 2 skills", all)
 	}
-	if all[0] != "/exit" || all[1] != "/resume" || all[2] != "/todo" || all[3] != "/compact" {
+	if all[0] != "/exit" || all[1] != "/resume" || all[2] != "/todo" ||
+		all[3] != "/compact" || all[4] != "/dream" || all[5] != "/memory" {
 		t.Fatalf("commands should come first in registry order, got %v", all)
 	}
 
-	// /compact 的描述 "context" 里有子串 "ex"：前缀命中排在描述子串命中之前
-	if got := got("/ex"); len(got) != 2 || got[0] != "/exit" || got[1] != "/compact" {
-		t.Fatalf("/ex = %v, want [/exit /compact]", got)
+	// /compact 的描述 "context"、/memory 的描述 "index" 里都有子串 "ex"：
+	// 前缀命中排在描述子串命中之前
+	if got := got("/ex"); len(got) != 3 || got[0] != "/exit" || got[1] != "/compact" || got[2] != "/memory" {
+		t.Fatalf("/ex = %v, want [/exit /compact /memory]", got)
 	}
 	if got := got("/res"); len(got) != 1 || got[0] != "/resume" {
 		t.Fatalf("/res = %v, want [/resume]", got)

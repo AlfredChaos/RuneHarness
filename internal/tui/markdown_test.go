@@ -36,7 +36,7 @@ func TestExpandMermaidKeepsSourceOnFailure(t *testing.T) {
 
 // 最终回复按 Markdown 渲染：强调标记被消化，不以原始语法出现在对话区。
 func TestFinalMessageRendersMarkdown(t *testing.T) {
-	m := New(agent.New(nil, tools.NewRegistry(), 1), Info{Model: "m"}, []agent.Message{{Role: agent.RoleSystem, Content: "sys"}}, scope.Scope{}, nil, nil)
+	m := New(agent.New(nil, tools.NewRegistry(), 1), Info{Model: "m"}, []agent.Message{{Role: agent.RoleSystem, Content: "sys"}}, scope.Scope{}, nil, nil, nil)
 	m.Update(turnDoneMsg{history: []agent.Message{{Role: agent.RoleAssistant, Content: "# Title\n\n**bold** text"}}})
 	plain := ansi.Strip(m.transcript)
 	if strings.Contains(plain, "**bold**") || strings.Contains(plain, "# Title") {

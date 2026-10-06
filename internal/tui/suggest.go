@@ -52,6 +52,8 @@ var slashCommands = []slashCmd{
 	{name: "resume", desc: "resume a previous session", hasArgs: true},
 	{name: "todo", desc: "toggle the task list"},
 	{name: "compact", desc: "compact the conversation context [instructions]"},
+	{name: "dream", desc: "consolidate unprocessed turns into memory"},
+	{name: "memory", desc: "show the memory index"},
 }
 
 // suggestion 是下拉框中的一行。

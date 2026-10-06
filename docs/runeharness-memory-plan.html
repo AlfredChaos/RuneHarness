@@ -307,7 +307,6 @@
 
     .scene-q {
       color: var(--ink-2);
-      font-style: normal;
       margin-bottom: 14px
     }
 
@@ -321,7 +320,6 @@
       border-radius: 4px;
       padding: 2px 7px;
       margin-right: 10px;
-      font-style: normal;
       vertical-align: 2px
     }
 
@@ -421,7 +419,7 @@
       font-family: var(--mono);
       font-size: 10.5px;
       font-weight: 700;
-      width: 64px;
+      width: 72px;
       flex-shrink: 0;
       padding-top: 3px;
       letter-spacing: .04em
@@ -441,6 +439,10 @@
 
     .msg.s .who {
       color: var(--ink-3)
+    }
+
+    .msg.m .who {
+      color: var(--teal)
     }
 
     .msg .bd {
@@ -660,24 +662,6 @@
       line-height: 1.8
     }
 
-    .svg-wrap {
-      background: var(--paper);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      padding: 26px;
-      overflow-x: auto;
-      box-shadow: var(--shadow);
-      margin: 18px 0 8px
-    }
-
-    .svg-cap {
-      font-size: 12.5px;
-      color: var(--ink-3);
-      text-align: center;
-      margin-top: 12px;
-      font-family: var(--mono)
-    }
-
     .src {
       font-family: var(--mono);
       font-size: 11.5px;
@@ -707,94 +691,98 @@
     <header>
       <div class="eyebrow">设计文档 · RuneHarness Internals</div>
       <h1>RuneHarness 记忆模块方案</h1>
-      <p class="subtitle">一层不丢细节的存储：文件仓库 + 索引 + 按需召回 + 后台提取。同一份机制按
-        <code>Profile</code> 分形——coding agent 记工程经验，陪伴 agent 记人，专家 agent 记领域事实。
-      </p>
+      <p class="subtitle">记忆统一进 SQLite。会话启动时把用户记忆注入第一条 user 消息。/dream 是唯一的提取入口：手动触发、定时触发、退出时收尾各一次。换人格 = 换 Profile。</p>
       <div class="meta">
-        <span>依据 s09 教学版 + CC src/memdir、services/{extractMemories, autoDream, SessionMemory}</span>
+        <span>依据 learn.shareai.run s09 + CC src/memdir、services/{extractMemories, autoDream}</span>
         <span>衔接 docs/runeharness-compaction-plan.html</span>
-        <span>v0.1 草案 · 2026-10-06</span>
+        <span>v0.4 草案 · 2026-10-06 · 统一 DB + supersede 流水 + entities/related 关系列</span>
       </div>
     </header>
 
     <div class="guide">
       <div class="inner">
-        <b>怎么读：</b>第 1 章给结论与四个关键取舍；第 2 章对比教学版与 CC 实装、说明每条抄什么；第 3 章列 RH
-        现状里决定方案形态的六条约束；第 4 章定义两个核心抽象（Space / Profile）；第 5–8 章是存储、读、写、整理四条机制；第 9
-        章给两个内置 Profile 的完整定义；第 10–12 章是装配、边界与安全；第 13–14 章排阶段与未决项。<br>
-        前置约定：下文"视图"指 <code>session.Fold</code> 组装出的发送形态，"原始行"指
-        <code>LoadRawHistory</code> 返回的 append-only 行；两者不是一回事，方案里反复用到这个区分。
+        <b>怎么读：</b>第 1 章给结论。第 2、3 章说明参照对象和现状约束。第 4 章定义两个抽象（Space / Profile）。第 5–8
+        章是存储、读、写、dream 四条机制，每条先给场景再讲设计。第 9 章给两个画像的完整定义。第 10–15 章是装配、边界、风险、阶段与未决项。<br><br>
+        <b>术语表：</b><br>
+        <code>记忆空间</code>：一个隔离的记忆全集，等于 DB 里的一组行（<code>(tenant, space)</code> 主键前缀）。<br>
+        <code>索引</code>：一段渲染文本，每行一条记忆的一句话描述，由 SQL 查询生成，不落盘。<br>
+        <code>正文</code>：一条记忆的完整内容。<br>
+        <code>提取</code>：dream 的第一阶段，从对话行里筛出该记的内容。<br>
+        <code>整理</code>：dream 的第二阶段，合并、去重、淘汰已有记忆。<br>
+        <code>画像</code>（<code>Profile</code>）：这套 agent 该记什么的全部配置。<br>
+        <code>视图</code>：<code>session.Fold</code> 组装的发送形态。<code>原始行</code>：append-only 消息行。<br>
+        <code>未消化行</code>：id 大于本空间记录的水位的原始行。
       </div>
     </div>
 
     <!-- ============ 1. 结论先行 ============ -->
     <section id="conclusion">
       <div class="chap">第 1 章 · 结论先行</div>
-      <h2>一个目录、一份索引、两条写路径、两条读路径</h2>
+      <h2>一张表、一次启动注入、一个 /dream 命令</h2>
 
       <div class="bigconclusion">
-        记忆 = <b>记忆空间</b>（一个按 scope 派生的目录）里的 <code>.md</code> 文件集 +
-        <code>MEMORY.md</code> 索引。<b>读</b>：索引随 user 消息按需注入，正文由一次 side-query 按查询选 ≤5
-        篇附加。<b>写</b>：模型经专用 <code>memory</code> 工具直写（索引由代码重建，模型不碰索引）+ Stop hook
-        触发后台提取（side-query 出 JSON ops，代码落盘）。<b>整理</b>：低频 Dream 合并去重。<b>换 persona =
-          换一个 <code>Profile</code> 对象</b>——类型辞典、提取焦点、空间键、读写节奏四个旋钮决定"记什么、往哪记、怎么取"。
+        <p><b>记忆 = <code>memories</code> 表 + 启动注入 + dream 循环。</b></p>
+        <p>记忆存在 <code>~/.rune/memory.db</code> 里，按 <code>(tenant, space, name)</code> 隔离。云端换成同一个
+          <code>memory.Store</code> 接口的 Postgres 实现。
+        </p>
+        <p><b>读</b>：会话启动时，代码把索引和常驻正文拼进第一条 user 消息。这条消息落在 <code>Fold</code>
+          首部，整个会话都在视图里。dream 更新记忆后，下一条 user 消息重新注入一份新快照。</p>
+        <p><b>写</b>：模型用 <code>memory</code> 工具直写；<code>/dream</code>
+          消化本空间所有未消化的会话行，产出 ops 更新记忆。dream 有三个触发器：手动命令、进程内定时器、正常退出时收尾。</p>
+        <p><b>换人格 = 换 <code>Profile</code>。</b>画像决定记什么、记到哪、哪些类型常驻注入。机制不变。</p>
       </div>
 
-      <p>方案由四个取舍定形：</p>
+      <p>四个取舍定形：</p>
       <div class="steps">
         <div class="step">
           <div class="n">1</div>
-          <div class="st"><b>记忆落文件，不落 DB——与压缩相反</b>
-            <div class="sd">压缩状态是机器中间态，所以进 <code>session.Store</code>；记忆是知识资产：用户要能读、能手改、能带走、能
-              grep。文件形态与 CC 一致，与 skill 的渐进披露一致。云端形态下文件后端可换对象存储，
-              <code>Store</code> 接口不变（§15）。
+          <div class="st"><b>记忆统一进 DB，不落文件</b>
+            <div class="sd">记忆按行存进独立库文件 <code>~/.rune/memory.db</code>。代码独占写口。云端多租户下进程盘既不隔离也不持久，DB
+              形态本地云端同构——本地是 SQLite，云端是 Postgres，换 <code>memory.Store</code> 实现即可。代价是用户不能像改文件一样改记忆，由
+              <code>/memory</code> 命令和 <code>memory</code> 工具补上读写口。见 §5。
             </div>
           </div>
         </div>
         <div class="step">
           <div class="n">2</div>
-          <div class="st"><b>内容注入走 user 消息，行为指令走 system</b>
-            <div class="sd"><code>prompt.go</code> 已定约定：会话内可变内容不进 system 行（前缀缓存）。所以 Profile 的稳定指令段进
-              system prompt，索引与选中正文拼进当轮 user 消息——与 <code>expandMentions</code> 的
-              <code>&lt;attachments&gt;</code> 块同一形态（§6）。
-            </div>
+          <div class="st"><b>注入挂第一条 user 消息，借 Fold 首部常驻</b>
+            <div class="sd"><code>Fold</code> 永远保留前 3 条真实 user 消息作首部。记忆块骑在第一条 user
+              消息上，就等于在视图里常驻——压缩甩不掉它，也不需要水印机制。代价是它是快照：dream
+              改了记忆后，下一条 user 消息附一份新索引，模型以最新份为准。见 §6。</div>
           </div>
         </div>
         <div class="step">
           <div class="n">3</div>
-          <div class="st"><b>写入面由专用工具封死</b>
-            <div class="sd">RH 没有 <code>write_file</code>，写文件只能经 <code>run_command</code>——模型每存一条记忆都会撞 Gate3
-              确认弹窗，且无法限制写哪里。<code>memory</code> 工具把写盘封死在记忆目录内：slug
-              清洗、保留名拒绝、索引重建全部在代码侧（§7.1）。
+          <div class="st"><b>写面由专用工具封死</b>
+            <div class="sd">RH 没有 <code>write_file</code>，写文件只能经 <code>run_command</code> 撞 Gate3 确认。
+              <code>memory</code> 工具直接调 <code>Store</code>，参数只有 name/type/description/body，模型给不了路径也给不了
+              tenant。见 §7.1。
             </div>
           </div>
         </div>
         <div class="step">
           <div class="n">4</div>
-          <div class="st"><b>提取是 side-query，不是 forked agent</b>
-            <div class="sd">CC 用 forked agent（共享 prompt 缓存、受限工具表、maxTurns=5）。v1 用单次
-              <code>Chat</code>：输入 = Profile 提取提示 + 已有清单 + 新原始行，输出 = JSON ops
-              数组，代码执行写盘。读改写在文件小时成立；升级路径是换成迷你 agent loop（§15）。
-            </div>
+          <div class="st"><b>提取只走 dream，消化范围是全部未消化行</b>
+            <div class="sd">不做每轮后台提取。dream 按会话水位读本空间所有未消化的原始行——不只当前会话。进程被
+              kill 不会丢记忆，下次 dream 自动补账。见 §8。</div>
           </div>
         </div>
       </div>
 
       <div class="note warn">
-        <div class="nt">明确不做（v1）</div>
-        <p>四件事不在本方案内：<b>embedding 向量检索</b>（文件 ≤200 篇，LLM 直选足够）、<b>session
-            memory 免摘要压缩</b>（RH 已有滚动摘要管线，<code>internal/compact</code>）、<b>多层空间</b>（private + team
-          双目录，留扩展缝）、<b>远端记忆同步</b>。</p>
+        <div class="nt">注意 · v1 不做四件事</div>
+        <p>不做 embedding 检索：单空间行数预期在百级，索引全文注入够用。不做每轮 side-query
+          选择：启动注入已覆盖常驻部分，其余正文用 <code>memory</code> 工具按需取。不做 session
+          memory：RH 已有滚动摘要。不做多层空间（private + team）：留扩展缝。</p>
       </div>
     </section>
 
     <!-- ============ 2. 参照系 ============ -->
     <section id="reference">
       <div class="chap">第 2 章 · 参照系</div>
-      <h2>教学版学骨架，CC 实装抄细节</h2>
+      <h2>教学版给骨架，CC 实装给细节</h2>
 
-      <p class="lede">s09 的机制与 CC 源码同构，但实装在五处明显更硬。下表逐条给出 RH 的取法；取教学版的理由几乎都是"RH 已有等价物或 v1
-        不需要"，取实装的理由是"那里有 eval 校准过的细节"。</p>
+      <p class="lede">s09 的机制与 CC 源码同构。本方案把 CC 的文件形态换成 DB 形态，其余形状保留。</p>
 
       <div class="tbl-wrap">
         <table>
@@ -807,130 +795,108 @@
           <tr>
             <td><b>存储</b></td>
             <td><code>.memory/*.md</code> + <code>MEMORY.md</code></td>
-            <td><code>~/.claude/projects/&lt;sanitized-git-root&gt;/memory/</code>，索引 200 行 / 25KB 截断
-            </td>
-            <td>文件集 + 索引。<br>根：<code>~/.rune/memory/&lt;space&gt;/</code>，space 键按 Profile 从 scope 派生（§4）
-            </td>
+            <td><code>~/.claude/projects/&lt;git-root&gt;/memory/</code></td>
+            <td><code>~/.rune/memory.db</code>。<code>(tenant, space, name)</code> 主键，内容为 Markdown（§5）</td>
           </tr>
           <tr>
-            <td><b>索引维护</b></td>
-            <td>代码重建</td>
-            <td>模型两步操作：写文件 + 手改 <code>MEMORY.md</code></td>
-            <td><b>代码重建</b>。模型不碰索引，消掉索引漂移这一失败面（§7.1）
-            </td>
+            <td><b>索引</b></td>
+            <td>代码重建文件</td>
+            <td>模型手写第二步</td>
+            <td>不存在文件。索引是 SQL 查询渲染出的文本（§6.1）</td>
           </tr>
           <tr>
-            <td><b>按需召回</b></td>
-            <td>LLM side-query 选 ≤5，关键词降级</td>
-            <td>Sonnet + JSON schema；≤200 文件按 mtime 排；每文件 ≤200 行 / 4KB；session 预算 60KB；每轮
-              prefetch 非阻塞</td>
-            <td>side-query + 关键词降级 + 硬超时。<br><code>alreadySurfaced</code> 去重照抄（§6.2）
-            </td>
+            <td><b>召回</b></td>
+            <td>LLM side-query 选 ≤5</td>
+            <td>side-query + JSON schema + prefetch 非阻塞</td>
+            <td>启动注入索引 + 常驻正文。其余正文模型用 <code>memory op=read</code> 按需取（§6.2）</td>
           </tr>
           <tr>
             <td><b>提取</b></td>
-            <td><code>stop_reason != tool_use</code> 后 inline 提取</td>
-            <td>stop hook fire-and-forget → forked agent：受限 canUseTool、<code>skipTranscript</code>、maxTurns=5、消息游标、与主代理写盘互斥、连跑合并
-            </td>
-            <td><code>OnStop</code> hook 起 goroutine + 单次 side-query 出 JSON ops。游标、互斥、熔断照抄（§7.2）
-            </td>
+            <td><code>stop_reason</code> 后 inline</td>
+            <td>stop hook 起 forked agent：受限工具、游标、互斥、连跑合并</td>
+            <td><code>/dream</code> + 定时器 + 退出收尾，单次 side-query 出 JSON ops。游标和熔断保留（§8）</td>
           </tr>
           <tr>
             <td><b>整理</b></td>
             <td>文件数 ≥10 触发</td>
-            <td>四层门控：24h / 扫描节流 / ≥5 会话 / 锁文件</td>
-            <td>三门：24h / 物量（文件数或改动数）/ 锁文件 1h 过期（§8）
-            </td>
+            <td>四层门控 + forked agent</td>
+            <td>dream 的第二阶段，物量门 + 锁（§8.3）</td>
           </tr>
           <tr>
             <td><b>类型辞典</b></td>
-            <td>user / feedback / project / reference</td>
-            <td>同上 + <code>&lt;scope&gt;</code> 标签 + eval 校准过的 save/use 段落（<code>memoryTypes.ts</code>）
-            </td>
-            <td>辞典进 <code>Profile</code>，coding profile 直接沿用 CC 四类文案（§9.1）
-            </td>
+            <td>四类</td>
+            <td>四类 + eval 校准过的提示文案</td>
+            <td>辞典进 <code>Profile</code>。coding 画像沿用 CC 四类（§9）</td>
           </tr>
           <tr>
             <td><b>行为提示</b></td>
             <td>未细分</td>
-            <td>how-to-save / what-not-to-save / when-to-access / before-recommending 四段，逐句有 eval 依据</td>
-            <td>四段照抄成 Profile 组件，per-profile 可替换（§9）
-            </td>
-          </tr>
-          <tr>
-            <td><b>KAIROS</b></td>
-            <td>无</td>
-            <td>长驻会话只追加日志 <code>logs/YYYY-MM-DD.md</code>，夜间蒸馏进索引</td>
-            <td><code>Mode=journal</code>：陪伴等长驻场景写日志，蒸馏交给整理流程（§7.3）
-            </td>
+            <td>how-to-save / what-not-to-save / when-to-access / before-recommending 四段</td>
+            <td>四段照抄成画像组件，可按画像替换（§9）</td>
           </tr>
           <tr>
             <td><b>session memory</b></td>
             <td>提及</td>
-            <td>独立 <code>memory.md</code>，供免 LLM 压缩</td>
-            <td><b>不做</b>。RH 压缩已滚动摘要；session_state 已有熔断</td>
+            <td>独立 memory.md 供免 LLM 压缩</td>
+            <td>不做。RH 已有滚动摘要（§15）</td>
           </tr>
         </table>
       </div>
 
       <div class="note">
-        <div class="nt">读法</div>
-        <p>CC 实装里真正值得连文案一起抄的是提示词段落：<code>TYPES_SECTION_*</code>、
+        <div class="nt">提示</div>
+        <p>CC 提示词里值得连文案抄的是四段行为约束：<code>TYPES_SECTION_*</code>、
           <code>WHAT_NOT_TO_SAVE_SECTION</code>、<code>WHEN_TO_ACCESS_SECTION</code>、
-          <code>TRUSTING_RECALL_SECTION</code> 都标注了 eval 案例（如"ignore memory"反模式、H1
-          验证-再推荐）。这些是磨出来的行为约束，重写一遍只会更差。机制层则可裁剪——forked agent 换成 side-query 属于降级，但游标、互斥、门控这些"形状"必须保留。
+          <code>TRUSTING_RECALL_SECTION</code>。这些段落逐句标注了 eval 案例，例如"用户说 ignore memory
+          时不读不引"、"按记忆推荐前先验证文件还在"。重写一遍不会更好，直接搬进画像（§9）。
         </p>
       </div>
     </section>
 
-    <!-- ============ 3. RH 现状约束 ============ -->
+    <!-- ============ 3. 现状约束 ============ -->
     <section id="constraints">
       <div class="chap">第 3 章 · 现状约束</div>
       <h2>RH 里六条已经定死的边界</h2>
 
-      <p class="lede">方案不是从白纸画的，是从现有代码的六个事实倒推的。每条事实直接排除掉一类做法。</p>
+      <p class="lede">方案从现有代码的六个事实倒推。每条事实排除一类做法。</p>
 
       <div class="tbl-wrap">
         <table>
           <tr>
             <th>现状</th>
             <th>位置</th>
-            <th>排除掉的做法 / 推出的结论</th>
+            <th>推出的结论</th>
           </tr>
           <tr>
-            <td>没有 <code>write_file</code>，写文件只能经 <code>run_command</code>，未白名单命令弹 Gate3 确认</td>
+            <td>没有 <code>write_file</code>。写文件只能经 <code>run_command</code>，未白名单命令弹 Gate3 确认</td>
             <td><code>internal/tools</code>、<code>internal/permission</code></td>
-            <td>"教模型用 shell 写记忆"不可行（每存一条弹一次窗，路径还封不住）⇒ 必须有专用写工具</td>
+            <td>需要专用写工具直连 <code>Store</code>，参数不含路径</td>
           </tr>
           <tr>
-            <td>信任根经 ctx 传播：<code>Scope{TenantID, SessionID, Workspace}</code>，模型参数永远碰不到</td>
+            <td>信任根经 ctx 传播：<code>Scope{TenantID, SessionID, Workspace}</code></td>
             <td><code>internal/scope/scope.go</code></td>
-            <td>记忆空间键从 scope 函数侧派生；模型工具参数里不出现目录路径。云端加 <code>SubjectID</code> 字段即可扩展（§4.1）
-            </td>
+            <td>空间键从 scope 函数侧派生。云端加 <code>SubjectID</code> 字段（§4.1）</td>
           </tr>
           <tr>
-            <td>append-only 消息行 + 控制行；<code>Fold</code> 组装视图 = system + 首部 + 最新摘要 + 尾部</td>
+            <td>append-only 消息行 + 控制行。<code>Fold</code> 视图 = system + 首部（前 3 条 user 消息）+ 摘要 + 尾部
+            </td>
             <td><code>internal/session/view.go</code></td>
-            <td>注入块是普通 user 消息内容，随 fold/摘要/卸载自然消化——不需要新消息种类，也不需要"过期清理"
-            </td>
+            <td>记忆块骑在第一条 user 消息上就常驻首部。这是免费的长驻位（§6）</td>
           </tr>
           <tr>
-            <td><code>prompt.go</code> 注释明示：memory 等会话内可变内容应作为 user 消息注入，避免打碎前缀缓存</td>
+            <td><code>prompt.go</code> 注释：可变内容应作为 user 消息注入</td>
             <td><code>internal/prompt/prompt.go:3-4</code></td>
-            <td>索引/正文一律走 user 消息；system 只收 Profile 的稳定指令段
-            </td>
+            <td>记忆内容走 user 消息。system 只收画像的稳定指令段</td>
           </tr>
           <tr>
-            <td><code>session_state</code> 是每会话一个 JSON blob，被 compact 整写覆盖</td>
+            <td><code>session_state</code> 每会话一个 JSON blob，被 compact 整写覆盖</td>
             <td><code>internal/compact/maintain.go:202-211</code></td>
-            <td>提取游标若写进去会被 compact 的 <code>saveState</code> 抹掉 ⇒ 记忆状态自管文件（<code>.state.json</code> 放记忆目录内）
-            </td>
+            <td>dream 水位和熔断计数不放 <code>session_state</code>，放 <code>memory_meta</code> 表（§5.2）</td>
           </tr>
           <tr>
-            <td>hook 五挂点：UserPromptSubmit 可 <code>replace</code>；OnStop 可做副作用；子代理有独立 Hooks 实例</td>
-            <td><code>internal/agent/hooks.go</code></td>
-            <td>召回挂 <code>OnUserPromptSubmit</code>（每用户轮一次，粒度正确）；提取挂 <code>OnStop</code>（fire-and-forget，返回 ""）；不装配进子代理即天然不跑
-            </td>
+            <td>退出路径是 <code>tea.Quit</code> → <code>main.go</code> 收尾。子代理有独立 Hooks</td>
+            <td><code>internal/tui/model.go:355</code></td>
+            <td>退出时补跑一次 dream 挂 <code>main.go</code>。不装配进子代理即天然不跑</td>
           </tr>
         </table>
       </div>
@@ -939,140 +905,207 @@
     <!-- ============ 4. 核心抽象 ============ -->
     <section id="abstractions">
       <div class="chap">第 4 章 · 核心抽象</div>
-      <h2>Space 定"记在哪"，Profile 定"记什么、怎么取"</h2>
+      <h2>Space 定"记在哪"，Profile 定"记什么"</h2>
 
-      <h3>4.1 Space：一个目录 = 一个隔离的记忆全集</h3>
-      <p>Space 是隔离与寻址单元。它由 <code>Profile.Space</code> 声明键型，由 <code>memory.New</code> 从 ctx 的
-        scope 解析出具体目录。模型从始至终不知道路径——写工具参数只有 <code>name/type/description/body</code>，读侧由召回器代读。
-      </p>
+      <p class="lede">灵活性需求只落在两个抽象上。Space 是隔离和寻址单元。Profile 是记忆的全部策略。</p>
+
+      <h3>4.1 Space：一个空间 = DB 里一组行</h3>
+
+      <div class="scene blue">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">云端陪伴 agent 服务两个用户</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">一个陪伴 agent 实例部署在云端。租户 tenant-7 下的用户 u100 和用户 u200
+            先后与它对话。两人各自的画像和共同经历不应互相泄漏。</p>
+          <p>请求入口把 <code>Scope{TenantID: "tenant-7", SubjectID: "u100"}</code> 注进 ctx。代码按画像的
+            <code>Space=subject</code> 解析出空间键 <code>subject/tenant-7/u100</code>。所有 SQL 都带
+            <code>WHERE tenant=? AND space=?</code>。
+          </p>
+          <p>两个空间在同一张表里是两组行。模型全程看不到这些键。模型要跨用户读记忆，参数层面没有能表达这个动作的字段。
+          </p>
+        </div>
+      </div>
+
+      <p><b>结论：Space 由画像声明键型，由代码从 ctx 的 scope 解析。</b>模型从始至终不知道键。</p>
 
       <div class="tbl-wrap">
         <table>
           <tr>
             <th>SpaceKind</th>
             <th>键来源</th>
-            <th>适用 persona</th>
-            <th>本地形态</th>
+            <th>适用人格</th>
+            <th>space 列的值</th>
           </tr>
           <tr>
             <td><code>workspace</code></td>
-            <td><code>scope.Workspace</code> 清洗为 slug（对齐 CC 的 git-root 口径：worktree 归并到同一根）</td>
+            <td><code>scope.Workspace</code> 清洗为 slug（worktree 归并到 git 根）</td>
             <td>coding agent</td>
-            <td><code>~/.rune/memory/ws/&lt;slug&gt;/</code></td>
+            <td><code>ws/&lt;slug&gt;</code></td>
           </tr>
           <tr>
             <td><code>subject</code></td>
-            <td><code>scope.SubjectID</code>（新增字段，云端入口注入终端用户 id）</td>
+            <td><code>scope.SubjectID</code>（新增字段，云端入口注入）</td>
             <td>陪伴 / 专家 agent</td>
-            <td><code>~/.rune/memory/subject/&lt;tenant&gt;/&lt;subject&gt;/</code>；SubjectID 为空时回落
-              <code>local-user</code></td>
+            <td><code>subject/&lt;subject&gt;</code>。SubjectID 为空时回落 <code>local-user</code></td>
           </tr>
           <tr>
             <td><code>tenant</code></td>
             <td><code>scope.TenantID</code></td>
             <td>租户级共享知识（预留）</td>
-            <td><code>~/.rune/memory/tenant/&lt;tenant&gt;/</code></td>
+            <td><code>shared</code>（tenant 列已是边界）</td>
           </tr>
         </table>
       </div>
 
       <div class="note warn">
-        <div class="nt">注意 · scope 加一个字段</div>
-        <p><code>subject</code> 空间需要 <code>Scope.SubjectID</code>：云端请求入口按 auth 身份注入，本地 CLI 恒为
-          <code>local-user</code>。这是本方案对既有代码唯一的横切改动；其余全部在新包 <code>internal/memory</code>
-          内闭环。
+        <div class="nt">注意 · 本方案对既有代码唯一的横切改动</div>
+        <p><code>subject</code> 空间需要 <code>Scope.SubjectID</code> 字段。云端入口按 auth 身份注入。本地 CLI 恒为
+          <code>local-user</code>。其余实现全部收在新包 <code>internal/memory</code> 内。
         </p>
       </div>
 
       <h3>4.2 Profile：记忆画像</h3>
-      <p>Profile 是"这套 agent 该长什么样的记忆"的全部答案。它不进存储层——存储层只看到目录与文件；它只进
-        prompt 装配与读写节奏。</p>
+
+      <div class="scene violet">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">同一份代码，两种人格</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">用户在仓库 <code>RuneHarness</code> 里对 coding agent 说"集成测试别 mock 数据库"。同一份二进制，换一个
+            <code>Profile</code>，作为陪伴 agent 听老周说"以后叫我老周就行"。
+          </p>
+          <p>两个请求走同一套读写机制。coding 画像把第一条存成 <code>type: feedback</code>。companion
+            画像把第二条存成 <code>type: expression</code>。类型辞典不同，机制相同。</p>
+        </div>
+      </div>
+
+      <p><b>结论：Profile 是一套完整策略。</b>它声明空间键型、类型辞典、提取焦点、不存清单、常驻注入类型和 dream
+        节奏。它不进存储层。存储层只看到行。</p>
 
       <pre><code><span class="kw">type</span> <span class="hl">SpaceKind</span> <span class="kw">string</span> <span class="cm">// workspace | subject | tenant</span>
-<span class="kw">type</span> <span class="hl">Mode</span>     <span class="kw">string</span> <span class="cm">// indexed  | journal</span>
 
-<span class="cm">// TypeDef 是一类记忆的完整说明：名字进 frontmatter，文案进</span>
-<span class="cm">// system 指令段与提取提示（对齐 CC TYPES_SECTION 的逐类型结构）。</span>
+<span class="cm">// TypeDef 定义一类记忆：名字进 type 列，文案进 system 指令和 dream 提示。</span>
 <span class="kw">type</span> <span class="hl">TypeDef</span> <span class="kw">struct</span> {
-    Name    <span class="kw">string</span> <span class="cm">// frontmatter type 值，如 "feedback"</span>
-    Desc    <span class="kw">string</span> <span class="cm">// 这类记忆是什么</span>
-    Save    <span class="kw">string</span> <span class="cm">// 何时存</span>
-    Use     <span class="kw">string</span> <span class="cm">// 读到后怎么用</span>
-    Body    <span class="kw">string</span> <span class="cm">// body 结构约定（如 "**Why:** / **How to apply:**"）</span>
-    Example <span class="kw">string</span> <span class="cm">// 一两条对话示例</span>
+    Name         <span class="kw">string</span> <span class="cm">// type 值，如 "feedback"</span>
+    Desc         <span class="kw">string</span> <span class="cm">// 这类记忆是什么</span>
+    Save         <span class="kw">string</span> <span class="cm">// 何时存</span>
+    Use          <span class="kw">string</span> <span class="cm">// 读到后怎么用</span>
+    Body         <span class="kw">string</span> <span class="cm">// 正文结构约定，如 "**Why:** / **How to apply:**"</span>
+    Example      <span class="kw">string</span> <span class="cm">// 对话示例</span>
+    AlwaysInject <span class="kw">bool</span>   <span class="cm">// true = 启动注入时连正文一起带上（pinned）</span>
 }
 
-<span class="kw">type</span> <span class="hl">ExtractCfg</span> <span class="kw">struct</span> {
-    MinNewRows   <span class="kw">int</span> <span class="cm">// 新原始行数下限，不足不提取（默认 2）</span>
-    EveryTurns   <span class="kw">int</span> <span class="cm">// 每 N 个可提取轮跑一次（coding=1，companion=1）</span>
-    BodyBudget   <span class="kw">int</span> <span class="cm">// 提取输入里允许携带的已有正文总字节（默认 24KB）</span>
+<span class="kw">type</span> <span class="hl">DreamCfg</span> <span class="kw">struct</span> {
+    MinRows      <span class="kw">int</span> <span class="cm">// 未消化行数下限，不足不跑（默认 4）</span>
+    IntervalMin  <span class="kw">int</span> <span class="cm">// 定时器间隔分钟（coding=60，companion=120）</span>
+    BodyBudget   <span class="kw">int</span> <span class="cm">// dream 输入可携带的已有正文总字节（默认 24KB）</span>
+    BatchRows    <span class="kw">int</span> <span class="cm">// 单次消化原始行上限，超出分批（默认 300）</span>
 }
 
-<span class="kw">type</span> <span class="hl">RecallCfg</span> <span class="kw">struct</span> {
-    MaxFiles     <span class="kw">int</span> <span class="cm">// 单轮正文注入上限（默认 5）</span>
-    MaxFileBytes <span class="kw">int</span> <span class="cm">// 单篇正文上限（默认 4KB，对齐 CC 4096B）</span>
-    MaxTurnBytes <span class="kw">int</span> <span class="cm">// 单轮正文合计上限（默认 16KB）</span>
-    Selector     <span class="kw">string</span> <span class="cm">// "llm" | "keyword"；llm 失败自动降级</span>
+<span class="kw">type</span> <span class="hl">InjectCfg</span> <span class="kw">struct</span> {
+    MaxIndexBytes <span class="kw">int</span> <span class="cm">// 索引文本上限（默认 8KB）</span>
+    MaxBodyBytes  <span class="kw">int</span> <span class="cm">// 常驻正文合计上限（默认 16KB）</span>
 }
 
 <span class="kw">type</span> <span class="hl">Profile</span> <span class="kw">struct</span> {
-    Name    <span class="kw">string</span>
-    Space   SpaceKind
-    Mode    Mode
-    Types   []TypeDef
-    DoNot   []<span class="kw">string</span> <span class="cm">// "不存"清单</span>
-    Focus   <span class="kw">string</span>   <span class="cm">// 提取侧重点（提取提示的第一段）</span>
-    Extract ExtractCfg
-    Recall  RecallCfg
-    WriteTool <span class="kw">bool</span> <span class="cm">// 是否向模型暴露 memory 写工具</span>
+    Name      <span class="kw">string</span>
+    Space     SpaceKind
+    Types     []TypeDef
+    DoNot     []<span class="kw">string</span> <span class="cm">// 不存清单</span>
+    Focus     <span class="kw">string</span>   <span class="cm">// 提取侧重点，dream 提示的第一段</span>
+    Dream     DreamCfg
+    Inject    InjectCfg
+    WriteTool <span class="kw">bool</span>     <span class="cm">// 是否向模型暴露 memory 工具</span>
 }</code></pre>
 
-      <p>Profile 两份来源：内置 Go 常量（<code>coding</code> / <code>companion</code> / <code>generic</code>，见 §9）+
-        文件覆盖 <code>~/.rune/profiles/&lt;name&gt;.md</code>（frontmatter 写旋钮，正文写辞典与 Focus——与 skill 的
-        <code>SKILL.md</code> 同一渐进披露形态）。选择顺序：<code>RUNE_MEMORY_PROFILE</code> &gt; 文件 &gt; 内置。
+      <p>画像有两个来源。内置 Go 常量提供 <code>coding</code>、<code>companion</code>、<code>generic</code>（§9）。文件
+        <code>~/.rune/profiles/&lt;name&gt;.md</code> 提供自定义画像，frontmatter 写旋钮，正文写辞典和 Focus。选择顺序是
+        <code>RUNE_MEMORY_PROFILE</code> 环境变量、文件、内置。
       </p>
     </section>
 
     <!-- ============ 5. 存储 ============ -->
     <section id="storage">
       <div class="chap">第 5 章 · 存储</div>
-      <h2>目录布局与文件格式</h2>
+      <h2>一个 DB 文件，两张表</h2>
 
-      <pre><code>~/.rune/memory/&lt;space-kind&gt;/&lt;key&gt;/
-├── <span class="hl">MEMORY.md</span>            <span class="cm"># 索引：一行一条目，≤200 行 / 25KB（超出截断+警告行，对齐 CC）</span>
-├── user-role.md         <span class="cm"># 一条记忆一个文件，YAML frontmatter + 正文</span>
-├── feedback-testing.md
-├── logs/YYYY/MM/YYYY-MM-DD.md   <span class="cm"># 仅 journal 模式：追加日志</span>
-├── .state.json          <span class="cm"># 代码自管状态：提取游标、熔断计数、上次整理时间</span>
-└── .consolidate.lock    <span class="cm"># 整理锁；mtime 即 lastConsolidatedAt，1h 过期</span></code></pre>
+      <p class="lede">记忆存 <code>~/.rune/memory.db</code>。它与会话库 <code>~/.rune/sessions.db</code>
+        是两个文件、两个连接——会话 schema 演进不影响记忆 schema。所有读写经 <code>memory.Store</code> 接口，云端换 Postgres 实现。</p>
 
-      <h3>5.1 记忆文件</h3>
-      <pre><code>---
-name: user-role
-description: User is a senior Go engineer, new to React — frame frontend answers via backend analogues
-type: user
----
+      <h3>5.1 表结构</h3>
+      <pre><code><span class="kw">CREATE TABLE</span> <span class="hl">memories</span> (
+  tenant      <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,
+  space       <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,   <span class="cm">-- 'ws/&lt;slug&gt;' | 'subject/&lt;id&gt;' | 'shared'</span>
+  name        <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,   <span class="cm">-- slug，模型给的 name 经清洗</span>
+  type        <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,   <span class="cm">-- 画像辞典里的类型</span>
+  descr       <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,   <span class="cm">-- 一句话描述，索引行用它</span>
+  body        <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,   <span class="cm">-- Markdown 正文</span>
+  source_sess <span class="kw">TEXT</span>,            <span class="cm">-- 产生它的会话</span>
+  entities    <span class="kw">TEXT</span>,            <span class="cm">-- 逗号分隔的实体标签："孩子","领导","ingest-pipeline"</span>
+  related     <span class="kw">TEXT</span>,            <span class="cm">-- 逗号分隔的 name，指向与本条有关联的记忆</span>
+  created_at  <span class="kw">INTEGER</span> <span class="kw">NOT NULL</span>,
+  updated_at  <span class="kw">INTEGER</span> <span class="kw">NOT NULL</span>,
+  <span class="kw">PRIMARY KEY</span> (tenant, space, name)
+);
 
-正文。feedback / project 类建议结构：规则或事实先行，随后 **Why:**（用户给过的理由）
-与 **How to apply:**（何时何地生效）两行——知道 why 才能判断边界情况。</code></pre>
+<span class="kw">CREATE TABLE</span> <span class="hl">memory_log</span> (      <span class="cm">-- append-only 变更流水，可重放的来源</span>
+  seq       <span class="kw">INTEGER PRIMARY KEY AUTOINCREMENT</span>,
+  tenant    <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,
+  space     <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,
+  name      <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,
+  op        <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,       <span class="cm">-- upsert | supersede | delete | merge</span>
+  old_body  <span class="kw">TEXT</span>,               <span class="cm">-- supersede / delete 时的旧值</span>
+  new_body  <span class="kw">TEXT</span>,
+  reason    <span class="kw">TEXT</span>,               <span class="cm">-- 模型给的变更理由</span>
+  sess      <span class="kw">TEXT</span>,
+  at        <span class="kw">INTEGER</span> <span class="kw">NOT NULL</span>
+);
+
+<span class="kw">CREATE TABLE</span> <span class="hl">memory_meta</span> (
+  tenant  <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,
+  space   <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,
+  key     <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,    <span class="cm">-- 'cursor:&lt;sessID&gt;' | 'last_dream' | 'dream_failures' | 'dream_lock'</span>
+  value   <span class="kw">TEXT</span> <span class="kw">NOT NULL</span>,
+  <span class="kw">PRIMARY KEY</span> (tenant, space, key)
+);</code></pre>
 
       <ul>
-        <li>文件名 = <code>slug(name)</code>：小写、非字母数字折叠为 <code>-</code>、去 <code>..</code> 与分隔符——路径逃逸在参数层就不成立。
+        <li><code>name</code> 清洗规则与文件方案一致：转小写、非字母数字折成 <code>-</code>、拒绝 <code>..</code>
+          和分隔符。保留名集合仍在（<code>memory-index</code> 等），虽然 DB 下没有路径逃逸，清洗是为了让 name 能安全进提示和日志。
         </li>
-        <li>保留名拒绝：<code>MEMORY.md</code>、<code>.state.json</code>、<code>.consolidate.lock</code>、<code>logs/</code> 下的名字不能由工具写入。
+        <li><code>memory_meta</code> 存 dream 的运行状态：每会话水位、上次 dream 时间、熔断计数、锁行。</li>
+        <li><code>memory_log</code> 兼任两份职责：变更审计（可重放，折叠流水得到任意时刻的信念集）和
+          tombstone——dream 输入携带近期 delete 清单，防止已删记忆从未消化行里复活（§8.4）。</li>
+        <li><code>entities</code> 是"这条记忆关于谁"的标签列。实体归一在写入时由模型做，不在查询时做。
+          <code>related</code> 是记忆间的边，供按图找上下文。两者是轻量关系层，不是图数据库（§8.4）。
         </li>
-        <li>写入原子化：<code>tmp + rename</code>。多进程同空间下最后一个写者赢单文件，索引总是再生成，不失一致性。
-        </li>
+        <li>schema 版本走一行 <code>meta key='schema_version'</code>，与 session sqlite 的迁移方式一致。</li>
       </ul>
 
-      <h3>5.2 索引</h3>
-      <pre><code>- [user-role](user-role.md) — User is a senior Go engineer, new to React
-- [feedback-testing](feedback-testing.md) — Integration tests must hit a real database, not mocks</code></pre>
-      <p>索引由代码在每次写/删/整理后从 frontmatter 扫描重建，按 type 分组、mtime 降序。单行 ≤150
-        字符。模型只读索引、不写索引——CC 的"两步保存"在 RH 里被收成一步。
-      </p>
+      <h3>5.2 Store 接口：本地云端同一个形状</h3>
+      <pre><code><span class="kw">type</span> <span class="hl">Store</span> <span class="kw">interface</span> {
+    <span class="cm">// 空间从 ctx 的 scope + 画像解析。接口签名里没有租户参数，</span>
+    <span class="cm">// 模型生成的参数无法指定读写目标（与 session.Store 同一套路）。</span>
+    List(ctx)             ([]Header, error)  <span class="cm">-- name/type/descr/updated_at</span>
+    Get(ctx, name)        (Row, error)
+    Upsert(ctx, r Row)    error              <span class="cm">-- name 清洗在实现内</span>
+    Delete(ctx, name)     error
+    Meta(ctx, key)        (string, error)    <span class="cm">-- 水位/锁/熔断计数</span>
+    SetMeta(ctx, k, v)    error
+    History(ctx, name)    ([]Change, error)  <span class="cm">-- memory_log 回放一条记忆的变更史</span>
+    RecentDeletes(ctx)    ([]string, error)  <span class="cm">-- tombstone 清单，dream 输入防复活</span>
+    Lock(ctx, ttl)        (unlock func() error, ok bool, err error)
+}</code></pre>
+      <ul>
+        <li><b>本地实现</b>：SQLite + WAL。锁用 <code>memory_meta</code> 里的 <code>dream_lock</code> 行（lease +
+          过期时间，<code>INSERT OR IGNORE</code> 竞争）。</li>
+        <li><b>云端实现</b>：Postgres，同一组表。<code>tenant</code> 列天然是隔离边界；可再加行级安全策略兜底。</li>
+      </ul>
 
-      <h3>5.3 配额（全部对齐 CC 数值）</h3>
+      <h3>5.3 配额</h3>
       <div class="tbl-wrap">
         <table>
           <tr>
@@ -1081,29 +1114,29 @@ type: user
             <th>超出后的行为</th>
           </tr>
           <tr>
-            <td>扫描文件数</td>
-            <td>200 个 .md（mtime 降序）</td>
-            <td>更老的只存在目录里，不进清单——整理流程负责收敛</td>
+            <td>索引渲染</td>
+            <td>8KB（<code>Inject.MaxIndexBytes</code>），约 100 行</td>
+            <td>按 <code>updated_at</code> 降序截断，追加警告行写明哪条限命中</td>
           </tr>
           <tr>
-            <td>frontmatter 读取</td>
-            <td>前 30 行</td>
-            <td>截断解析</td>
-          </tr>
-          <tr>
-            <td><code>MEMORY.md</code> 注入</td>
-            <td>200 行 / 25KB</td>
-            <td>截断 + 追加警告行（写明哪条限命中）</td>
+            <td>单条描述</td>
+            <td>150 字符</td>
+            <td>写入时截断</td>
           </tr>
           <tr>
             <td>单篇正文注入</td>
             <td>4KB</td>
-            <td>截断 + <code>[truncated]</code> 标记</td>
+            <td>截断，追加 <code>[truncated]</code></td>
           </tr>
           <tr>
-            <td>单轮正文合计</td>
-            <td>16KB（Profile.Recall.MaxTurnBytes）</td>
-            <td>截断候选清单</td>
+            <td>启动注入正文合计</td>
+            <td>16KB（<code>Inject.MaxBodyBytes</code>）</td>
+            <td>只带常驻类型；超限时按 <code>updated_at</code> 降序取</td>
+          </tr>
+          <tr>
+            <td>dream 单次消化</td>
+            <td>300 原始行（<code>Dream.BatchRows</code>）</td>
+            <td>分批消化，水位逐批推进</td>
           </tr>
         </table>
       </div>
@@ -1112,284 +1145,538 @@ type: user
     <!-- ============ 6. 读路径 ============ -->
     <section id="read">
       <div class="chap">第 6 章 · 读路径</div>
-      <h2>索引常驻当轮，正文按需附加</h2>
+      <h2>启动注入常驻位，其余按需自取</h2>
 
-      <p class="lede">读路径全部挂在 <code>OnUserPromptSubmit</code>：每用户轮恰好一次，hook 的
-        <code>replace</code> 返回值把记忆块拼进 user 消息本体。与 <code>expandMentions</code> 的
-        <code>&lt;attachments&gt;</code> 同一形态——落库、回放、压缩都不需要新机制。</p>
-
-      <h3>6.1 索引注入：变了才注，丢了自愈</h3>
-      <p>索引若每轮重复注入会成为膨胀源（它随每条 user 消息进原始行）。hook 持两个事实做判断：</p>
-      <ol>
-        <li><code>lastIndexHash</code>：上轮注入的索引内容哈希。哈希变化 ⇒ 重新注入完整索引块。</li>
-        <li>自愈扫描：视图尾部 40 条消息内不存在 <code>&lt;memory-index&gt;</code> 标记 ⇒
-          重新注入。压缩把中段连同旧标记摘要掉之后，规则自动复活索引，不需要水印机制。</li>
-      </ol>
-      <p>注入形态（附加在 user 消息尾部）：</p>
-      <pre><code>&lt;memory-index dir="…" updated="2026-10-06T18:23+08:00"&gt;
-- [user-role](user-role.md) — …
-- [feedback-testing](feedback-testing.md) — …
-&lt;/memory-index&gt;</code></pre>
-
-      <h3>6.2 正文召回：LLM 选，关键词兜底</h3>
-      <div class="steps">
-        <div class="step">
-          <div class="n">1</div>
-          <div class="st"><b>扫描清单</b>
-            <div class="sd">读目录下 ≤200 个 .md 的 frontmatter（≤30 行/个），渲染 manifest：
-              <code>- [type] filename (mtime): description</code>。空清单直接短路，不花调用。</div>
-          </div>
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">新会话第一句："继续昨天的工作"</span>
         </div>
-        <div class="step">
-          <div class="n">2</div>
-          <div class="st"><b>side-query 选择</b>
-            <div class="sd">单次 <code>Chat</code>：system 为选择提示（"不确定就不选"；近期在用的工具不选其用法文档，但仍选其坑——抄
-              <code>findRelevantMemories.ts</code> 的区分规则），user 为 query + manifest，输出 JSON schema
-              <code>{selected: [filename]}</code> ≤5。硬超时 3s。</div>
+        <div class="scene-body">
+          <p class="scene-q">用户新开一个会话。工作区是同一个仓库，记忆空间里有昨天 dream 出的三条记忆。</p>
+          <div class="thread">
+            <div class="msg u">
+              <div class="who">user</div>
+              <div class="bd">继续昨天的工作<br><br>
+                <code>&lt;memory-index updated="2026-10-06T18:23+08:00"&gt;</code><br>
+                <code>- [project] project-auth — auth 重写由合规驱动，截止 11-01</code><br>
+                <code>- [feedback] feedback-testing — 集成测试连真实库</code><br>
+                <code>- [user] user-role — 十年 Go，React 新手</code><br>
+                <code>&lt;/memory-index&gt;</code>
+              </div>
+            </div>
+            <div class="msg a">
+              <div class="who">assistant</div>
+              <div class="bd">从 auth 重写接着来。昨天做到一半的是…… <span class="src">需要细节时调
+                  memory(op=read, name="project-auth")</span></div>
+            </div>
           </div>
-        </div>
-        <div class="step">
-          <div class="n">3</div>
-          <div class="st"><b>降级链</b>
-            <div class="sd">超时/解析失败 → 关键词重叠（query 与 name+description 的词面交集）；清单 ≤N 小
-              ⇒ 也可直接跳过选择全部带上（Profile 配阈值，默认清单 ≤8 篇时全带）。</div>
-          </div>
-        </div>
-        <div class="step">
-          <div class="n">4</div>
-          <div class="st"><b>去重与限流</b>
-            <div class="sd"><code>alreadySurfaced</code>：本进程已注入且 mtime 未变的文件不再注——选择器的 5
-              个槽位留给新候选（CC 同款过滤）。命中文件读正文、按 §5.3 配额截断，拼
-              <code>&lt;memory&gt;</code> 块。</div>
-          </div>
+          <p>这条 user 消息是本会话第一条真实 user 消息。<code>Fold</code> 的首部永远保留前 3 条 user
+            消息——记忆块骑在它上面，等于在整个会话的视图里常驻。压缩折叠中段，首部不动。</p>
         </div>
       </div>
 
-      <pre><code><span class="cm">// user 消息尾部形态</span>
-{用户原文}
-
-&lt;attachments&gt;…&lt;/attachments&gt;        <span class="cm">// 既有 @path 展开</span>
-&lt;memory-index&gt;…&lt;/memory-index&gt;       <span class="cm">// 仅在变化或丢失时出现</span>
-&lt;memory name="feedback-testing" type="feedback"&gt;
-正文（≤4KB）…
-&lt;/memory&gt;</code></pre>
+      <h3>6.1 启动注入：一次，落在首部</h3>
+      <p>装配规则：</p>
+      <ol>
+        <li>代码在本进程内该会话的第一条 user 消息上，附加 <code>&lt;memory-index&gt;</code> 块。</li>
+        <li>索引由 SQL 查询渲染：本空间全部记忆按 type 分组、组内按 <code>updated_at</code> 降序，每行
+          <code>- [type] name — descr</code>。索引不落盘，它不是文件。
+        </li>
+        <li>画像里 <code>AlwaysInject=true</code> 的类型，正文一并带上（每篇 ≤4KB，合计 ≤16KB）。</li>
+        <li>dream 改动了记忆后，下一条 user 消息再附一份新索引，带 <code>updated</code> 时间戳。首部的旧快照不再更新——模型以最新一份为准（行为提示里写明这条）。</li>
+        <li>空间为空时不注入任何块。</li>
+      </ol>
 
       <div class="note teal">
-        <div class="nt">为什么不用 embedding</div>
-        <p>文件上限 200 篇、manifest 总量 ≤25KB——向量检索在这个量级只增加依赖与模糊度，不增加命中率。LLM
-          直选还能用语言能力区分"工具用法文档"与"该工具的坑"这类语义差别（CC 选择提示里的真实失败案例）。向量检索留作清单超过千篇后的扩展缝。</p>
+        <div class="nt">为什么不每轮注入</div>
+        <p>注入内容随每条 user 消息进原始行。每轮重复注入一份 8KB 索引就是膨胀源。第一条 user 消息借 Fold
+          首部常驻，一次注入全程有效——这是 RH 折叠视图结构免费送出的长驻位，CC 的文件方案里没有对应物。</p>
       </div>
+
+      <h3>6.2 正文按需取：<code>memory op=read</code></h3>
+      <p>启动注入只带索引和常驻类型正文。任务中途需要某条记忆的细节时，模型调 <code>memory(op=list)</code> 看索引、
+        <code>memory(op=read, name=…)</code> 取正文、<code>op=about</code> 按实体聚合、<code>op=history</code>
+        看一条记忆的变更史。这取代了 CC 的每轮 side-query 选择——少一次每轮 LLM
+        调用，代价是模型要自己判断"该去翻了"（行为提示里写明何时去读）。
+      </p>
     </section>
 
     <!-- ============ 7. 写路径 ============ -->
     <section id="write">
       <div class="chap">第 7 章 · 写路径</div>
-      <h2>显式直写 + 隐式提取，互为补位</h2>
+      <h2>模型直写 + dream 提取，互不重叠</h2>
 
-      <p class="lede">用户说"记住这个"时模型立即直写；用户没明说但反复表达偏好时，后台提取兜底。两条路径写同一套文件，索引都由代码重建。</p>
+      <p class="lede">用户说"记住这个"时模型立即直写。用户没明说但表达了偏好时，dream
+        兜底。两条路径写同一张表。</p>
 
       <h3>7.1 <code>memory</code> 工具：模型可见的写口</h3>
+
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">用户说"记住：集成测试连真实库"</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">用户在会话里显式要求记住一条工程约定。</p>
+          <div class="ba">
+            <div class="side before">
+              <div class="ba-label">没有专用工具（走 run_command）</div>
+              <pre><code><span class="cm"># 模型凑一条 sqlite 命令插行</span>
+$ <span class="del">sqlite3 ~/.rune/memory.db "INSERT …"</span>
+<span class="cm"># Gate3 弹窗：allow "sqlite3 …"？</span>
+<span class="cm"># SQL 写错没人拦，tenant 写错没人发现</span></code></pre>
+            </div>
+            <div class="side after">
+              <div class="ba-label">memory 工具</div>
+              <pre><code>memory(op=save,
+  name="feedback-testing",
+  type="feedback",
+  description="集成测试连真实库",
+  body="…**Why:** 上季度被 mock 坑过")
+<span class="hl">→ saved: feedback-testing</span>
+<span class="cm"># 无弹窗，写面封死在本空间</span></code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <pre><code>name: memory
-description: Read and update the persistent memory store for this space.
-  Save durable facts (op=save: name, type, description, body),
-  remove stale ones (op=forget: name), or list the index (op=list).
-  Memories persist across sessions — do not store ephemeral task state.
-params:
-  op:    save | forget | list
-  name, type, description, body   <span class="cm"># save 必填；forget 只要 name</span></code></pre>
+description: Read and update the persistent memory store.
+  ops: save (name, type, description, body, [entities], [related]) |
+       forget (name) | list | read (name) | about (entity) | history (name).
+  Memories persist across sessions — do not store ephemeral task state.</code></pre>
 
       <ul>
-        <li><b>注册进 <code>SafeTools</code></b>：写面被工具实现封死在空间目录内，等价于 CC 的
-          <code>isAutoMemPath</code> carve-out，但更强——模型连路径都给不了。</li>
-        <li>写后代码重建 <code>MEMORY.md</code>；工具的返回串固定为 <code>saved: &lt;file&gt;</code> /
-          <code>forgotten: &lt;file&gt;</code>，不在返回里回填索引全文（省 token，模型可从 list 自取）。</li>
-        <li><code>Profile.WriteTool=false</code> 时不注册——陪伴场景可选择"只由后台提取写"，模型不感知记忆的存在（人设更稳）。</li>
+        <li>工具注册进 <code>SafeTools</code>。写面被实现封死在本空间，等价于 CC 的 <code>isAutoMemPath</code>
+          carve-out，但更强——模型连空间键都给不了。</li>
+        <li><code>op=read</code> 返回正文，<code>op=list</code> 返回索引文本。<code>op=save</code> 返回
+          <code>saved: &lt;name&gt;</code>，不回填索引。
+        </li>
+        <li><code>Profile.WriteTool=false</code> 时不注册工具。陪伴场景可让"记得"完全来自 dream，模型不感知记忆存在。
+        </li>
       </ul>
 
-      <h3>7.2 后台提取：Stop hook + side-query</h3>
-      <p>触发点在 <code>OnStop</code>——模型产出纯文本回复、本轮告一段落时。hook 返回
-        <code>""</code>（不续跑），只起一个 goroutine：</p>
+      <h3>7.2 dream 提取：见第 8 章</h3>
+      <p>dream 是本方案唯一的提取入口。它消化本空间全部未消化行，产出 ops 更新 <code>memories</code>
+        表。触发器和流程在 §8。</p>
+    </section>
 
-      <pre><code><span class="kw">func</span> (m *Memory) extractAsync(ctx, history) {
-    <span class="cm">// WithoutCancel：取消停的是未来工作，提取是已发生对话的收尾——</span>
-    <span class="cm">// 与 record() 落库同一口径（agent.go:461）。</span>
-    ctx = context.WithoutCancel(ctx)
-    ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-    <span class="kw">defer</span> cancel()
-    <span class="cm">// 单飞：inFlight 标志位去重；本轮到达时已有提取在跑 → 标记 dirty，</span>
-    <span class="cm">// 跑完接着跑一轮 trailing（CC pendingContext 同构，最多合并一轮）。</span>
-}</code></pre>
+    <!-- ============ 8. dream ============ -->
+    <section id="dream">
+      <div class="chap">第 8 章 · dream</div>
+      <h2>/dream：手动、定时、退出收尾，三个触发器一个循环</h2>
 
+      <div class="scene violet">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">一下午聊了四轮，用户敲了 /dream</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">会话 A 里用户说过"注释用中文就行"、纠正过"别用 ORM，直接写 SQL"。会话 B
+            是昨天一次没 dream 过的短会话，里面有一句"以后别叫我全名"。进程中途被 kill 过一次。</p>
+          <div class="thread">
+            <div class="msg u">
+              <div class="who">user</div>
+              <div class="bd">/dream</div>
+            </div>
+            <div class="msg m">
+              <div class="who">dream</div>
+              <div class="bd">读水位 → 会话 A 有 86 行未消化，会话 B 有 14 行未消化<br>
+                side-query → ops：<code>[upsert feedback-comment-lang, upsert feedback-orm, upsert
+                  expression-name]</code><br>
+                校验 → 写 <code>memories</code> 表 → 两个会话水位推进到底</div>
+            </div>
+            <div class="msg s">
+              <div class="who">TUI</div>
+              <div class="bd">memory updated: 3 new · dreamt at 18:41</div>
+            </div>
+          </div>
+          <p>会话 B 的内容也进了记忆——kill 丢的是触发时机，不是数据。水位按会话记，谁的欠账补谁的。</p>
+        </div>
+      </div>
+
+      <h3>8.1 触发器</h3>
+      <p><b>结论：ticker 是心跳不是节奏。</b>ticker 每 10–15 分钟只做一次 meta 读，空转几乎免费。真正的节奏由 §8.2
+        的门决定：物量门管"欠账够不够格"，间隔门管"记忆晚多久入库能接受"。coding 画像的记忆大头走工具直写，dream
+        只捞遗漏，冷却放到 60 分钟。companion 画像里 dream 是唯一写口，冷却定 120 分钟——退出收尾兜住"聊完就走"的场景，ticker
+        只管连续聊过 2 小时的长会话。记忆延迟的实际口径是"会话结束或 2 小时，先到为准"。</p>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>触发器</th>
+            <th>位置</th>
+            <th>门控</th>
+          </tr>
+          <tr>
+            <td><code>/dream</code> 命令</td>
+            <td><code>suggest.go</code> 的 <code>slashCommands</code>，TUI 发 <code>DreamMsg</code></td>
+            <td>只过锁。手动触发不看间隔和物量</td>
+          </tr>
+          <tr>
+            <td>定时器</td>
+            <td>进程内 ticker，间隔 = <code>Profile.Dream.IntervalMin</code>。云端形态换成 cron 调
+              <code>Dream()</code>
+            </td>
+            <td>过全部三道门</td>
+          </tr>
+          <tr>
+            <td>退出收尾</td>
+            <td><code>main.go</code> 在 <code>program.Run()</code> 返回后调一次，超时 30 秒</td>
+            <td>过锁和物量门，不看间隔门</td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>8.2 三道门</h3>
+      <ol>
+        <li><b>物量门</b>：本空间全部会话的未消化行合计 ≥ <code>Dream.MinRows</code>。水位存在
+          <code>memory_meta key='cursor:&lt;sessID&gt;'</code>。
+        </li>
+        <li><b>间隔门</b>：距上次 dream ≥ <code>IntervalMin</code> 分钟。<code>key='last_dream'</code> 记录时间。
+        </li>
+        <li><b>锁门</b>：抢不到 <code>dream_lock</code> 租约就跳过。租约 10 分钟过期，抗进程崩溃。</li>
+      </ol>
+
+      <h3>8.3 dream 循环</h3>
       <div class="steps">
         <div class="step">
           <div class="n">1</div>
-          <div class="st"><b>游标取增量</b>
-            <div class="sd"><code>.state.json</code> 存 <code>{sessions: {&lt;sid&gt;: lastRowID}}</code>。提取输入 =
-              <code>LoadRawHistory</code> 中 <code>id &gt; lastRowID</code> 的非控制行。读原始行而非视图：中段可能已被摘要，
-              原始行不受压缩影响；spill 过的工具结果只剩预览+指针，偏好类信号几乎都在 user/assistant
-              文本里，预览够用。渲染口径对齐 <code>summary.go</code> 的 <code>renderEvent</code>（inject 行标 harness
-              notice）。</div>
+          <div class="st"><b>代码收集欠账</b>
+            <div class="sd">列出本空间的会话水位。对每个有未消化行的会话，读 <code>LoadRawHistory</code> 里
+              <code>id &gt; 水位</code> 的非控制行。读原始行而不是视图：视图的中段可能已被摘要，原始行不受压缩影响。渲染口径对齐
+              <code>summary.go</code> 的 <code>renderEvent</code>。
+            </div>
           </div>
         </div>
         <div class="step">
           <div class="n">2</div>
-          <div class="st"><b>三道跳过闸</b>
-            <div class="sd">新行数 &lt; <code>MinNewRows</code>；距上次提取不足 <code>EveryTurns</code> 轮；本批消息里主代理已调用过
-              <code>memory</code> 工具（<code>hasMemoryWrites</code> 同构：模型自己写了，后台不再重复）。命中即推游标返回。
+          <div class="st"><b>分批消化</b>
+            <div class="sd">未消化行超过 <code>BatchRows</code> 就分批。每批一次 side-query：输入是画像提取提示 +
+              已有清单（正文总量 ≤ <code>BodyBudget</code> 时连正文一起给，供模型判断更新还是新增）+
+              本批渲染 + 近期删除清单（tombstone，§8.4）。输出 JSON
+              ops：<code>[{op: upsert|supersede|delete, name, type, description, body, entities, related, reason}]</code>。
+              <code>supersede</code> 表示"旧信念被新事实更替"，应带 <code>reason</code>。
             </div>
           </div>
         </div>
         <div class="step">
           <div class="n">3</div>
-          <div class="st"><b>提取调用</b>
-            <div class="sd">输入 = Profile 提取提示（Focus + 类型辞典 + DoNot + ops 格式）+ 已有清单（正文总量
-              ≤ <code>BodyBudget</code> 时连正文一起给，否则只给 manifest）+ 新行渲染。输出 JSON：
-              <code>[{op: upsert|delete, name, type, description, body}]</code>。</div>
+          <div class="st"><b>代码校验落盘</b>
+            <div class="sd">ops 逐条校验：type 应在辞典内，name 应过清洗，delete/supersede 应指向已存在行，supersede
+              应带 reason。通过后 <code>Upsert</code>/<code>Delete</code> 落库并写
+              <code>memory_log</code>，水位推进到本批末尾。失败计
+              <code>dream_failures</code>，连续 3 次熔断——与 compact 同一口径。
+            </div>
           </div>
         </div>
         <div class="step">
           <div class="n">4</div>
-          <div class="st"><b>落盘与熔断</b>
-            <div class="sd">ops 逐条校验（类型须在辞典内、slug 合法、delete 指向已存在文件）后写盘、重建索引、推游标。失败计
-              <code>.state.json.extractFailures</code>，连续 3 次熔断——与 compact 同一口径。成功后触发
-              <code>OnChange(n)</code> 回调，TUI 落一行提示；整理检查顺手跑（§8）。</div>
+          <div class="st"><b>整理阶段（物量门再加一道）</b>
+            <div class="sd">提取跑完后，记忆行数 ≥30 或本轮改动 ≥10 条时追加一次整理调用：side-query
+              读全部记忆，输出 ops（upsert / delete / merge-into），代码执行。矛盾条目在此合并（场景见下）。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">5</div>
+          <div class="st"><b>回报</b>
+            <div class="sd">触发 <code>OnChange(n)</code>，TUI 落一行 <code>memory updated: N new, M merged</code>。下一条
+              user 消息自动带新索引（§6.1 第 4 条）。</div>
           </div>
         </div>
       </div>
 
-      <div class="note">
-        <div class="nt">提取提示骨架（以 coding profile 为例）</div>
-        <p>三段式：<b>Focus</b>（本 profile 该捕捉什么，一段散文）→ <b>类型辞典</b>（逐类型的
-          save/use/structure，抄 <code>TYPES_SECTION_INDIVIDUAL</code>）→ <b>不存清单 + ops
-            契约</b>（"没有新信息就返回 []"；已有清单前置给模型做去重）。写记忆的语言跟随对话语言。</p>
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">整理阶段合并两条打架的记忆</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">空间里有 <code>feedback-test-db</code>（"集成测试连真实库"）和后来 dream 出的
+            <code>feedback-test-mock</code>（"CI 环境没有数据库，CI 里允许 mock"）。两条都对，字面冲突。
+          </p>
+          <p>整理把它们合成一条 <code>feedback-testing</code>（"本地连真实库；CI 无数据库时允许
+            mock，在配置里注明环境判断"）。合并由 side-query 提议，由代码执行。</p>
+        </div>
       </div>
 
-      <h3>7.3 journal 模式：长驻会话的追加日志</h3>
-      <p><code>Mode=journal</code> 时提取的产出形态换掉：ops 变为日志条目数组，代码追加到
-        <code>logs/YYYY/MM/YYYY-MM-DD.md</code>，不写主题文件、不动索引。索引由整理流程定期从日志蒸馏重建（§8）。
-        这是 CC KAIROS 的对应物，适合长期运行的陪伴/值守 agent——写入永远 append-only，模型不需要做"改哪篇文件"的决策。</p>
-    </section>
-
-    <!-- ============ 8. 整理 ============ -->
-    <section id="consolidate">
-      <div class="chap">第 8 章 · 整理</div>
-      <h2>Dream：三门之后才动手</h2>
-
-      <p>整理在提取完成后顺手检查，三门全开才执行（CC 四层门控裁剪掉多进程扫描节流——RH 单进程不需要）：</p>
-      <ol>
-        <li><b>时间门</b>：距上次整理 ≥24h（<code>.consolidate.lock</code> 的 mtime）。</li>
-        <li><b>物量门</b>：索引条目 ≥30，或自上次整理以来新增/修改文件 ≥10。</li>
-        <li><b>锁门</b>：无未过期锁文件（1h 过期抗崩溃；执行前先落锁）。</li>
-      </ol>
-
-      <p>执行方式与提取同构——单次 side-query 输入全部 manifest + 正文（超预算时按 mtime 分批），输出 ops
-        数组（upsert/delete/merge-into），代码落盘重建索引、滚动锁 mtime。失败回滚锁 mtime
-        让时间门下次重新放行；连续失败同样熔断。</p>
-
       <div class="note warn">
-        <div class="nt">注意 · 整理的对象按模式区分</div>
-        <p><code>indexed</code> 模式整理主题文件：去重、合并矛盾、淘汰过时条目。<code>journal</code>
-          模式整理日志：把日志蒸馏成主题文件 + 重建 <code>MEMORY.md</code>——蒸馏完的日志段可截断，原始行保留在文件里。
+        <div class="nt">注意 · dream 与提取提示</div>
+        <p>提取提示三段式：<b>Focus</b>（画像的第一段，说清该捕捉什么）→ <b>类型辞典</b>（逐类型的
+          save/use/structure）→ <b>不存清单 + ops 契约</b>（没有新信息就返回 <code>[]</code>；已有清单前置给模型去重）。写记忆的语言跟随对话语言。
+        </p>
+      </div>
+
+      <h3>8.4 变更、删除与边界场景</h3>
+
+      <div class="scene amber">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">昨天喜欢苹果，今天讨厌苹果</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">上次 dream 存了 <code>persona-food</code>（"喜欢苹果"）。这一轮用户说"我现在讨厌苹果，查出血糖高"。
+          </p>
+          <p>dream 看到已有清单里的旧条目和新表述，输出 <code>supersede</code>：新正文写"现在讨厌苹果（2026-10
+            起因血糖偏高）；此前喜欢"，reason 写"用户改口"。代码把新正文落库，把旧正文连同 reason 写进
+            <code>memory_log</code>。
+          </p>
+          <p>
+            结果分两层：<b>当前表</b>是此刻的信念（讨厌苹果），<b>流水</b>是全部变更史（曾喜欢苹果）。决策用前者，回放用后者——"上周你为什么推荐我买苹果"有答案了。变化叙事留在正文里，因为"人变了"本身就是信号，陪伴场景尤其如此。
+          </p>
+        </div>
+      </div>
+
+      <p><b>结论：版本不是表的维度，是一条 append-only 流水。</b><code>memories</code> 永远存当前信念，
+        <code>memory_log</code> 记每次变更的旧值、新值、reason、会话和时间。可重放 = 折叠流水到任意时刻；审计 =
+        流水本身。
+      </p>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>边界场景</th>
+            <th>例子</th>
+            <th>机制</th>
+          </tr>
+          <tr>
+            <td>矛盾陈述</td>
+            <td>昨天喜欢苹果，今天讨厌苹果</td>
+            <td><code>supersede</code> op 带 reason。旧值进 <code>memory_log</code>，新正文可写变化叙事</td>
+          </tr>
+          <tr>
+            <td>删除后复活</td>
+            <td>说"忘掉苹果"时，含该信息的原始行还未消化</td>
+            <td>dream 输入带 <code>RecentDeletes</code> 清单，提取提示写明"被删条目不重建"。tombstone 由
+              <code>memory_log</code> 兼任
+            </td>
+          </tr>
+          <tr>
+            <td>同一实体多条记忆</td>
+            <td>"孩子"出现在 5 条记忆里</td>
+            <td><code>entities</code> 列聚合。<code>memory op=about "孩子"</code> 一次取全</td>
+          </tr>
+          <tr>
+            <td>事件链条</td>
+            <td>模考 → 志愿填报 → 中考</td>
+            <td><code>related</code> 列互指 + bond 正文的事件结构（§9.2）</td>
+          </tr>
+          <tr>
+            <td>称呼变体</td>
+            <td>老周 / 周哥 / 周叔</td>
+            <td>提取时模型归一到同一 entity。整理阶段合并别名</td>
+          </tr>
+          <tr>
+            <td>过期事实</td>
+            <td>"孩子今年中考"在明年失效</td>
+            <td>提取时相对日期转绝对。整理阶段按时间淘汰或改写过时条目</td>
+          </tr>
+          <tr>
+            <td>不确定信息</td>
+            <td>"我可能要换工作"</td>
+            <td>正文标"未确认"。后续确认时 supersede</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="note">
+        <div class="nt">为什么不加图谱和双时态表</div>
+        <p>记忆的消费者是 LLM，不是查询引擎。模型读自然语言本来就能连"初三学生家长"和"模考失利"。
+          <code>entities</code>/<code>related</code>
+          两列解决的是"找得全"，不是"表达语义"——语义留在正文里，模型读得懂。同样，版本需求拆成"当前信念"（表）和"变更史"（流水）两层就够了，bi-temporal
+          的 <code>valid_from/valid_to</code> 查询在这个量级买不到东西。图谱和双时态都留作规模上来后的扩展（§15）。
         </p>
       </div>
     </section>
 
     <!-- ============ 9. 内置 Profile ============ -->
     <section id="profiles">
-      <div class="chap">第 9 章 · 内置 Profile</div>
-      <h2>两个内置画像：coding 与 companion</h2>
+      <div class="chap">第 9 章 · 内置画像</div>
+      <h2>coding 记工程经验，companion 记人</h2>
 
-      <h3>9.1 coding：记工程经验</h3>
-      <p>类型辞典直接沿用 CC 四类与 eval 校准过的文案：</p>
+      <h3>9.1 coding：四类沿用 CC</h3>
       <div class="tbl-wrap">
         <table>
           <tr>
             <th>type</th>
             <th>回答什么</th>
             <th>示例</th>
+            <th>常驻注入</th>
           </tr>
           <tr>
             <td><code>user</code></td>
             <td>用户是谁：角色、目标、知识背景</td>
             <td>"十年 Go，第一次碰 React——前端解释用后端类比"</td>
+            <td>是</td>
           </tr>
           <tr>
             <td><code>feedback</code></td>
             <td>怎么做事：纠正与被验证的做法，含 why</td>
             <td>"别 mock 数据库——上季度被坑过"</td>
+            <td>是</td>
           </tr>
           <tr>
             <td><code>project</code></td>
-            <td>正在发生什么：代码与 git 推不出的动机、期限、干系人</td>
-            <td>"auth 重写是合规驱动"（相对日期一律转绝对日期）</td>
+            <td>当下发生的事：代码推不出的动机、期限、干系人</td>
+            <td>"auth 重写是合规驱动"（相对日期转绝对日期）</td>
+            <td>否，按需 read</td>
           </tr>
           <tr>
             <td><code>reference</code></td>
             <td>东西在哪找：外部系统指针</td>
             <td>"pipeline bug 都在 Linear INGEST"</td>
+            <td>否，按需 read</td>
           </tr>
         </table>
       </div>
-      <p>DoNot 照抄 <code>WHAT_NOT_TO_SAVE_SECTION</code>：代码模式、架构、git 历史、修法、CLAUDE.md
-        已有内容、临时任务状态——能从当前项目状态推导的一律不存，<b>即使用户显式要求</b>（此时追问"这里面非显然的部分是什么"）。
+      <p>DoNot 清单照抄 <code>WHAT_NOT_TO_SAVE_SECTION</code>：代码模式、架构、git 历史、修法、CLAUDE.md
+        已有内容、临时任务状态都不存。能从当前项目状态推导的一律不存，即使用户显式要求——此时追问"这里面非显然的部分是什么"。
       </p>
+      <p>节奏：<code>IntervalMin=60</code>。coding 会话里 dream 是低频收口动作。</p>
 
-      <h3>9.2 companion：记人</h3>
-      <p>类型辞典换成面向"人"的四类，Focus 指向情绪与关系线索：</p>
+      <h4>coding 特有的边界条件</h4>
+      <p>陪伴画像的坑在"情感误判"，coding 画像的坑集中在<b>时效性、归属和涉密性</b>：</p>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>场景</th>
+            <th>具体形态</th>
+            <th>对策</th>
+          </tr>
+          <tr>
+            <td>凭据混进记忆</td>
+            <td>调试时贴了 API key，dream 把它提取成 reference</td>
+            <td>写口加代码层正则扫描（<code>sk-</code>、JWT、私钥头等模式在 <code>Upsert</code>
+              前直接拒）。提示词是软约束，扫描是硬约束——见 §12</td>
+          </tr>
+          <tr>
+            <td>工程事实过期</td>
+            <td>"X 函数有 bug"修好后记忆还在；"截止 11-01"过了还在</td>
+            <td><code>project</code> 类正文强制带绝对日期。before-recommending 规则要求先验证再推荐。整理阶段淘汰过期项</td>
+          </tr>
+          <tr>
+            <td>该进仓库文档的进了记忆</td>
+            <td>"本项目用 hexagonal 架构"存进私人记忆——团队看不见、不进 git</td>
+            <td>职责分界：工程规范归 <code>AGENTS.md</code>，个人偏好归记忆。提取提示写"能推导的不存"；约定成熟后 agent
+              宜提示用户把它写进 <code>AGENTS.md</code></td>
+          </tr>
+          <tr>
+            <td>workspace 分裂</td>
+            <td>同一仓库多 checkout、worktree、多机器，slug 不同则空间分裂</td>
+            <td>slug 以 git toplevel 归一可盖住 worktree。多 clone 和多机器仍分裂，v1 接受；remote-url 归一留作扩展</td>
+          </tr>
+          <tr>
+            <td>协作污染</td>
+            <td>结对或共用 checkout 时，同事的操作被提取成"用户偏好"</td>
+            <td>workspace 空间语义是"这个项目"不是"这个人"。提取提示写"偏好应归属当前用户"；team/private 分层见 §15</td>
+          </tr>
+          <tr>
+            <td>事实的作用域</td>
+            <td>"用 tab"只对 Go 文件成立，对 JSON 不成立</td>
+            <td><code>feedback</code> 正文的 <code>**How to apply:**</code> 字段写作用域限定</td>
+          </tr>
+          <tr>
+            <td>工具输出进记忆</td>
+            <td>报错栈和日志被 dream 当成"事实"提取</td>
+            <td>原始行里 <code>blob://</code> 只给预览（§11）。提取提示写"工具输出的内容主体不存，只存用户的意图和判断"</td>
+          </tr>
+          <tr>
+            <td>敏感业务信息</td>
+            <td>客户名、内部代号进 description，随索引进视图</td>
+            <td>索引不泄密规则：description 只写主题不写敏感值（§12）</td>
+          </tr>
+        </table>
+      </div>
+
+      <h3>9.2 companion：四类面向人</h3>
+
+      <div class="scene violet">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">陪伴 agent 的第二十次会话</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">用户（老周）晚上发来一句"今天又被领导说了"。启动注入已带上他的画像、称呼偏好和一条边界。</p>
+          <div class="thread">
+            <div class="msg u">
+              <div class="who">user</div>
+              <div class="bd">今天又被领导说了<br><br>
+                <code>&lt;memory-index&gt;…&lt;/memory-index&gt;</code><br>
+                <code>&lt;memory name="persona-role"&gt; 初三学生家长，孩子今年中考 &lt;/memory&gt;</code><br>
+                <code>&lt;memory name="expression-name"&gt; 希望被称作"老周"，反感亲昵称呼 &lt;/memory&gt;</code><br>
+                <code>&lt;memory name="boundary-father"&gt; 不主动提他父亲病情——他说想聊时会自己提 &lt;/memory&gt;</code>
+              </div>
+            </div>
+            <div class="msg a">
+              <div class="who">assistant</div>
+              <div class="bd">老周，又被说了？这次是因为什么事……</div>
+            </div>
+          </div>
+          <p>陪伴画像把 persona、bond、expression、boundary 四类全设为 <code>AlwaysInject</code>——这类 agent
+            每轮都需要"这个人是谁"在场。定时器 120 分钟跑一次 dream，管的是超长会话；会话结束时退出收尾再兜一次，情绪线索不会等到明天才入库。</p>
+        </div>
+      </div>
+
       <div class="tbl-wrap">
         <table>
           <tr>
             <th>type</th>
             <th>回答什么</th>
             <th>示例</th>
+            <th>常驻注入</th>
           </tr>
           <tr>
             <td><code>persona</code></td>
             <td>用户是谁：身份、经历、处境、在意的东西</td>
-            <td>"用户是初三学生的家长，孩子今年中考——谈学习计划时多从这个身份出发"</td>
+            <td>"初三学生家长，孩子今年中考"</td>
+            <td>是</td>
           </tr>
           <tr>
             <td><code>bond</code></td>
-            <td>我们共同经历过什么：事件、约定、梗、关系进展</td>
-            <td>"2026-09 一起完成了第一次长途徒步，用户称其为'雪山之行'"</td>
+            <td>共同经历过什么：事件、约定、梗、关系进展</td>
+            <td>"2026-09 一起完成长途徒步，用户称'雪山之行'"</td>
+            <td>是</td>
           </tr>
           <tr>
             <td><code>expression</code></td>
             <td>怎么说话：称呼、语气、语言偏好、雷区表达</td>
-            <td>"用户希望被称作'老周'；不喜欢'宝'这类亲昵称呼"</td>
+            <td>"希望被称'老周'；不喜欢'宝'类称呼"</td>
+            <td>是</td>
           </tr>
           <tr>
             <td><code>boundary</code></td>
             <td>绝不能碰什么：禁忌话题、承诺、情绪触发点</td>
-            <td>"不主动提用户父亲的病情——用户说过'我想聊的时候会自己提起'"</td>
+            <td>"不主动提用户父亲病情"</td>
+            <td>是</td>
           </tr>
         </table>
       </div>
+
       <ul>
-        <li><b>Focus</b>：情绪变化（"今天语气明显低落"）、人称细节（家人/同事的名字与关系）、未兑现的承诺与约定、
-          表达习惯的纠正。</li>
-        <li><b>DoNot</b>：一次性寒暄与流水账、能从前几轮对话直接看出的即时状态、任何用户标了"别记"的内容。</li>
-        <li><b>节奏</b>：<code>EveryTurns=1</code>（情感上下文连续性优先）；<code>WriteTool=false</code>
-          可选——不暴露记忆工具时，"记得"完全来自后台提取，人设更一致。</li>
-        <li><b>模式</b>：长驻部署用 <code>journal</code>；交互式会话用 <code>indexed</code>。</li>
+        <li><b>Focus</b> 指向四类线索：情绪变化、人称细节、未兑现的约定、表达习惯的纠正。</li>
+        <li><b>正文结构</b>：<code>bond</code> 类按事件写——事件名、绝对时间、起因、经过、结果、影响。
+          <code>entities</code> 用用户对实体的称呼作标签（"孩子""领导"），归一交给提取时的模型。
+        </li>
+        <li><b>DoNot</b>：一次性寒暄和流水账不存；前几轮能看出的即时状态不存；用户标了"别记"的内容不存。</li>
+        <li><b>节奏</b>：<code>IntervalMin=120</code>。退出收尾兜住会话结束，ticker 只管长会话中段。</li>
+        <li><b>写口</b>：<code>WriteTool=false</code> 可选。"记得"完全来自 dream 时，模型不感知记忆，人设更一致。
+        </li>
       </ul>
 
-      <h3>9.3 generic 与自定义</h3>
-      <p><code>generic</code> 是最小集（user / fact / preference 三类），作兜底与新 profile 的模板。自定义走
-        <code>~/.rune/profiles/&lt;name&gt;.md</code>：</p>
+      <h3>9.3 generic 与自定义画像</h3>
+      <p><code>generic</code> 是最小集，只含 <code>user</code>、<code>fact</code>、<code>preference</code>
+        三类。它做兜底，也做自定义画像的模板。自定义走文件 <code>~/.rune/profiles/&lt;name&gt;.md</code>：</p>
       <pre><code>---
 name: reviewer
 space: workspace
-mode: indexed
 write_tool: true
-selector: llm
+interval_min: 30
 ---
 # Focus
-本 agent 是代码评审专家：记住每个仓库的评审口径、历史事故、owner 偏好……
+本 agent 是代码评审专家：记每个仓库的评审口径、历史事故、owner 偏好。
 
 # Types
 &lt;type&gt;&lt;name&gt;convention&lt;/name&gt;&lt;desc&gt;…&lt;/desc&gt;&lt;/type&gt;
-…
 
 # DoNot
 - …</code></pre>
@@ -1400,22 +1687,23 @@ selector: llm
       <div class="chap">第 10 章 · 装配</div>
       <h2>main.go 的五处接线</h2>
 
-      <pre><code><span class="cm">// internal/memory 单例：store 供 LoadRawHistory 取增量，llm 供 side-query</span>
+      <pre><code><span class="cm">// internal/memory 单例。store 供 LoadRawHistory 取欠账，llm 供 dream side-query。</span>
 mem, err := memory.New(store, model, memory.Config{
-    Root:     cfg.MemoryDir,      <span class="cm">// RUNE_MEMORY_DIR；空 → ~/.rune/memory</span>
-    Profile:  prof,               <span class="cm">// cfg.MemoryProfile → 内置表 / ~/.rune/profiles/</span>
-    Extract:  cfg.MemoryExtract,  <span class="cm">// RUNE_MEMORY_EXTRACT，默认开</span>
+    DBPath:  cfg.MemoryDB,      <span class="cm">// RUNE_MEMORY_DB，空 → ~/.rune/memory.db。云端换 Store 实现</span>
+    Profile: prof,              <span class="cm">// cfg.MemoryProfile → 内置表 / ~/.rune/profiles/</span>
+    Dream:   cfg.MemoryDream,   <span class="cm">// RUNE_MEMORY_DREAM，默认开</span>
 })
-<span class="cm">// 写口（Profile.WriteTool 为真时）</span>
+<span class="cm">// 写口：画像允许时注册工具。</span>
 toolSet = append(toolSet, mem.Tool())
 permCfg.SafeTools = append(permCfg.SafeTools, memory.ToolName)
-<span class="cm">// 读：每用户轮一次，拼 &lt;memory-index&gt; / &lt;memory&gt; 块</span>
-a.Hooks.OnUserPromptSubmit(mem.Recall)
-<span class="cm">// 写：轮末后台提取 + 整理检查</span>
-a.Hooks.OnStop(mem.ExtractAndMaintain)
-<span class="cm">// system：profile 的稳定指令段进 Env，拼在 tools 之后</span>
+<span class="cm">// 读：第一条 user 消息带索引 + 常驻正文；dream 后重注索引。</span>
+a.Hooks.OnUserPromptSubmit(mem.InjectOnce)
+<span class="cm">// dream：定时器 + 退出收尾；/dream 走 TUI 命令。</span>
+go mem.DreamTicker(ctx)          <span class="cm">// 间隔 = Profile.Dream.IntervalMin</span>
+defer mem.DreamOnExit()          <span class="cm">// program.Run() 返回后跑一次，30s 超时</span>
+<span class="cm">// system：画像的稳定指令段进 Env。</span>
 env.MemoryGuide = mem.SystemGuide()  <span class="cm">// 空串则省略该段</span>
-<span class="cm">// TUI：提取完成后落一行提示</span>
+<span class="cm">// TUI：dream 完成后落一行提示。</span>
 mem.OnChange = func(n int) { p.Send(tui.MemoryMsg{Saved: n}) }</code></pre>
 
       <div class="tbl-wrap">
@@ -1428,47 +1716,48 @@ mem.OnChange = func(n int) { p.Send(tui.MemoryMsg{Saved: n}) }</code></pre>
           <tr>
             <td><code>RUNE_MEMORY</code></td>
             <td>on</td>
-            <td>总开关；=0 时整个模块不装配</td>
+            <td>总开关。<code>=0</code> 时整个模块不装配</td>
           </tr>
           <tr>
             <td><code>RUNE_MEMORY_PROFILE</code></td>
             <td><code>coding</code></td>
-            <td>内置名或 <code>~/.rune/profiles/</code> 下的文件名</td>
+            <td>内置名，或 <code>~/.rune/profiles/</code> 下的文件名</td>
           </tr>
           <tr>
-            <td><code>RUNE_MEMORY_DIR</code></td>
-            <td><code>~/.rune/memory</code></td>
-            <td>记忆根目录（云端可指向挂载点；校验同 CC：拒绝相对/根/UNC 路径）</td>
+            <td><code>RUNE_MEMORY_DB</code></td>
+            <td><code>~/.rune/memory.db</code></td>
+            <td>本地记忆库文件</td>
           </tr>
           <tr>
-            <td><code>RUNE_MEMORY_EXTRACT</code></td>
+            <td><code>RUNE_MEMORY_DREAM</code></td>
             <td>on</td>
-            <td>后台提取开关；关闭后仍可直写与召回</td>
+            <td>定时器和退出收尾开关。关闭后仍可 <code>/dream</code> 手动触发和直写</td>
           </tr>
           <tr>
             <td><code>RUNE_MEMORY_MODEL</code></td>
             <td>主模型</td>
-            <td>side-query 用的小模型名，省成本；空则复用主 client</td>
+            <td>dream side-query 用小模型省成本。空则复用主 client</td>
           </tr>
         </table>
       </div>
 
-      <p>TUI 侧增量：<code>/memory</code> 命令（显示空间目录与索引内容，注册进 <code>suggest.go</code>
-        的 <code>slashCommands</code>）；<code>MemoryMsg</code> 在对话区落一行 <code>memory updated: +2 ~1</code>。
+      <p>TUI 增量有三处。<code>/dream</code> 命令手动触发一次 dream。<code>/memory</code>
+        命令显示空间键和索引文本。两条都注册进 <code>suggest.go</code> 的 <code>slashCommands</code>。
+        <code>MemoryMsg</code> 在对话区落一行 <code>memory updated: 2 new, 1 merged</code>。
       </p>
     </section>
 
     <!-- ============ 11. 与压缩的边界 ============ -->
     <section id="boundaries">
       <div class="chap">第 11 章 · 边界</div>
-      <h2>记忆与压缩各管一段，互不读写对方状态</h2>
+      <h2>记忆和压缩各管一段，互不读写对方状态</h2>
 
       <div class="tbl-wrap">
         <table>
           <tr>
             <th></th>
-            <th>压缩（internal/compact）</th>
-            <th>记忆（internal/memory）</th>
+            <th>压缩（<code>internal/compact</code>）</th>
+            <th>记忆（<code>internal/memory</code>）</th>
           </tr>
           <tr>
             <td>管什么</td>
@@ -1477,59 +1766,70 @@ mem.OnChange = func(n int) { p.Send(tui.MemoryMsg{Saved: n}) }</code></pre>
           </tr>
           <tr>
             <td>存哪</td>
-            <td><code>session.Store</code>：消息行、控制行、blob、session_state</td>
-            <td>文件系统：空间目录</td>
+            <td><code>sessions.db</code>：消息行、控制行、blob、session_state</td>
+            <td><code>memory.db</code>：<code>memories</code> + <code>memory_meta</code></td>
           </tr>
           <tr>
             <td>谁写</td>
-            <td>循环内 <code>Maintain/Compact/Backfill</code></td>
-            <td>模型（memory 工具）+ Stop hook goroutine</td>
+            <td>循环内 <code>Maintain</code> / <code>Compact</code> / <code>Backfill</code></td>
+            <td>模型（<code>memory</code> 工具）+ dream</td>
           </tr>
           <tr>
             <td>谁读</td>
             <td><code>Fold</code> 组装视图</td>
-            <td><code>OnUserPromptSubmit</code> 拼进 user 消息</td>
+            <td>第一条 user 消息的注入块</td>
           </tr>
           <tr>
             <td>读对方吗</td>
-            <td>不读记忆——压缩只动消息行</td>
-            <td>不读压缩状态——提取走 <code>LoadRawHistory</code> 原始行，天然越过折叠</td>
+            <td>不读记忆。压缩只动消息行</td>
+            <td>不读压缩状态。dream 走 <code>LoadRawHistory</code> 原始行，天然越过折叠</td>
           </tr>
         </table>
       </div>
 
-      <p>两个交互点都已确认无害：</p>
+      <p>三个交互点确认无害：</p>
       <ul>
-        <li><b>提取落在压缩之后</b>：提取读原始行，视图折叠与否不影响输入；游标按原始行 id 记，压缩不产生新行 id 之外的洞。
+        <li><b>首部注入与压缩共存。</b>记忆块骑在第一条 user 消息上，属首部，压缩只动中段。视图里它永远在场。
         </li>
-        <li><b>blob 指针</b>：原始行里的 <code>&lt;persisted-output src="blob://…"&gt;</code> 只给预览进提取输入；
-          提取目标是偏好与事实，不依赖工具输出全文。确需全文时提取提示允许模型放弃该条线索（不读 blob——提取无权访问存储面）。
-        </li>
+        <li><b>dream 读原始行。</b>视图折叠不影响 dream 输入。水位按原始行 id 记，压缩不产生行 id 之外的洞。</li>
+        <li><b>blob 指针只给预览。</b>原始行里的 <code>&lt;persisted-output src="blob://…"&gt;</code>
+          以预览形态进 dream 输入。提取目标是偏好和事实，不依赖工具输出全文。提取提示允许模型放弃需要全文才能判断的线索。</li>
       </ul>
     </section>
 
     <!-- ============ 12. 安全 ============ -->
     <section id="security">
       <div class="chap">第 12 章 · 安全与隐私</div>
-      <h2>写面封死在空间内，隔离靠 scope 不靠参数</h2>
+      <h2>隔离靠 scope 不靠参数，写面只有工具</h2>
 
       <ul>
-        <li><b>写面</b>：<code>memory</code> 工具与提取代码只允许写空间目录内 <code>&lt;slug&gt;.md</code>；
-          slug 清洗去 <code>..</code>/分隔符/保留名；目录 <code>0700</code>、文件 <code>0600</code>。</li>
-        <li><b>隔离</b>：空间键全部从 ctx scope 派生（tenant/subject/workspace），模型参数里没有空间字段——跨租户读写在参数层不存在。
+        <li><b>写面</b>：<code>memory</code> 工具和 dream 代码只能写 <code>(tenant, space)</code>
+          前缀下的行。<code>name</code> 经 slug 清洗。模型参数里没有租户和空间字段，跨租户读写在参数层不存在。</li>
+        <li><b>读面</b>：记忆在 DB 里，不在进程盘上。<code>read_file</code>
+          不限路径也够不到它——上一轮文件方案里最大的越界口，在 DB 形态下消失了。</li>
+        <li><b>不存凭据，双层防线</b>：软层是每个画像的 DoNot 固定含"密钥、凭据、token 一律不存"，dream
+          提示复述。硬层是代码侧——<code>Upsert</code> 前对 body/description 跑密钥模式扫描（
+          <code>sk-</code> 前缀、JWT、PEM 私钥头等），命中直接拒绝写入。提示词防的是"模型主动写"，扫描防的是"模型没认出来"。
         </li>
-        <li><b>不存凭据</b>：所有 Profile 的 DoNot 固定含一条"密钥、凭据、token 一律不存"；提取提示复述这条。</li>
-        <li><b>遗忘权</b>：用户说"忘掉 X"时模型用 <code>op=forget</code> 立即删；陪伴场景还要求提取提示复述"用户标了别记的内容不进记忆"。
+        <li><b>遗忘权</b>：用户说"忘掉 X"时模型用 <code>op=forget</code> 立即删行。陪伴画像的提取提示还要求"用户标了别记的内容不进记忆"。
         </li>
-        <li><b>索引不泄密</b>：索引描述行是模型可见文本，提取提示要求 description 只写主题不写敏感值。</li>
+        <li><b>索引不泄密</b>：索引描述行进视图文本。提取提示要求 description 只写主题，不写敏感值。</li>
       </ul>
 
-      <div class="note danger">
-        <div class="nt">警告 · 云端部署的敏感面</div>
-        <p>陪伴/专家场景的记忆本质是用户画像——属于个人数据。云端落地时：文件后端挂每租户隔离的卷或对象存储前缀；
-          提取产物跨会话可见，<b>必须</b>保证 <code>SubjectID</code> 注入正确——错一次就是画像串号。上线前建议把
-          "提取输入不跨 subject"写进审计清单。
+      <div class="note warn">
+        <div class="nt">注意 · DB 形态下残余的两个口子</div>
+        <p>一是 <code>run_command</code>：模型可以执行 <code>sqlite3 ~/.rune/memory.db …</code>
+          直接碰库文件。Gate3 会弹确认，但白名单一旦放行过 <code>sqlite3</code> 就不再有提示。云端形态下
+          <code>run_command</code> 应进每租户沙箱，主机上没有库文件可碰。二是 <code>read_file</code>
+          同理可读库文件字节流。两者都是既有工具面的云端化缺口，记忆落地以沙箱为前提（§15）。
         </p>
+      </div>
+
+      <div class="note danger">
+        <div class="nt">警告 · 云端部署的画像串号风险</div>
+        <p>陪伴和专家场景的记忆是用户画像，属个人数据。dream 产物跨会话可见，<code>SubjectID</code>
+          注入错一次就是画像串号。防串号的结构保证是：空间解析只认 ctx 的 scope，dream goroutine 和退出收尾都继承装配时的
+          scope，不靠传参。前提是入口装配把 SubjectID 注对。上线前应把"dream 输入不跨 subject"写进审计清单。</p>
       </div>
     </section>
 
@@ -1547,40 +1847,48 @@ mem.OnChange = func(n int) { p.Send(tui.MemoryMsg{Saved: n}) }</code></pre>
             <th>缓解</th>
           </tr>
           <tr>
-            <td>side-query 拖慢首响应</td>
-            <td>每 user 轮一次选择调用</td>
-            <td>提交到"waiting for model"多等 ~1–3s</td>
-            <td>3s 硬超时 + 关键词降级 + 小清单短路；<code>RUNE_MEMORY_MODEL</code> 换小模型</td>
+            <td>首部索引是快照，会旧</td>
+            <td>dream 改了记忆，首部仍是旧索引</td>
+            <td>模型可能引用旧条目</td>
+            <td>dream 后下一条 user 消息重注新索引带时间戳；行为提示写明"以最新一份为准"；before-recommending
+              段要求先验证再推荐</td>
           </tr>
           <tr>
-            <td>注入膨胀</td>
-            <td>索引反复注入 / 正文超限</td>
-            <td>原始行体积与尾部 token 被记忆吃掉</td>
-            <td>哈希变化才注入 + 尾部扫描自愈 + §5.3 全套配额</td>
+            <td>从不 dream 就没记忆</td>
+            <td>用户不敲 /dream，定时器没跑，进程被 kill</td>
+            <td>本会话什么都没记住</td>
+            <td>水位按会话记，不消化不丢。下次任何一个 dream 触发都补全部欠账；退出收尾再兜一道</td>
           </tr>
           <tr>
-            <td>提取质量靠模型自觉</td>
+            <td>定时器只活在进程内</td>
+            <td>CLI 退出后没有 ticker</td>
+            <td>退出到下次启动之间的欠账无人消化</td>
+            <td>退出收尾跑一次；云端形态由 cron 补，不依赖进程存活</td>
+          </tr>
+          <tr>
+            <td>dream 质量靠模型自觉</td>
             <td>JSON 解析失败、乱存、漏存</td>
             <td>记忆噪声或缺失</td>
-            <td>schema 校验 + 已有清单前置去重 + ops 白名单；连续失败熔断</td>
+            <td>ops 白名单校验 + 已有清单前置去重 + 连续 3 次失败熔断</td>
           </tr>
           <tr>
-            <td>多进程同空间竞争</td>
-            <td>两个 rune 实例同一 workspace</td>
-            <td>单文件最后写者赢；整理重复跑</td>
-            <td>原子写 + 锁文件；单文件冲突可接受（记忆不是账本）</td>
+            <td>大批量 dream 输入超限</td>
+            <td>长会话首次 dream，未消化行上千</td>
+            <td>side-query 上下文爆掉</td>
+            <td><code>BatchRows=300</code> 分批消化，水位逐批推进；渲染只取 user/assistant 文本和工具预览
+            </td>
           </tr>
           <tr>
-            <td>resume 后游标错乱</td>
-            <td>/resume 换绑会话</td>
-            <td>重复提取或漏提</td>
-            <td>游标按 sessionID 键——同一 session 续同一游标；换 session 用各自的游标</td>
+            <td>删除的记忆复活</td>
+            <td>"忘掉 X" 时含 X 的原始行还没消化</td>
+            <td>dream 把已删条目又提取回来</td>
+            <td>dream 输入带 <code>RecentDeletes</code> tombstone 清单，提取提示写明"被删的不重建"</td>
           </tr>
           <tr>
-            <td>记忆过期仍在被引用</td>
+            <td>过期记忆仍在被引用</td>
             <td>事实变化后旧记忆未更新</td>
             <td>模型按过期事实回答</td>
-            <td>照抄 CC 的 before-recommending 段：涉及文件/函数/旗标的记忆先验证再推荐；冲突时信当下并顺手改记忆</td>
+            <td>照抄 CC 的 before-recommending 段：涉及文件、函数、旗标的记忆先验证再推荐；冲突时信当下并顺手改记忆</td>
           </tr>
         </table>
       </div>
@@ -1600,30 +1908,34 @@ mem.OnChange = func(n int) { p.Send(tui.MemoryMsg{Saved: n}) }</code></pre>
           </tr>
           <tr>
             <td><b>P1</b> 存储 + 直写</td>
-            <td><code>internal/memory</code>：空间解析、文件读写、slug/保留名校验、索引重建、
-              <code>memory</code> 工具、coding profile 的 system 指令段</td>
-            <td>纯单测：写/删/列/索引截断/路径逃逸拒绝；手工跑 TUI 说"记住我用 tab"</td>
-          </tr>
-          <tr>
-            <td><b>P2</b> 读路径</td>
-            <td>索引注入（hash + 自愈）、manifest 扫描、关键词召回（先不上 LLM）</td>
-            <td>单测覆盖注入规则；新开会话问"我说过什么偏好"</td>
-          </tr>
-          <tr>
-            <td><b>P3</b> 后台提取</td>
-            <td>Stop hook + 游标 + side-query ops + 熔断 + <code>OnChange</code> 提示</td>
-            <td>fake LLM 单测 ops 落盘；e2e 跑两轮对话看记忆累积</td>
-          </tr>
-          <tr>
-            <td><b>P4</b> 召回升级 + Profile 体系</td>
-            <td>LLM 选择器 + 降级链；companion profile + journal 模式 + 文件 profile 加载；<code>Scope.SubjectID</code>
+            <td><code>internal/memory</code>：SQLite Store、schema、空间解析、name 清洗、
+              <code>memory</code> 工具、coding 画像的 system 指令段
             </td>
-            <td>选择器 mock 测试；两个 profile 各跑一轮冒烟</td>
+            <td>单测覆盖存取删列、清洗、跨空间隔离。手工在 TUI 说"记住我用 tab"，查库验证</td>
           </tr>
           <tr>
-            <td><b>P5</b> 整理 + UX</td>
-            <td>三门 + 整理 side-query；<code>/memory</code> 命令；<code>MemoryMsg</code></td>
-            <td>造 30+ 文件跑整理冒烟；TUI 命令走查</td>
+            <td><b>P2</b> 启动注入</td>
+            <td>第一条 user 消息带索引 + <code>AlwaysInject</code> 正文；空空间短路；dream 后重注</td>
+            <td>单测注入规则。新开会话确认首部快照在压缩后仍在视图</td>
+          </tr>
+          <tr>
+            <td><b>P3</b> /dream 手动</td>
+            <td>水位、欠账收集、分批 side-query、ops 校验落库、熔断、<code>/dream</code> 命令、
+              <code>MemoryMsg</code>
+            </td>
+            <td>fake LLM 单测 ops 落库。e2e 跑两轮敲 /dream 看记忆入库</td>
+          </tr>
+          <tr>
+            <td><b>P4</b> 定时器 + 退出收尾 + 画像体系</td>
+            <td>ticker、DreamOnExit、锁租约；companion / generic 画像 + 文件画像加载；
+              <code>Scope.SubjectID</code>
+            </td>
+            <td>锁竞争单测。两个画像各跑一轮冒烟</td>
+          </tr>
+          <tr>
+            <td><b>P5</b> 整理阶段 + UX</td>
+            <td>整理门 + 整理 side-query；<code>/memory</code> 命令</td>
+            <td>造 30 条以上记忆跑整理冒烟。TUI 命令走查</td>
           </tr>
         </table>
       </div>
@@ -1632,27 +1944,35 @@ mem.OnChange = func(n int) { p.Send(tui.MemoryMsg{Saved: n}) }</code></pre>
     <!-- ============ 15. 未决 ============ -->
     <section id="open">
       <div class="chap">第 15 章 · 未决事项</div>
-      <h2>留给第二个真实用例的四件事</h2>
+      <h2>留给第二个真实用例的五件事</h2>
 
       <ul>
-        <li><b>提取器升级为迷你 agent</b>：side-query 无法"读已有正文再合并"（现靠 BodyBudget 前置正文缓解）。
-          若 ops 质量问题真实出现，换成 <code>agent.New</code> + 受限注册表（read_file + memory）跑读写循环——
-          hook、游标、ops 契约不变。</li>
-        <li><b>文件后端可换</b>：云端形态若不用本地盘，定义 <code>memory.FS</code>
-          接口（read/write/list/stat）接对象存储即可——本方案已把所有 I/O 收进 <code>internal/memory</code> 内部。
+        <li><b>按需选择器</b>。v1 启动注入只带索引和常驻正文，其余靠模型 <code>op=read</code> 自取。若"该翻不翻"成为真实失败案例，加回每轮
+          side-query 选择（CC 的 <code>findRelevantMemories</code> 是现成参照），挂同一个
+          <code>OnUserPromptSubmit</code> 即可，不动存储。
         </li>
-        <li><b>多层空间</b>：private + team 双目录（CC TEAMMEM）有真实多用户需求时再加；届时 Space 从单值变
-          []Space，索引渲染两段式，类型辞典加 <code>&lt;scope&gt;</code> 标签——文案在 CC 源码里是现成的。</li>
-        <li><b>session memory</b>：CC 用每会话 <code>memory.md</code> 替代摘要调用来省一次 LLM
-          请求。RH 压缩已走滚动摘要且成本可控；若侧重回撤质量可考虑，属独立增量。</li>
+        <li><b>云端 Store 实现</b>。Postgres 版 <code>memory.Store</code> +
+          <code>read_file</code>/<code>run_command</code> 每租户沙箱。后者是独立于记忆的既有云端化工作，但记忆云端落地以它为前提（§12）。
+        </li>
+        <li><b>journal 形态</b>。长驻陪伴场景可考虑 append-only 日志行（CC KAIROS），dream 只蒸馏不进主题行。当前
+          dream 直写主题行已够用，先不加。</li>
+        <li><b>多层空间</b>。private + team 双层（CC TEAMMEM）有真实多用户需求时再加。届时 space 从单值变列表，索引渲染分段。
+        </li>
+        <li><b>关系图谱</b>。<code>entities</code>/<code>related</code> 是轻量关系层，不做遍历查询。单空间记忆超过约 500
+          条、需要多跳查询（"我朋友的同事"）、实体归一要程序化时，再上真图谱（三元组表或图引擎）。写入路径不变，只是
+          <code>related</code> 从提示列变成查询结构。
+        </li>
+        <li><b>session memory</b>。CC 用每会话 memory 文件替代摘要调用省一次 LLM 请求。RH 已有滚动摘要，属独立增量。
+        </li>
       </ul>
     </section>
 
     <footer>
       依据：<code>learn.shareai.run/zh/s09</code>（教学版骨架）、CC 源码
       <code>src/memdir/{memdir,findRelevantMemories,memoryScan,memoryTypes,paths}.ts</code>、
-      <code>src/services/{extractMemories,autoDream,SessionMemory}</code>。
-      RH 侧现状对照：<code>internal/{agent,session,compact,scope,prompt,subagent}</code>。
+      <code>src/services/{extractMemories,autoDream}</code>。
+      RH 侧现状对照：<code>internal/{agent,session,compact,scope,prompt,subagent}</code>、
+      <code>internal/tui/model.go:355</code>（退出路径）。
     </footer>
   </div>
 </body>

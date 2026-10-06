@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 记忆模块 — 取舍记录</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 28px 140px
+    }
+
+    header {
+      padding: 80px 0 44px;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1.5px;
+      background: var(--teal)
+    }
+
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -.015em;
+      line-height: 1.3;
+      margin-bottom: 16px
+    }
+
+    .subtitle {
+      color: var(--ink-2);
+      font-size: 17px;
+      max-width: 660px
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 26px
+    }
+
+    .meta span {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 4px 11px;
+      border-radius: 99px
+    }
+
+    section {
+      padding-top: 56px
+    }
+
+    .chap {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px
+    }
+
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 20px
+    }
+
+    p {
+      margin-bottom: 14px
+    }
+
+    .lede {
+      color: var(--ink-2);
+      margin-bottom: 24px
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      padding: 1px 7px;
+      border-radius: 5px;
+      color: #7A5410;
+      word-break: break-word
+    }
+
+    .decision {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 22px 26px;
+      margin: 18px 0
+    }
+
+    .decision h3 {
+      font-size: 17px;
+      font-weight: 650;
+      margin-bottom: 10px
+    }
+
+    .decision .d-id {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--ink-3);
+      letter-spacing: .08em;
+      margin-right: 8px
+    }
+
+    .decision .who {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      margin-left: 8px;
+      vertical-align: 2px
+    }
+
+    .who.user {
+      background: var(--blue-bg);
+      color: var(--blue);
+      border: 1px solid #C9D6F2
+    }
+
+    .who.analysis {
+      background: var(--teal-bg);
+      color: var(--teal);
+      border: 1px solid #CFE8E4
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 4px 14px;
+      font-size: 14.5px
+    }
+
+    .kv dt {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      padding-top: 4px
+    }
+
+    .kv dd {
+      color: var(--ink-2)
+    }
+
+    .kv dd.chosen {
+      color: var(--ink);
+      font-weight: 550
+    }
+
+    .kv dd.cost {
+      color: var(--amber)
+    }
+
+    .kv dd.revisit {
+      color: var(--rose)
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      margin-top: 80px;
+      padding-top: 28px;
+      color: var(--ink-3);
+      font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">取舍记录 · RuneHarness Internals</div>
+      <h1>记忆模块：设计决策与代价</h1>
+      <p class="subtitle">每条决策记录选定项、被否掉的备选、代价和该反悔的条件。定稿依据
+        <code>docs/runeharness-memory-plan.html</code> v0.4。标记 <b>user</b> 表示由需求方拍板，<b>分析</b>
+        表示由方案推导。
+      </p>
+      <div class="meta">
+        <span>2026-10-06</span>
+        <span>状态：已定稿，进入实现</span>
+      </div>
+    </header>
+
+    <section>
+      <div class="chap">存储</div>
+      <h2>记忆放哪</h2>
+
+      <div class="decision">
+        <h3><span class="d-id">D1</span>统一 DB，不落文件<span class="who user">user</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen"><code>~/.rune/memory.db</code>（SQLite）。云端换 <code>memory.Store</code> 的 Postgres
+            实现。接口签名里没有路径和租户参数，空间键从 ctx 的 scope 派生。</dd>
+          <dt>否掉</dt>
+          <dd>Markdown 文件目录（CC 形态）。本地固然能读能改能 grep，但云端多租户下进程盘既不隔离也不持久；
+            <code>read_file</code> 不限路径，文件形态本身就是越界口。</dd>
+          <dt>代价</dt>
+          <dd class="cost">用户不能拿编辑器直接改记忆。由 <code>/memory</code> 命令和 <code>memory</code> 工具的
+            list/read/forget 补读写口。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">出现"用户手写/批量导入记忆文件"的真实需求时，可加一个文件后端实现 <code>Store</code>，或做导入导出工具。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">D2</span>独立库文件，不复用 sessions.db<span class="who analysis">分析</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen"><code>memory.db</code> 与 <code>sessions.db</code> 分文件、分连接。</dd>
+          <dt>否掉</dt>
+          <dd>共享连接：要把 <code>*sql.DB</code> 漏出 <code>session.Store</code> 接口。各自连接同写一库：两个包的
+            schema 迁移在同一文件里纠缠。</dd>
+          <dt>代价</dt>
+          <dd class="cost"><code>~/.rune/</code> 下多一个文件；备份要备两份。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">若部署方明确要求单文件管理，装配层改一行即可，schema 本身不冲突。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">D3</span>索引不落盘，是查询渲染的文本<span class="who analysis">分析</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen">索引 = <code>SELECT name,type,descr</code> 渲染出的文本块，随注入进消息。</dd>
+          <dt>否掉</dt>
+          <dd>维护一份 <code>MEMORY.md</code> 文件（CC 形态）。DB 形态下它是多余的第二份事实，还要处理与表的一致性。</dd>
+          <dt>代价</dt>
+          <dd class="cost">索引只能整体重算，不能局部追加——百行量级下无关紧要。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">记忆规模大到索引渲染成瓶颈时再说，预计不会发生。</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section>
+      <div class="chap">读路径</div>
+      <h2>记忆怎么进上下文</h2>
+
+      <div class="decision">
+        <h3><span class="d-id">D4</span>启动注入第一条 user 消息，借 Fold 首部常驻<span class="who user">user</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen">本会话第一条 user 消息附加 <code>&lt;memory-index&gt;</code> + <code>AlwaysInject</code>
+            类型的正文。<code>Fold</code> 首部永远保留前 3 条 user 消息，所以一次注入全程在场，压缩也甩不掉。</dd>
+          <dt>否掉</dt>
+          <dd>每轮注入（膨胀）；每轮 side-query 选正文（CC 做法，多一次每轮 LLM 调用）。</dd>
+          <dt>代价</dt>
+          <dd class="cost">首部是快照会旧：dream 改了记忆后首部不更新。缓解：dream 后下一条 user
+            消息重注带时间戳的新索引，模型以最新份为准。非常驻类型的正文要模型主动 <code>op=read</code> 取，有"该翻不翻"的风险。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">"该翻不翻"成为真实失败案例时，加回每轮 side-query 选择，挂同一个
+            <code>OnUserPromptSubmit</code> hook，不动存储。</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section>
+      <div class="chap">写路径</div>
+      <h2>记忆怎么产生</h2>
+
+      <div class="decision">
+        <h3><span class="d-id">D5</span>dream 是唯一提取入口，消化全部未消化行<span class="who user">user</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen"><code>/dream</code> 三触发器：手动命令、进程内 ticker（10–15 分钟空转检查）、正常退出收尾一次。dream
+            按会话水位消化<b>本空间所有未消化行</b>，不只当前会话。</dd>
+          <dt>否掉</dt>
+          <dd>每轮 OnStop 后台提取（CC 做法）：LLM 调用次数多一个量级；"只消化当前会话"：进程被 kill
+            或用户从不触发时记忆永久丢失——水位模式把丢失面缩到零。</dd>
+          <dt>代价</dt>
+          <dd class="cost">记忆延迟 = dream 间隔（coding 60min，companion 120min）或会话结束。user
+            显式"记住 X"的即时性由 <code>memory</code> 工具兜住。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">若"隐式偏好要立刻生效"成为真实需求，加回每轮提取；或加"未消化行 >N 直接触发"的事件驱动触发器。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">D6</span>提取用 side-query，不用 forked agent<span class="who analysis">分析</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen">一次 <code>Chat</code>：画像提示 + 已有清单 + 未消化行渲染 + tombstone 清单 → JSON
+            ops，代码校验后落库写流水。</dd>
+          <dt>否掉</dt>
+          <dd>CC 的 forked agent（受限工具表自己读写记忆文件）：v1 里已有正文由 BodyBudget 前置进输入，读写循环的必要性不足。</dd>
+          <dt>代价</dt>
+          <dd class="cost">超预算时模型看不到全部已有正文，可能重复提取相近条目——整理阶段合并兜底。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">ops 质量问题真实出现时，换 <code>agent.New</code> + 受限注册表跑读写循环，hook/水位/ops 契约不变。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">D7</span>冷却 = 画像参数，ticker 是心跳不是节奏<span class="who user">user</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen"><code>IntervalMin</code>：coding=60，companion=120。ticker 固定 10–15
+            分钟检查一次，物量门和间隔门决定是否真跑。</dd>
+          <dt>否掉</dt>
+          <dd>把 ticker 间隔当节奏调：空转检查只是一次 meta 读，调大反而让该 dream 的时刻晚到半个周期。</dd>
+          <dt>代价</dt>
+          <dd class="cost">companion 120min 看似粗，实际记忆延迟 = "会话结束或 2 小时先到为准"，退出收尾兜住大多数场景。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">陪伴场景反馈"跨会话没记住刚聊的"时先查退出收尾是否生效，再调小冷却。</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section>
+      <div class="chap">语义层</div>
+      <h2>关系与版本</h2>
+
+      <div class="decision">
+        <h3><span class="d-id">D8</span>关系用两列 + 结构化正文，不上图谱<span class="who analysis">分析</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen"><code>entities</code>（关于谁）+ <code>related</code>（关联哪条）两列；实体归一在写入时由模型做；bond
+            正文定死事件结构（事件/时间/起因/经过/结果/影响）；<code>op=about</code> 聚合查询。</dd>
+          <dt>否掉</dt>
+          <dd>知识图谱/三元组表：消费者是 LLM 不是查询引擎，正文里的关系模型读得懂；图结构反而要再序列化成文本。</dd>
+          <dt>代价</dt>
+          <dd class="cost">多跳查询和程序化实体归一做不了。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">单空间记忆 >500 条、需要多跳查询、或实体归一必须程序保证时，把
+            <code>related</code> 从提示列升级为真图结构。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">D9</span>版本用 append-only 流水，不加版本表<span class="who analysis">分析</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen"><code>memories</code> 存当前信念，<code>memory_log</code> 记每次
+            upsert/supersede/delete 的旧值、新值、reason、会话、时间。<code>supersede</code>
+            是一等 op，矛盾更替带理由。</dd>
+          <dt>否掉</dt>
+          <dd>版本链/双时态（<code>valid_from/valid_to</code>）：当前视图查询变复杂，收益只有"当时的信念"——流水折叠同样给得出。</dd>
+          <dt>代价</dt>
+          <dd class="cost">回放要写"折叠流水"的读路径，不是一行 SQL；这个读路径只在 <code>history</code> 调试和审计时用。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">需要按时间点全空间回放（而不只是单条变更史）且频次高时，评估双时态列。</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section>
+      <div class="chap">安全</div>
+      <h2>边界怎么守</h2>
+
+      <div class="decision">
+        <h3><span class="d-id">D10</span>隔离靠 ctx scope，凭据靠双层防线<span class="who analysis">分析</span></h3>
+        <dl class="kv">
+          <dt>选定</dt>
+          <dd class="chosen">空间键全部从 ctx 的 scope 派生（<code>Scope</code> 新增 <code>SubjectID</code>），模型参数里没有租户和空间字段。凭据防护双层：提示词
+            DoNot + <code>Upsert</code> 前代码级密钥模式扫描。</dd>
+          <dt>否掉</dt>
+          <dd>靠模型自觉不乱写路径/不传 tenant 参数——参数层就不该有这两个字段。</dd>
+          <dt>代价</dt>
+          <dd class="cost"><code>Scope.SubjectID</code> 是对既有代码唯一的横切改动，云端入口要正确注入。</dd>
+          <dt>反悔条件</dt>
+          <dd class="revisit">云端落地前必须补 <code>read_file</code>/<code>run_command</code>
+            的每租户沙箱——这是既有缺口，记忆只是让它更显化。</dd>
+        </dl>
+      </div>
+    </section>
+
+    <footer>
+      配套文档：<code>docs/runeharness-memory-plan.html</code>（机制设计）、
+      <code>docs/runeharness-compaction-plan.html</code>（压缩管线）。
+      决策编号 D1–D10，反悔条件触发时应回到本文档修订而不是直接改代码。
+    </footer>
+  </div>
+</body>
+
+</html>

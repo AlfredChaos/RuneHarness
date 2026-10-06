@@ -11,13 +11,16 @@ import (
 type ctxKey struct{}
 
 // Scope 是一次调用链上的租户边界：谁的数据、写到哪个会话、文件操作落在哪。
-// 三个字段的用途：TenantID 决定可见数据范围（隔离边界）；
+// 四个字段的用途：TenantID 决定可见数据范围（隔离边界）；
 // SessionID 决定消息写入目标（子代理 spawn 时被替换，见 WithSession）；
-// Workspace 是文件工具的根目录（本地 = cwd，云端每租户一根）。
+// Workspace 是文件工具的根目录（本地 = cwd，云端每租户一根）；
+// SubjectID 是记忆层的"当前用户"维度（subject 空间的归属者，云端按
+// auth 主体填，本地 CLI 留空回落 local-user）。
 type Scope struct {
 	TenantID  string
 	SessionID string
 	Workspace string
+	SubjectID string
 }
 
 // ErrMissing 表示 ctx 中没有可用 scope：装配遗漏属于 bug，显式失败好过

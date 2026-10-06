@@ -20,6 +20,7 @@ import (
 	"runeharness/internal/compact"
 	"runeharness/internal/config"
 	"runeharness/internal/llm"
+	"runeharness/internal/memory"
 	"runeharness/internal/permission"
 	"runeharness/internal/prompt"
 	"runeharness/internal/scope"
@@ -103,6 +104,38 @@ func main() {
 	baseCtx := scope.WithScope(context.Background(),
 		scope.Scope{TenantID: localTenant, Workspace: wd})
 
+	// 记忆层：独立库文件，画像驱动。打开失败降级为无记忆运行（增强不是
+	// 硬依赖），只打 warning 不挡启动。
+	var mem *memory.Memory
+	if cfg.Memory {
+		mdbPath := cfg.MemoryDB
+		if mdbPath == "" {
+			if mdbPath, err = config.DefaultMemoryDBPath(); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(mdbPath), 0o755); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		// dream 提取可换轻量模型：RUNE_MEMORY_MODEL 独立指定，默认复用主模型。
+		var memLLM agent.LLM = model
+		if cfg.MemoryModel != "" {
+			memLLM = llm.NewClient(cfg.APIKey, cfg.BaseURL, cfg.MemoryModel)
+		}
+		if mem, err = memory.New(store, memLLM, memory.Config{
+			DBPath:  mdbPath,
+			Profile: memory.Lookup(cfg.MemoryProfile),
+			Dream:   cfg.MemoryDream,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: memory disabled: %v\n", err)
+			mem = nil
+		} else {
+			defer mem.Close()
+		}
+	}
+
 	// p 先声明后赋值：askAt / task.OnEvent 闭包捕获它，Send 只在 agent
 	// 运行期间触发（那时已 NewProgram），不会命中 nil。
 	var p *tea.Program
@@ -169,6 +202,14 @@ func main() {
 	}
 	// compact 是主代理专属工具：loop 按名特判，不进子代理的 baseTools。
 	toolSet = append(toolSet, compact.Tool{})
+	// memory 工具写本地库，是低危操作——进 safe 名单不弹确认
+	// （画像关闭写工具时 Tool() 返回 nil，不注册）。
+	if mem != nil {
+		if t := mem.Tool(); t != nil {
+			toolSet = append(toolSet, t)
+			permCfg.SafeTools = append(permCfg.SafeTools, memory.ToolName)
+		}
+	}
 	registry := tools.NewRegistry(toolSet...)
 	for _, name := range permCfg.SafeTools {
 		if !registry.Has(name) {
@@ -193,6 +234,9 @@ func main() {
 	a.Compactor = comp
 	// 工具段取自注册表：开启子代理时 task 自动出现在清单里，无需另行提示。
 	env.Tools = registry.Specs()
+	if mem != nil {
+		env.MemoryGuide = mem.SystemGuide()
+	}
 
 	// 会话确定：--resume 精确回放 / --continue 最近会话 / 默认新建。
 	// resume 不建新会话——续写同一 session，审计链不中断。
@@ -249,7 +293,7 @@ func main() {
 		Branch:  gitBranch(),
 		Session: sessID[:8],
 		Tools:   len(toolSet),
-	}, initial, sessScope, store, skills),
+	}, initial, sessScope, store, skills, mem),
 		tea.WithAltScreen(),
 	)
 	// 工具调用与流式输出事件通过 Program.Send 桥接进 UI 循环
@@ -290,9 +334,28 @@ func main() {
 		todos.ResetRounds()
 		return "", ""
 	})
+	// 记忆注入 hook 排在 todo reset 之后：TriggerUserPromptSubmit 首个
+	// 非空返回即短路，InjectOnce 的 replace 不能拦掉前面的回调。
+	if mem != nil {
+		a.Hooks.OnUserPromptSubmit(mem.InjectOnce)
+		mem.OnChange = func(st memory.Stats) { p.Send(tui.MemoryMsg{Stats: st}) }
+	}
+
+	// dream 心跳与退出收尾共用可取消 ctx：进程退出前先停心跳再收尾，
+	// 两把 dream 互斥由 meta 锁兜底。
+	dreamCtx, stopDream := context.WithCancel(
+		scope.WithScope(context.Background(), sessScope))
+	if mem != nil && cfg.MemoryDream {
+		go mem.DreamTicker(dreamCtx)
+	}
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+	stopDream()
+	if mem != nil && cfg.MemoryDream {
+		// 退出收尾用新 ctx：dreamCtx 已被 stopDream 取消。
+		mem.DreamOnExit(scope.WithScope(context.Background(), sessScope))
 	}
 }

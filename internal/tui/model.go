@@ -17,6 +17,7 @@ import (
 
 	"runeharness/internal/agent"
 	"runeharness/internal/compact"
+	"runeharness/internal/memory"
 	"runeharness/internal/scope"
 	"runeharness/internal/session"
 	"runeharness/internal/skill"
@@ -62,6 +63,16 @@ type InjectMsg struct{ Content string }
 // TodoMsg 由 todo.Manager.OnChange 回调经 Program.Send 注入，
 // 携带当前完整 TODO 列表（写入成功的快照）。
 type TodoMsg struct{ Items []todo.Item }
+
+// MemoryMsg 由 memory.OnChange 回调经 Program.Send 注入，
+// 在后台 dream 落库后给对话区补一行提示。
+type MemoryMsg struct{ Stats memory.Stats }
+
+// dreamDoneMsg 是 /dream 手动消化的完成信号（内部）。
+type dreamDoneMsg struct {
+	stats memory.Stats
+	err   error
+}
 
 // clockTickMsg 驱动顶栏时钟与空闲时的重绘。
 type clockTickMsg time.Time
@@ -134,6 +145,7 @@ type Model struct {
 	// store 为 nil（测试）时跳过记录。
 	sc    scope.Scope
 	store session.Store
+	mem   *memory.Memory // nil 表示记忆层未启用（/dream 与 /memory 降级提示）
 
 	viewport   viewport.Model
 	input      textarea.Model
@@ -189,7 +201,8 @@ type Model struct {
 // New 创建界面；init 是初始对话历史（新会话=system prompt 一条，
 // resume=LoadHistory 回放的全量），sc/st 承载会话 scope 与落库通道。
 // skills 是启动扫描到的技能目录，供 "/" 下拉列出并发起技能调用。
-func New(a *agent.Agent, info Info, init []agent.Message, sc scope.Scope, st session.Store, skills []skill.Meta) *Model {
+// mem 是记忆层编排器（nil 表示未启用），供 /dream 与 /memory 命令调用。
+func New(a *agent.Agent, info Info, init []agent.Message, sc scope.Scope, st session.Store, skills []skill.Meta, mem *memory.Memory) *Model {
 	ta := textarea.New()
 	ta.Prompt = "❯ "
 	ta.Placeholder = "Message…"
@@ -206,6 +219,7 @@ func New(a *agent.Agent, info Info, init []agent.Message, sc scope.Scope, st ses
 		history: init,
 		sc:      sc,
 		store:   st,
+		mem:     mem,
 		skills:  skills,
 		input:   ta,
 		mdStyle: detectMarkdownStyle(),
@@ -319,6 +333,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendLine(m.rowNote("·", "empty final response"))
 			}
 		}
+		return m, nil
+	case MemoryMsg:
+		st := msg.Stats
+		m.appendLine(m.rowNote("✎", fmt.Sprintf("memory updated: %d ops, %d merged",
+			st.OpsApplied, st.TidyMerged)))
+		return m, nil
+	case dreamDoneMsg:
+		m.busy, m.cancel, m.activity = false, nil, ""
+		switch {
+		case msg.err != nil:
+			m.appendLine(m.rowNote("✘", "dream failed: "+msg.err.Error()))
+		case msg.stats.Skipped != "":
+			m.appendLine(m.rowNote("·", "dream skipped: "+msg.stats.Skipped))
+		default:
+			m.appendLine(m.rowNote("✦", fmt.Sprintf(
+				"dreamed: %d sessions, %d rows → %d ops, %d merged",
+				msg.stats.Sessions, msg.stats.Rows, msg.stats.OpsApplied, msg.stats.TidyMerged)))
+		}
+		m.layout()
 		return m, nil
 	case compactDoneMsg:
 		m.busy, m.cancel, m.activity = false, nil, ""
@@ -562,6 +595,10 @@ func (m *Model) runSlash(input string) tea.Cmd {
 		return m.runResume(arg)
 	case "compact":
 		return m.runCompact(arg)
+	case "dream":
+		return m.runDream()
+	case "memory":
+		return m.runMemory()
 	default:
 		if s := m.findSkill(name); s != nil {
 			return m.sendUserText(input, skillPromptText(*s, arg))
@@ -587,6 +624,42 @@ func (m *Model) runCompact(extra string) tea.Cmd {
 		next, err := cm.CompactWith(ctx, history, extra)
 		return compactDoneMsg{history: next, pre: pre, err: err}
 	})
+}
+
+// runDream 执行 /dream：轮间手动触发记忆消化（manual 只过锁）。消化在
+// 后台 goroutine 跑，完成经 dreamDoneMsg 回报。
+func (m *Model) runDream() tea.Cmd {
+	if m.mem == nil {
+		m.appendLine(m.rowNote("✘", "memory is not enabled"))
+		return nil
+	}
+	if m.busy {
+		m.appendLine(m.rowNote("·", "busy — try /dream again when idle"))
+		return nil
+	}
+	ctx, cancel := context.WithCancel(scope.WithScope(context.Background(), m.sc))
+	m.busy, m.busySince, m.activity, m.cancel = true, time.Now(), "dreaming", cancel
+	m.layout()
+	return tea.Batch(m.spinner.Tick, func() tea.Msg {
+		st, err := m.mem.Dream(ctx, true)
+		return dreamDoneMsg{stats: st, err: err}
+	})
+}
+
+// runMemory 执行 /memory：把当前空间的记忆索引打进对话区（本地查询，不阻塞）。
+func (m *Model) runMemory() tea.Cmd {
+	if m.mem == nil {
+		m.appendLine(m.rowNote("✘", "memory is not enabled"))
+		return nil
+	}
+	ctx := scope.WithScope(context.Background(), m.sc)
+	txt, err := m.mem.IndexText(ctx)
+	if err != nil {
+		m.appendLine(m.rowNote("✘", "memory: "+err.Error()))
+		return nil
+	}
+	m.appendBlock(dimStyle.Render(txt))
+	return nil
 }
 
 // trackSubagent 按子代理事件更新状态栏 activity 与 AGENTS 卡状态

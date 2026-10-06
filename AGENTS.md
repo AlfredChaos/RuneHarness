@@ -59,6 +59,22 @@ go test . ./internal/...
   `go run ./cmd/e2e -w 80000 -keep`——小窗口下几轮即可触发提醒/卸载/摘要，
   结束打印控制行、blob、requests 重放校验。不进 `go test`，仅手工运行。
 
+### 记忆层（internal/memory，设计见 docs/runeharness-memory-plan.html 与
+### docs/runeharness-memory-tradeoffs.html）
+
+- 独立库 `~/.rune/memory.db`：`memories` 当前视图 + `memory_log` 变更
+  流水（upsert/supersede/delete/merge-into 全留痕）+ `memory_meta`
+  （游标/锁/熔断）。tenant+space 从 ctx scope 与画像推导，接口无租户参数。
+- 画像（Profile）决定空间维度/类型辞典/写工具/dream 节奏：
+  `RUNE_MEMORY_PROFILE=coding|companion|generic`（coding 冷却 60min、
+  companion 120min，退出收尾与 12min 心跳兜底欠账）。
+- 读路径：UserPromptSubmit hook（`InjectOnce`）把索引+常驻正文注入首条
+  user 消息（Fold 首部常驻）；写路径：`memory` 工具（safe 名单内）
+  + dream 消化（手动 /dream、定时、退出收尾三触发器）。
+- 凭据两道闸：提示词 DoNot + `LooksLikeSecret` 代码层扫描，写入一律过。
+- 相关 env：RUNE_MEMORY（总开关）、RUNE_MEMORY_DB、RUNE_MEMORY_PROFILE、
+  RUNE_MEMORY_DREAM、RUNE_MEMORY_MODEL（dream 提取可换轻量模型）。
+
 ### 输出约束
 
 在解释、步骤、文档、报告时，应用 ASD-STE100的约束语法来规范输出，至少达到ASD-STE100 80% 的程度。

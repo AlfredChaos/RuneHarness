@@ -35,6 +35,20 @@ type Config struct {
 	MaxOutputTokens int
 	// AutoCompact 是强制压缩开关（RUNE_AUTOCOMPACT，默认开）。
 	AutoCompact bool
+
+	// Memory 是记忆层总开关（RUNE_MEMORY，默认开）。
+	Memory bool
+	// MemoryDB 是记忆库文件路径（RUNE_MEMORY_DB）；为空用 DefaultMemoryDBPath。
+	MemoryDB string
+	// MemoryProfile 选定记忆画像（RUNE_MEMORY_PROFILE，默认 coding；
+	// 可选 coding/companion/generic）。
+	MemoryProfile string
+	// MemoryDream 是定时 dream 与退出收尾开关（RUNE_MEMORY_DREAM，默认开；
+	// 手动 /dream 不受此限）。
+	MemoryDream bool
+	// MemoryModel 是 dream 提取用的模型名（RUNE_MEMORY_MODEL）；
+	// 为空时复用主模型。
+	MemoryModel string
 }
 
 const (
@@ -91,13 +105,18 @@ func Load() (Config, error) {
 	_ = godotenv.Overload()
 
 	cfg := Config{
-		APIKey:       os.Getenv("OPENAI_API_KEY"),
-		BaseURL:      os.Getenv("OPENAI_BASE_URL"),
-		Model:        os.Getenv("OPENAI_MODEL"),
-		DBPath:       os.Getenv("RUNE_DB"),
-		SubAgent:     envTrue("RUNE_SUBAGENT"),
-		SubAgentNest: envTrue("RUNE_SUBAGENT_NEST"),
-		AutoCompact:  os.Getenv("RUNE_AUTOCOMPACT") == "" || envTrue("RUNE_AUTOCOMPACT"),
+		APIKey:        os.Getenv("OPENAI_API_KEY"),
+		BaseURL:       os.Getenv("OPENAI_BASE_URL"),
+		Model:         os.Getenv("OPENAI_MODEL"),
+		DBPath:        os.Getenv("RUNE_DB"),
+		SubAgent:      envTrue("RUNE_SUBAGENT"),
+		SubAgentNest:  envTrue("RUNE_SUBAGENT_NEST"),
+		AutoCompact:   os.Getenv("RUNE_AUTOCOMPACT") == "" || envTrue("RUNE_AUTOCOMPACT"),
+		Memory:        os.Getenv("RUNE_MEMORY") == "" || envTrue("RUNE_MEMORY"),
+		MemoryDB:      os.Getenv("RUNE_MEMORY_DB"),
+		MemoryProfile: os.Getenv("RUNE_MEMORY_PROFILE"),
+		MemoryDream:   os.Getenv("RUNE_MEMORY_DREAM") == "" || envTrue("RUNE_MEMORY_DREAM"),
+		MemoryModel:   os.Getenv("RUNE_MEMORY_MODEL"),
 	}
 	var err error
 	if cfg.ContextTokens, err = contextWindow(os.Getenv("RUNE_CONTEXT_TOKENS"), cfg.Model); err != nil {
@@ -124,6 +143,16 @@ func DefaultDBPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".rune", "sessions.db"), nil
+}
+
+// DefaultMemoryDBPath 返回记忆库的默认位置：~/.rune/memory.db。
+// 与会话库分文件：schema 各自演进，记忆可独立备份带走。
+func DefaultMemoryDBPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".rune", "memory.db"), nil
 }
 
 // envInt 读正整数环境变量；未设置时取默认值，格式非法时报错（不静默回落）。
