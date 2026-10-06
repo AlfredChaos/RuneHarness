@@ -1,0 +1,1892 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 上下文压缩方案 — 设计文档</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 28px 140px
+    }
+
+    header {
+      padding: 80px 0 44px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 0
+    }
+
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1.5px;
+      background: var(--teal)
+    }
+
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -.015em;
+      line-height: 1.3;
+      margin-bottom: 16px
+    }
+
+    .subtitle {
+      color: var(--ink-2);
+      font-size: 17px;
+      max-width: 660px
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 26px
+    }
+
+    .meta span {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 4px 11px;
+      border-radius: 99px
+    }
+
+    /* 阅读导引 */
+    .guide {
+      padding: 36px 0 8px
+    }
+
+    .guide .inner {
+      background: var(--teal-bg);
+      border: 1px solid #CFE8E4;
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      font-size: 15px
+    }
+
+    .guide b {
+      color: var(--teal)
+    }
+
+    /* 章节 */
+    section {
+      padding-top: 64px
+    }
+
+    .chap {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px
+    }
+
+    h2 {
+      font-size: 27px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.35;
+      margin-bottom: 14px
+    }
+
+    h3 {
+      font-size: 19px;
+      font-weight: 650;
+      margin: 40px 0 12px
+    }
+
+    h4 {
+      font-size: 16px;
+      font-weight: 650;
+      margin: 26px 0 8px
+    }
+
+    p {
+      margin-bottom: 14px
+    }
+
+    .lede {
+      color: var(--ink-2);
+      font-size: 16.5px;
+      margin-bottom: 24px
+    }
+
+    ul,
+    ol {
+      padding-left: 24px;
+      margin-bottom: 14px
+    }
+
+    li {
+      margin-bottom: 6px
+    }
+
+    strong {
+      font-weight: 650
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      padding: 1px 7px;
+      border-radius: 5px;
+      color: #7A5410;
+      word-break: break-word
+    }
+
+    pre {
+      background: #2B2925;
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.75;
+      overflow-x: auto;
+      margin: 16px 0 22px;
+      color: #EDEAE3
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit
+    }
+
+    pre .cm {
+      color: #8A857E
+    }
+
+    pre .hl {
+      color: #7FDCC8;
+      font-weight: 600
+    }
+
+    pre .numc {
+      color: #F0B86A
+    }
+
+    pre .kw {
+      color: #C4A8F0
+    }
+
+    pre .str {
+      color: #A8D5A2
+    }
+
+    pre .del {
+      color: #F09AA5
+    }
+
+    /* 场景块 */
+    .scene {
+      margin: 32px 0
+    }
+
+    .scene-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 0
+    }
+
+    .scene-tag {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: #fff;
+      background: var(--teal);
+      border-radius: 6px;
+      padding: 4px 10px;
+      flex-shrink: 0;
+    }
+
+    .scene.amber .scene-tag {
+      background: var(--amber)
+    }
+
+    .scene.rose .scene-tag {
+      background: var(--rose)
+    }
+
+    .scene.blue .scene-tag {
+      background: var(--blue)
+    }
+
+    .scene.violet .scene-tag {
+      background: var(--violet)
+    }
+
+    .scene-title {
+      font-size: 19px;
+      font-weight: 700
+    }
+
+    .scene-body {
+      border-left: 3px solid var(--line-2);
+      margin-left: 14px;
+      padding: 8px 0 4px 26px;
+    }
+
+    .scene.amber .scene-body {
+      border-color: #E8C89A
+    }
+
+    .scene.rose .scene-body {
+      border-color: #E8AEBC
+    }
+
+    .scene.blue .scene-body {
+      border-color: #B3C4EA
+    }
+
+    .scene.violet .scene-body {
+      border-color: #C9B0EA
+    }
+
+    .scene-q {
+      color: var(--ink-2);
+      font-style: normal;
+      margin-bottom: 14px
+    }
+
+    .scene-q::before {
+      content: "情境";
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: .1em;
+      color: var(--ink-3);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 2px 7px;
+      margin-right: 10px;
+      font-style: normal;
+      vertical-align: 2px
+    }
+
+    /* 前后对比 */
+    .ba {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 16px 0 22px;
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    .ba .side {
+      padding: 16px 20px
+    }
+
+    .ba .side+.side {
+      border-left: 1px solid var(--line)
+    }
+
+    .ba .ba-label {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 8px
+    }
+
+    .ba .before .ba-label {
+      color: var(--rose)
+    }
+
+    .ba .after .ba-label {
+      color: var(--green)
+    }
+
+    .ba pre {
+      margin: 0;
+      background: var(--code-bg);
+      color: var(--ink);
+      font-size: 11.5px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line)
+    }
+
+    .ba pre .cm {
+      color: var(--ink-3)
+    }
+
+    .ba pre .hl {
+      color: var(--teal);
+      font-weight: 600
+    }
+
+    .ba pre .del {
+      color: var(--rose)
+    }
+
+    @media(max-width:680px) {
+      .ba {
+        grid-template-columns: 1fr
+      }
+
+      .ba .side+.side {
+        border-left: none;
+        border-top: 1px solid var(--line)
+      }
+    }
+
+    /* 消息气泡示意 */
+    .thread {
+      margin: 16px 0 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+      box-shadow: var(--shadow)
+    }
+
+    .msg {
+      display: flex;
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13.5px
+    }
+
+    .msg:last-child {
+      border-bottom: none
+    }
+
+    .msg .who {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      width: 64px;
+      flex-shrink: 0;
+      padding-top: 3px;
+      letter-spacing: .04em
+    }
+
+    .msg.u .who {
+      color: var(--blue)
+    }
+
+    .msg.a .who {
+      color: var(--violet)
+    }
+
+    .msg.t .who {
+      color: var(--amber)
+    }
+
+    .msg.s .who {
+      color: var(--ink-3)
+    }
+
+    .msg .bd {
+      color: var(--ink-2);
+      min-width: 0
+    }
+
+    .msg .bd code {
+      font-size: 11.5px
+    }
+
+    .msg.faded {
+      opacity: .45
+    }
+
+    .msg.faded .bd {
+      text-decoration: line-through;
+      text-decoration-color: var(--line-2)
+    }
+
+    .msg.new {
+      background: var(--green-bg)
+    }
+
+    .msg.new .who {
+      color: var(--green)
+    }
+
+    .msg.sum {
+      background: var(--teal-bg)
+    }
+
+    .msg.sum .who {
+      color: var(--teal)
+    }
+
+    .msg.boundary {
+      background: #F6F5F1;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3);
+      justify-content: center;
+      letter-spacing: .06em
+    }
+
+    .msg.boundary .bd {
+      text-align: center
+    }
+
+    /* 注释卡 / 要点 */
+    .note {
+      border-left: 3px solid var(--blue);
+      background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px;
+      margin: 18px 0;
+      font-size: 15px
+    }
+
+    .note.warn {
+      border-color: var(--amber);
+      background: var(--amber-bg)
+    }
+
+    .note.danger {
+      border-color: var(--rose);
+      background: var(--rose-bg)
+    }
+
+    .note.ok {
+      border-color: var(--green);
+      background: var(--green-bg)
+    }
+
+    .note.teal {
+      border-color: var(--teal);
+      background: var(--teal-bg)
+    }
+
+    .note .nt {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 6px
+    }
+
+    .note.warn .nt {
+      color: var(--amber)
+    }
+
+    .note.danger .nt {
+      color: var(--rose)
+    }
+
+    .note.ok .nt {
+      color: var(--green)
+    }
+
+    .note.teal .nt {
+      color: var(--teal)
+    }
+
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt {
+      color: var(--blue)
+    }
+
+    .note p {
+      margin-bottom: 8px
+    }
+
+    .note p:last-child {
+      margin-bottom: 0
+    }
+
+    /* 表格 */
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px
+    }
+
+    th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: #F6F5F0;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top
+    }
+
+    tr:last-child td {
+      border-bottom: none
+    }
+
+    td code {
+      font-size: 12px
+    }
+
+    td .dim {
+      color: var(--ink-3);
+      font-size: 13px
+    }
+
+    /* 步骤流 */
+    .steps {
+      margin: 20px 0
+    }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px dashed var(--line)
+    }
+
+    .step:last-child {
+      border-bottom: none
+    }
+
+    .step .n {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--paper);
+      border: 1.5px solid var(--teal);
+      color: var(--teal);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 3px
+    }
+
+    .step .st {
+      font-size: 15px
+    }
+
+    .step .st b {
+      font-weight: 650
+    }
+
+    .step .sd {
+      font-size: 14px;
+      color: var(--ink-2);
+      margin-top: 3px
+    }
+
+    /* 大字结论 */
+    .bigconclusion {
+      background: linear-gradient(135deg, #EDF7F5, #EFF3FC);
+      border: 1px solid #CFE0E8;
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      margin: 24px 0;
+      font-size: 17px;
+      line-height: 1.8
+    }
+
+    .svg-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 26px;
+      overflow-x: auto;
+      box-shadow: var(--shadow);
+      margin: 18px 0 8px
+    }
+
+    .svg-cap {
+      font-size: 12.5px;
+      color: var(--ink-3);
+      text-align: center;
+      margin-top: 12px;
+      font-family: var(--mono)
+    }
+
+    .src {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3)
+    }
+
+    .src code {
+      font-size: 11px;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--teal)
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      margin-top: 80px;
+      padding-top: 28px;
+      color: var(--ink-3);
+      font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">设计文档 · RuneHarness Internals</div>
+      <h1>RuneHarness 上下文压缩方案</h1>
+      <p class="subtitle">把 Claude Code 的分层压缩管线移植到 RuneHarness：OpenAI 消息形态、SQLite 持久层、本地与云端同构。压缩的全部状态落在
+        <code>session.Store</code> 里，不落本地文件——这是和 CC 最根本的一个分歧点。
+      </p>
+      <div class="meta">
+        <span>依据 docs/claude-code-compaction.html</span>
+        <span>契约衔接 docs/session-persistence-plan.html</span>
+        <span>v1.8 草案 · 浅色</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读：</b>第 1 章直接给结论和三条硬约束；第 2 章回答"压缩状态为什么不能像 CC 一样写本地文件"；第 3
+        章定管线挂点和切割协议；第 4 章逐层展开每层在 RH 里的实现；第 5 章是 schema v2；第 6 章是摘要设计；第 7
+        章排落地顺序；第 8 章列风险和没定的事。<br>
+        前置约定：下文所有"上下文用量"都指<b>会发给 API 的那部分</b>——不含 Thinking（它不回传），但含
+        <code>tool_calls</code> 的参数原文。
+      </div>
+    </div>
+
+    <!-- ============ 1. 结论先行 ============ -->
+    <section id="conclusion">
+      <div class="chap">第 1 章 · 结论先行</div>
+      <h2>一句话方案与三条硬约束</h2>
+
+      <div class="bigconclusion">
+        防线按时间点分布：<b>回填时规范化（空结果标记、超限落 blob）→ Chat 前过提醒线提示模型择机压缩、过强制压缩线先卸载早期结果再摘要压缩
+          → Chat 失败后 reactive 兜底</b>；摘要压缩连续失败 3 次即熔断。压缩只动中段：首部前 3 条用户消息与尾部最近 40 个用户轮（≤40K
+        token）保持原文（3.2）。触发分两个通道：模型与用户可主动调用压缩（4.7）；代码阈值则到线即压，不依赖模型自觉——它是托底。压缩产生的所有状态——大块工具结果、摘要、边界标记、熔断计数——全部写入
+        <code>session.Store</code>。本地用 SQLite，云端换同一个接口的另一套实现，压缩逻辑一份代码两处复用。
+      </div>
+
+      <p>方案从三条硬约束倒推出来：</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>代码阈值是托底，不依赖模型自觉</b>
+            <div class="sd">
+              上下文越满，模型越容易忘事——把"要不要压缩"只交给模型，等于把保险丝交给火源。所以压缩分两个通道：模型与用户可主动调用（4.7）；循环体在每轮请求前用数字判定、到线必压。模型不调用时，托底线照常生效。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>压缩状态不落本地文件</b>
+            <div class="sd">RH 设计上同时支持本地和云端 agent：云端形态下多实例、多租户，本地文件既不隔离也可能不可写。持久化只走
+              <code>session.Store</code>——租户边界已在 <code>scope.Scope</code> 里（见 <code>internal/session/session.go</code>）。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>切割按 OpenAI 原子单元</b>
+            <div class="sd">RH 的消息形态是一条 assistant 消息携带多个 <code>tool_calls</code>，后面跟 N 条独立
+              <code>role=tool</code> 消息。这一串是一个原子单元：任何削减或切割只能落在组边界上，绝不能从中间劈开。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note warn">
+        <div class="nt">明确不做</div>
+        <p>两件事不在本方案内：<b>API 侧 microcompact</b>（Anthropic 私有协议能力，OpenAI 兼容端点没有对应物）、<b>context
+            collapse</b>（CC 内部实验特性）。模型侧 <code>compact</code> 工具与手动 <code>/compact</code> 命令在本方案内，共用同一执行入口（见 4.7）。</p>
+      </div>
+    </section>
+
+    <!-- ============ 2. 核心权衡：状态放哪 ============ -->
+    <section id="storage">
+      <div class="chap">第 2 章 · 核心权衡</div>
+      <h2>CC 把压缩状态写在本地文件上，RH 不能照抄</h2>
+      <p class="lede">CC 压缩时会往盘里写三类东西：大工具结果的全文（<code>tool-results/</code> 目录）、会话记忆笔记、原始
+        transcript。RH 会话持久层已经是 <code>session.Store</code>，问题只剩一个：这些压缩产物跟消息一起进 Store，还是另起一套文件存储？</p>
+
+      <h3>2.1 三个候选摆在一起</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>云端可用</th>
+              <th>租户隔离</th>
+              <th>resume 一致性</th>
+              <th>新增抽象</th>
+              <th>结论</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>本地文件（CC 做法）</td>
+              <td>不行：多实例不共享盘，容器可能无写盘权</td>
+              <td>要自建路径规则</td>
+              <td>文件与 DB 两个事实源，容易脱节</td>
+              <td>一套文件协议</td>
+              <td><b>弃用</b></td>
+            </tr>
+            <tr>
+              <td><code>session.Store</code> 内部扩表</td>
+              <td>天然：云端换 Store 驱动即可</td>
+              <td>天然：scope 校验已有</td>
+              <td>与消息同一事务时序，回放即正确</td>
+              <td>零：接口只加方法</td>
+              <td><b>采用</b></td>
+            </tr>
+            <tr>
+              <td>对象存储（S3 等）</td>
+              <td>行，但云端才需要</td>
+              <td>可行</td>
+              <td>又引入第二事实源</td>
+              <td>一整套 blob 接口</td>
+              <td>v2 以后再说</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>结论：<b>全部进 Store</b>。单条工具结果封顶在几百 KB 量级，远低于 SQLite blob 的舒适区；云端部署时把
+        SQLite 实现换成网络版 Store，压缩代码一行不动。本地形态则白捡一个好处——重启、<code>--resume</code>
+        之后压缩视图自动还原，不需要像 CC 那样在内存里重放一遍决策。</p>
+
+      <h3>2.2 顺带捡到的红利：决策冻结免费</h3>
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">CC 要费力保证的事</div>
+          <pre>同一个 tool_use_id 的削减决策
+  见一次就定型；
+每次重放要逐字节一致，
+否则服务端 prompt cache
+  前缀全部失效。
+→ 需要单独的决策记录文件，
+  resume 后原样重建</pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">RH 为什么不需要这层</div>
+          <pre>削减在追加时定型：
+指针形态直接写进消息行；
+fold/卸载只按 append-only
+决策行组装，逐字节一致。
+→ 决策日志就是数据本身，
+  没有第二份状态要维护</pre>
+        </div>
+      </div>
+      <p>具体做法见 4.2：原始结果永远按原文 Append 进 <code>messages</code>（审计用），削减后的"发送形态"由读侧组装。这份设计要付三个代价，方案里各有对应回答：</p>
+      <ul>
+        <li><b>发送形态不落表</b>：发给模型的内容跟表里持久化的会话不逐字一致——这是投影的固有属性。观测配套见
+          5.3：每次请求记水印与视图哈希，可重放、可核对。</li>
+        <li><b>历史形态易失</b>：投影状态一旦可覆盖写，"当时那次请求发了什么"就不可重现。所以本方案把所有投影输入都设计为
+          append-only（4.3、5.2）。</li>
+        <li><b>读路径与体积</b>：读侧多一层组装，DB 增长更快。GC 策略见第 8 章。</li>
+      </ul>
+    </section>
+
+    <!-- ============ 3. 管线挂点 ============ -->
+    <section id="pipeline">
+      <div class="chap">第 3 章 · 管线挂点</div>
+      <h2>插在循环体里，Chat 之前、PreChat 之后</h2>
+      <p class="lede">压缩不改 hook 体系。<code>PreChatFunc</code> 的签名是"读 history、返回注入串"，语义是观察和注入；压缩是<b>改写</b>
+        history，塞进去会撑破契约。正确位置就是 <code>Agent.Run</code> 的循环体里——CC 的 query.ts 也把同一段管线放在每个请求正前方。</p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 240" width="100%" style="min-width:760px" role="img" aria-label="压缩管线在 agent loop 中的位置">
+          <!-- lane boxes -->
+          <g font-size="13" fill="#26241F">
+            <rect x="40" y="36" width="180" height="52" rx="8" fill="#EFF3FC" stroke="#2657C4" stroke-width="1.3" />
+            <text x="130" y="58" text-anchor="middle" font-weight="650">PreChat hooks 注入</text>
+            <text x="130" y="76" text-anchor="middle" font-size="11" fill="#5E5748">todo nag、压缩提醒</text>
+
+            <rect x="260" y="20" width="330" height="84" rx="8" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.5" />
+            <text x="425" y="42" text-anchor="middle" font-weight="650" fill="#0E7368">compact.Apply(ctx,
+              history)</text>
+            <text x="425" y="60" text-anchor="middle" font-size="11" fill="#5E5748">① 过强制压缩线 → 先卸载早期 tool 结果</text>
+            <text x="425" y="78" text-anchor="middle" font-size="11" fill="#5E5748">② 重新估算，仍过线 → 摘要压缩</text>
+            <text x="425" y="95" text-anchor="middle" font-size="11" fill="#5E5748">③ 写出 boundary + summary 行</text>
+
+            <rect x="630" y="36" width="150" height="52" rx="8" fill="#FBF1E4" stroke="#A85507" stroke-width="1.3" />
+            <text x="705" y="58" text-anchor="middle" font-weight="650">llm.Chat</text>
+            <text x="705" y="76" text-anchor="middle" font-size="11" fill="#5E5748">发出去的一定是瘦身后</text>
+
+            <rect x="800" y="36" width="90" height="52" rx="8" fill="#FCF0F3" stroke="#B4123A" stroke-width="1.3" />
+            <text x="845" y="58" text-anchor="middle" font-weight="650" fill="#B4123A">4xx 兜底</text>
+            <text x="845" y="76" text-anchor="middle" font-size="11" fill="#5E5748">reactive</text>
+
+            <!-- arrows -->
+            <line x1="222" y1="62" x2="256" y2="62" stroke="#9A948A" stroke-width="1.4" marker-end="url(#ah)" />
+            <line x1="592" y1="62" x2="626" y2="62" stroke="#9A948A" stroke-width="1.4" marker-end="url(#ah)" />
+            <line x1="782" y1="62" x2="796" y2="62" stroke="#9A948A" stroke-width="1.4" marker-end="url(#ah)" />
+            <!-- error loop back -->
+            <path d="M845 92 C 845 150, 425 160, 425 108" stroke="#B4123A" stroke-width="1.2" stroke-dasharray="5,4"
+              fill="none" marker-end="url(#ah2)" />
+            <text x="640" y="170" text-anchor="middle" font-size="11" fill="#B4123A">context_length_exceeded 类错误 →
+              激进压缩重试 ≤1 次（4.5）</text>
+
+            <!-- per-step iteration note -->
+            <rect x="40" y="140" width="400" height="76" rx="8" fill="#F3F1EB" stroke="#E9E6DE" />
+            <text x="56" y="164" font-size="12" fill="#26241F" font-weight="650">每轮 step 都走一遍</text>
+            <text x="56" y="184" font-size="11.5" fill="#5E5748">工具结果回填后、下一次 Chat 前才检查——</text>
+            <text x="56" y="201" font-size="11.5" fill="#5E5748">上下文激增恰恰发生在这段间隔里</text>
+          </g>
+          <defs>
+            <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#9A948A" />
+            </marker>
+            <marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#B4123A" />
+            </marker>
+          </defs>
+        </svg>
+      </div>
+
+      <p>上图是自动通道的挂点。写侧 spill 不在管线里——它挂在工具结果回填点（4.2），与
+        <code>compact.Apply</code> 错开。另有两个主动入口：模型在回合中调用 <code>compact</code> 工具、用户在轮间输入
+        <code>/compact</code>。两者汇入同一个 <code>compact.Run</code>（见 4.7）。
+      </p>
+
+      <h3>3.1 切割协议：原子单元在哪</h3>
+      <p>OpenAI 形态下一个"调用组"是：</p>
+      <pre><span class="cm">// 原子单元 = 一条 assistant（含 tool_calls）+ 紧跟的 N 条 role=tool</span>
+assistant { tool_calls: [call_a, call_b, call_c] }
+tool(call_a)   <span class="cm">┐</span>
+tool(call_b)   <span class="cm">├─ 同一组，切割/清空只能整组动</span>
+tool(call_c)   <span class="cm">┘</span>
+user / assistant …  <span class="cm">← 下一个合法切点</span></pre>
+      <p>两个方向都要校验，这是 CC <code>ensureToolResultPairing</code> 的 RH 翻译：</p>
+      <ul>
+        <li>每个 <code>tool_calls[].id</code> 后面应有对应的 <code>role=tool</code> 消息——缺了就补占位结果（复用
+          <code>InterruptedError</code> 已有的补占位思路）。
+        </li>
+        <li>每条 <code>role=tool</code> 消息应能回指前面某条 assistant 的 <code>tool_call.id</code>——孤儿结果意味着上一刀切错了。</li>
+      </ul>
+      <p>切割点只允许出现在三种位置：某条 user 消息之前、某条无 tool_calls 的 assistant 消息之前、某个调用组的 assistant
+        消息之前（整组都落在切点之后）。压缩、卸载、spill 的聚合预算分组，全部按这个单元计。</p>
+
+      <h3>3.2 首尾保护：压缩只动中段</h3>
+      <p>压缩的信息损失应落在价值最低的位置。会话两端价值最高：首部是原始任务描述，尾部是当前的工作现场。所以卸载与摘要都只处理中段，首部与尾部保持原文。</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>分段</th>
+              <th>范围</th>
+              <th>处理</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>首部</td>
+              <td>前 3 条真实用户消息的原文，合计上限 8K token。按顺序钉：第 1 条总是钉住；后续消息超出上限的不钉，归入中段。hook
+                注入的 user 消息（todo nag、压缩提醒）与摘要行不算用户消息。</td>
+              <td>原文保留，不卸载、不摘要。这几轮里的工具步骤不属于首部，归入中段。</td>
+            </tr>
+            <tr>
+              <td>中段</td>
+              <td>首部与尾部之外的全部消息，包括上一份摘要。</td>
+              <td>先卸载（4.3，无损），卸载腾不出空间再摘要（4.5，有损）。</td>
+            </tr>
+            <tr>
+              <td>尾部</td>
+              <td>最近 40 个用户轮，合计上限 40K
+                token。一个用户轮从一条真实用户消息开始，到下一条真实用户消息之前结束。超出上限时从旧往新收缩：先整轮去掉，仍超出再在当前轮内按调用组去掉。底线是当前用户轮的最后一个完整调用组。</td>
+              <td>原文保留，不卸载、不摘要。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>分段遵守两条规则：</p>
+      <ul>
+        <li><b>压缩后用量应低于提醒线</b>（4.4）。否则刚压完就会再次提醒。切分时预先检查：system + 首部 + 摘要预算（8K token）+
+          尾部 ≥ 提醒线时，继续收缩尾部，直到满足或到达底线。按默认值估算：约 5K + 8K + 8K + 40K ≈ 61K，低于 128K
+          窗口的提醒线 72K。</li>
+        <li><b>首部一经确定就不再变</b>。首部的消息 id 在第一次压缩时算出，写进 boundary 的 meta（4.5），之后每次压缩沿用。system +
+          首部在所有压缩之间逐字节相同，这一段 prefix cache 始终命中。</li>
+      </ul>
+      <p>首尾上限参照 CC 与 Codex：CC 的 session-memory 路径保留尾部 ≥10K、≤40K token；Codex 保留最近用户消息，总量 ≤20K
+        token。两者都按 token 封顶，本方案在 token 上限之外再加条数上限。</p>
+    </section>
+
+    <!-- ============ 4. 各层设计 ============ -->
+    <section id="layers">
+      <div class="chap">第 4 章 · 各层设计</div>
+      <h2>每一层干什么、在 RH 里长什么样</h2>
+      <p class="lede">管线按"便宜的先跑"排序：写侧 spill 与卸载零 API 成本，摘要压缩一次 API 调用，reactive 只在 API
+        真报错后出手。</p>
+
+      <h3>4.1 估算器：先知道上下文现在多重</h3>
+      <p>一切判定的地基。复用 CC 的"锚点 + 尾估"两段式：</p>
+      <ul>
+        <li><b>锚点</b>：最近一次响应的真实 <code>usage</code>（prompt_tokens + cached + completion_tokens）。目前
+          <code>agent.Response</code> 没有这个字段——要把 SDK 的 usage 透传出来，流式端点还需开
+          <code>stream_options.include_usage</code>。落库到 messages 的两个新列，resume 后锚点还在。
+        </li>
+        <li><b>尾估</b>：锚点之后的消息按字符粗估。口径只算会回传的字段：<code>Content</code> +
+          <code>ToolCalls.Name/Arguments</code>；<b>不含 Thinking</b>（它不进 API，算进去会严重高估——现有 TUI
+          的 ctxChars 就踩了这个坑）。中文不能用 len/4，按 rune 估：ASCII 字符 ÷4，非 ASCII 字符按 ≈0.7 token 计。
+        </li>
+        <li><b>降级</b>：端点不返 usage（部分 OpenAI 兼容端点如此）时全量粗估，阈值相应调保守（多扣一档 buffer）。</li>
+      </ul>
+      <p class="src">落点：<code>internal/compact/estimate.go</code>（新包）；改动面：<code>llm.Client.Chat</code> 透传 usage、
+        <code>agent.Response/Message</code> 加字段、sqlite 加列。
+      </p>
+
+      <h3>4.2 回填层：空结果标记与超限落 blob（对应 CC 的 persisted-output）</h3>
+      <p>挂点在<b>追加时</b>：工具不再自截断（<code>fs.go</code> 的 <code>truncate</code>
+        退役），循环体回填工具结果时做规范化。一批 tool_calls 的结果先在内存里收齐、整批决策，再逐条追加——聚合预算要看整批。规范化分三步：</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>空结果 → 固定标记</b>
+            <div class="sd">结果为空串或只含空白时，不以空形态写回。成功写 <code>(no output)</code>，失败写
+              <code>error: tool failed with no output</code>。原因：部分 OpenAI 兼容端点对空 content 直接报
+              400；模型读到空结果，也可能误判"没有进展"而回复纯文本结束本轮——循环体见到无 tool_calls 的 stop 就退出。现状
+              <code>agent.go:241-246</code> 原样写回，<code>touch</code>、<code>mkdir</code> 这类命令必然产生空结果。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>read_file / list_dir → 请求侧限额，不进 spill</b>
+            <div class="sd">
+              模型点名要读的内容，需要全文的概率高，先落盘再让它重读是纯亏。一次读多少由请求参数决定：<code>offset</code>/<code>limit</code>（按行，默认上限可配），单次返回另按
+              50K 字符封顶。文件超出时返回已读部分和续读坐标（"已显示 1–2000 行 / 共 5300 行，offset=2001
+              继续"）。read_file 不进 spill 还有一个硬性原因：它读 <code>blob://</code> 的结果若超阈值再被
+              spill，会形成循环。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>其他工具超限 → AppendBlob + 指针</b>
+            <div class="sd">run_command、task 等单条超过 <code>min(工具自声明上限, 50K 字符)</code>，或整批合计超过
+              200K 字符（从最大的开始逐条落，直到达标）时：原文写 <code>blobs(session_id, ref=tool_call_id,
+              content)</code>，history 落"头尾预览 + <code>&lt;persisted-output src="blob://…"&gt;</code>"。预览取头部与尾部各
+              1K——命令的报错通常在末尾。指针形态从这一刻起就是这条消息的定型。
+            </div>
+          </div>
+        </div>
+      </div>
+      <p>50K 以下的结果直接进上下文。阈值是"放进上下文的持续占用"与"多一次往返"两种成本的平衡点：体积小、或模型多半要看全文时，直接放进去更划算；体积大、且模型多半只要一小段时，spill
+        更划算。</p>
+      <p>写侧挂点换来三个性质：</p>
+      <ul>
+        <li><b>不再销毁数据</b>。现在 <code>truncate</code> 把 8KB 之后的输出直接丢弃，不进任何存储；改后超限输出进
+          blob，文件类读取靠续读坐标取到全部内容。</li>
+        <li><b>prefix 稳定</b>。指针形态在追加时定型，之后每轮请求看到的都是同一份。视图层 spill（旧方案）会让
+          spill 前后的发送形态前缀分叉。后果是服务端 prefix cache 在 spill 点整段失效——CC
+          的决策冻结机制就是为治这个病存在，写侧天然免疫。</li>
+        <li><b>视图少一个变换</b>。messages 行本身就是发送形态，读路径只剩 fold 与卸载替换。统一原则：能在追加时定的就在追加时定，只有追溯性操作（卸载、fold）留在视图。</li>
+      </ul>
+      <div class="note">
+        <div class="nt">三个数值的分工</div>
+        <p>单条 50K 字符决定"多大开始 spill"；整批 200K 字符管住"并行十个、每个 30K"的累积；工具侧另保留 400KB
+          硬上限当保险丝，防无界输出占爆内存——它定"多大算异常"。三个数值对齐 CC（见 claude-code-compaction.html
+          场景 A/B）。审计口径不变：raw = <code>messages</code> + <code>blobs</code> join（5.2）。</p>
+      </div>
+
+      <p><b>取回通道</b>：<code>read_file</code> 识别 <code>blob://</code> scheme——该参数不走文件系统，改走
+        <code>Store.LoadBlob(sessionID, ref)</code> 查询，session_id 从 ctx 的 scope 取。模型在参数里连指定别人
+        session 的余地都没有，隔离比文件路径更强（路径可猜可枚举，ref 不在本会话就是查不到）。取回应分页：给
+        <code>read_file</code> 加按行的 <code>offset</code>/<code>limit</code>（对齐 CC Read 参数形态），否则
+        300KB 的 blob 模型永远只能拿到头一段。这组参数一身二用：既是文件读取的请求侧限额，也是
+        <code>blob://</code> 的分页机制。
+      </p>
+      <div class="note warn">
+        <div class="nt">为什么不落临时文件</div>
+        <p>另一条路是把 blob 物化到本地文件、发送形态里写真路径。模型侧体验相同，但三笔账不划算：云端多租户单进程下
+          OS 文件权限失效，隔离只能靠新写的应用层路径闸（read_file 与 list_dir 同闸、按 scope
+          前缀检查）；文件与 blob 构成第二事实源，spill 写入、resume 重建、删除 GC 全要新代码；容器无写盘权时云端形态直接退化。结论：取回通道走
+          <code>blob://</code> 虚拟路径，不碰文件系统。
+        </p>
+      </div>
+
+      <h3>4.3 卸载层：早期工具结果落库、原位留索引（对应 CC microcompact）</h3>
+      <p>长时间工作后，早期的工具结果多半已经用完：文件读过、命令跑过、结论已写进后续的 assistant
+        消息。卸载层把这些结果整体移出上下文，原位置只留一行索引。它不调 API、不损失信息，所以排在摘要压缩之前。</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>触发：用量过强制压缩线</b>
+            <div class="sd">每次 Chat 前，估算用量 ≥ 强制压缩线（4.4）时，卸载作为强制压缩的第一步执行。卸载不调 API、不损失信息，所以先卸载、后摘要。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>范围：中段的全部工具结果</b>
+            <div class="sd">只处理 3.2 定义的中段，首部与尾部不动。中段里的 role=tool 消息全部卸载，不分工具。三类除外：内容不足 1K
+              字符的结果（换成索引也省不了多少）、compact 工具自己的结果行、≤8K 的 task 结果（4.9）。过期结果不受 1K 门槛限制（见第 5 步）。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>落库：每条都确保有 blob</b>
+            <div class="sd">已 spill 过的复用原 blob；没有的先 AppendBlob——read_file 的结果也落，不指回原路径：文件可能已改，按原路径重读得到的不是当时的结果。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>原位留索引</b>
+            <div class="sd">视图里该条 content 换成
+              <code>[tool result offloaded: &lt;tool&gt;, &lt;size&gt;; read with read_file blob://&lt;ref&gt;]</code>。调用参数还在对应的
+              assistant 消息里，模型能看出这条结果是什么。tool 行本身保留，只换 content，所以调用组配对不受影响（约束 3）。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">5</div>
+          <div class="st"><b>过期结果：加过期标记，不受 1K 门槛限制</b>
+            <div class="sd">同一路径被 read_file 再读过、或同一命令串被 run_command 再跑过，较早的结果就过期了——内容已被更新的结果取代。过期结果无论大小都卸载，索引追加
+              <code>superseded by &lt;newer_ref&gt;</code>。这样模型和摘要调用都不会把旧版本当成现状。较新的结果可能在尾部，不影响判定。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">6</div>
+          <div class="st"><b>大参数：中段 tool_calls 参数超过 2K 字符也卸载</b>
+            <div class="sd">RH 的写操作都经过 run_command，heredoc 写文件时，整个文件内容留在 assistant 消息的
+              <code>tool_calls[].Arguments</code> 里。只卸载工具结果管不到这里。处理方式：参数原文以 <code>ref = args/&lt;tool_call_id&gt;</code>
+              AppendBlob；视图里，参数 JSON 中超过 2K 的顶层字符串字段值换成
+              <code>&lt;offloaded &lt;size&gt;: blob://args/&lt;tool_call_id&gt;&gt;</code>。字段名与 JSON 结构保持不变，参数仍是合法
+              JSON；tool_call id 不变，配对不受影响。
+            </div>
+          </div>
+        </div>
+      </div>
+      <p>卸载后重新估算；仍 ≥ 强制压缩线才进 4.5 的摘要压缩。</p>
+      <p>不改已有行：一次卸载追加一条 <code>kind='view_clear'</code> 控制行（meta 记本批的结果 tool_call_id、参数 tool_call_id
+        与过期关系），与
+        boundary 同级——追加即定型。读侧按 id 序合并出卸载集合，组装视图时替换。卸载集合不应放
+        <code>session_state</code> 的覆盖式 JSON：旧值被冲掉后，"当时那次请求的发送形态"就再也拼不出来了（见
+        5.3）。原始 transcript 保持 append-only。
+      </p>
+      <div class="note warn">
+        <div class="nt">代价：prefix cache 从卸载点开始失效</div>
+        <p>卸载改了早期消息的发送形态，服务端 prefix cache
+          从最早一条被卸载的行开始失效。所以卸载按批做、不逐条做：一次卸掉中段的全部结果，用量回落到强制压缩线以下，要再积累一段工作才会再次过线。可选优化：距上次请求的间隔已超过端点的
+          cache 有效期时，缓存本来就冷了，此时卸载不额外付缓存代价，可提前执行。</p>
+      </div>
+
+      <h3>4.4 阈值层：从窗口顶部逐层预留</h3>
+      <p>窗口大小进配置——OpenAI 兼容端点不报窗口。阈值从窗口顶部往下逐层扣出四段预留：</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>预留</th>
+              <th>大小</th>
+              <th>用途</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>摘要输出</td>
+              <td>20K</td>
+              <td>压缩请求本身要输出摘要，窗口里应给它留位置。</td>
+            </tr>
+            <tr>
+              <td>缓冲</td>
+              <td>13K</td>
+              <td>一轮工具结果可能一次加入很多内容，防止上下文从线下直接冲到顶。</td>
+            </tr>
+            <tr>
+              <td>用户余量</td>
+              <td>3K</td>
+              <td>用户可能随时主动下指令，内容不可预测，给它留位置。</td>
+            </tr>
+            <tr>
+              <td>提醒层</td>
+              <td>20K</td>
+              <td>提醒模型之后、强制压缩之前的空间，供模型选择合适时机自己压缩。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><span class="cm">// internal/compact/threshold.go，W = RUNE_CONTEXT_TOKENS</span>
+<span class="kw">reminder</span> = W − <span class="numc">20_000</span> − <span class="numc">13_000</span> − <span class="numc">3_000</span> − <span class="numc">20_000</span>   <span class="cm">// 提醒线 = W − 56K：提示模型择机压缩</span>
+<span class="kw">compact</span>  = W − <span class="numc">20_000</span> − <span class="numc">13_000</span>                   <span class="cm">// 强制压缩线 = W − 33K：代码兜底压缩</span>
+<span class="kw">block</span>    = W − <span class="numc">20_000</span>                            <span class="cm">// 阻断线 = W − 20K：auto 关闭或熔断后拒发</span></pre>
+      <p>三条线的行为：</p>
+      <ul>
+        <li><b>提醒线</b>：每次 Chat 前，估算用量 ≥ 提醒线、且自上一条 boundary 以来还没提醒过时，注入一条固定提醒，每个压缩周期只注入一次。实现为
+          <code>internal/compact</code> 提供的 PreChat hook，由 <code>main.go</code> 装配，与 todo nag 同一机制。TUI 同时显示用量提示。提醒文本：
+          <code>&lt;system-reminder&gt;Context usage: &lt;used&gt;/&lt;W&gt; tokens. Forced compaction runs at
+            &lt;compact&gt; tokens. At a natural break point (a subtask is done, or earlier large results are no longer
+            needed), call the compact tool.&lt;/system-reminder&gt;</code>
+        </li>
+        <li><b>强制压缩线</b>：估算用量 ≥ 强制压缩线时，代码不等模型，先执行 4.3 卸载；卸载后仍 ≥ 强制压缩线，再执行 4.5 摘要压缩。</li>
+        <li><b>阻断线</b>：只在 <code>RUNE_AUTOCOMPACT=off</code> 或熔断（4.8）时起作用。用量 ≥ 阻断线时拒发请求——再往上，压缩请求连 20K 摘要输出都放不下了。</li>
+      </ul>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>配置</th>
+              <th>默认</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>RUNE_CONTEXT_TOKENS</code></td>
+              <td>128000</td>
+              <td>模型上下文窗口。取保守默认：往大填会推迟触发、往小填浪费窗口，部署时按实际端点设。</td>
+            </tr>
+            <tr>
+              <td><code>RUNE_MAX_OUTPUT_TOKENS</code></td>
+              <td>8192</td>
+              <td>端点单次输出上限。摘要调用的 max_tokens 取 <code>min(此值, 20000)</code>。不参与阈值计算：阈值固定预留 20K。</td>
+            </tr>
+            <tr>
+              <td><code>RUNE_AUTOCOMPACT</code></td>
+              <td>on</td>
+              <td>置 off 时关闭强制压缩；提醒线、<code>/compact</code>、模型 <code>compact</code> 工具与阻断线仍生效。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>按默认配置算一遍：128K 窗口 → 提醒线 72K、<b>强制压缩线 95K</b>、阻断线 108K。200K 窗口 →
+        提醒线 144K、强制压缩线 167K、阻断线 180K；强制压缩线与 CC 的 autocompact 线（167K）相同。</p>
+
+      <h3>4.5 压缩执行：滚动增量摘要，boundary + summary 两行落库</h3>
+      <p>摘要只覆盖中段（3.2），而且是增量的。每次压缩把"上一份摘要 + 上次覆盖点之后新进入中段的消息"合成一份新摘要，替换旧摘要。不用每次重读全部历史，也避免"摘要的摘要"越压越走样。触发后循环体调用
+        <code>compact.Run(ctx, history)</code>：
+      </p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">0</div>
+          <div class="st"><b>切分</b>
+            <div class="sd">按 3.2 算出首部、中段、尾部。首部 id 已存在于上一条 boundary 时直接沿用。中段为空时不调 API：先把尾部收缩到底线再判断；仍为空则计一次"压缩无效"（4.8）。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>组装摘要输入</b>
+            <div class="sd">两部分：上一份摘要正文（第一次压缩时为空）+ 新进入中段的消息（上一条 boundary 的 covers_to_id 之后、尾部起点之前）渲染成的纯文本
+              transcript。工具结果用预览或卸载索引表示，不含 Thinking。输入超限时按原子单元从头部砍半重试，最多砍两次——CC 的 group-halving
+              同款。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>摘要调用</b>
+            <div class="sd">直接调 <code>llm.Chat</code>、传空 tools（压缩时禁工具），提示词见第 6 章。SUMMARY 段上限 8K
+              token；max_tokens 取 <code>min(RUNE_MAX_OUTPUT_TOKENS, 20000)</code>，其余额度给 ANALYSIS
+              段。调用失败、输出无法解析、或压缩后仍未降到强制压缩线以下，都计一次失败，history
+              原样继续；连续失败的处理见 4.8 熔断器。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>写 boundary 行</b>
+            <div class="sd"><code>messages</code> 表追加一条 <code>kind='compact_boundary'</code>，meta JSON 记
+              <code>head_ids</code>（首部消息
+              id）、<code>covers_to_id</code>（中段终点，即尾部起点之前的最后一行）、触发原因（auto/reactive/manual/model）、压缩前后
+              token 数。它是 fold 的唯一依据。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>写 summary 行</b>
+            <div class="sd"><code>role=user</code>、<code>kind='compact_summary'</code>，内容为摘要正文。之后按需重挂附件：todo
+              列表当前状态。值得重读的已卸载结果，由摘要里的"结果索引"一节给出 <code>blob://</code> 引用（第 6 章）。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">5</div>
+          <div class="st"><b>内存重组</b>
+            <div class="sd"><code>history = [system] + [首部] + [summary] + [附件] + [尾部]</code>，本轮继续
+              Chat。</div>
+          </div>
+        </div>
+      </div>
+
+      <p>读侧配套一个 fold：<code>LoadHistory</code> 默认返回折叠视图——找到最后一条 boundary，按它的 meta 组装：system +
+        <code>head_ids</code> 对应的行 + 最新 summary 与附件 + <code>id &gt; covers_to_id</code> 的消息行（跳过控制行），再套用卸载替换。fold
+        只读最后一条 boundary：它的覆盖范围包含之前所有 boundary 的范围，旧摘要的内容已并入新摘要。审计走单独的 raw 路径。
+      </p>
+
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">DB 里的物理序（永不改写）</div>
+          <pre>system           role=system
+u1 … u3          首部用户消息     ← 散落在前几轮中
+其余早期消息     工具步骤等       ┐ 中段：被摘要覆盖
+                                │（保留不删，审计可回查）
+… mK                            ┘ = covers_to_id
+mK+1 … mN        尾部            ← ≤40 用户轮且 ≤40K
+boundary         kind=compact_boundary
+                   meta:{head_ids:[u1,u2,u3],
+                   covers_to_id:mK, reason:auto,
+                   pre:98K→post:58K}
+summary          kind=compact_summary
+reattach         todo 状态
+m_new…           压缩后的新消息</pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">LoadHistory 折叠视图（发给 API 的）</div>
+          <pre>system           保留
+u1 u2 u3         首部原文
+summary          中段摘要
+reattach         todo 状态
+mK+1 … mN        尾部原文
+m_new…           压缩后的新消息
+
+<span class="hl">= system + 首部 + 最新摘要 + id &gt; covers_to_id 的消息行</span>
+resume 天然得到压缩后视图；
+审计用 raw 查询看完整 transcript</pre>
+        </div>
+      </div>
+
+      <h3>4.6 兜底层：API 报错后的 reactive 压缩</h3>
+      <p>估算和阈值都是启发式，真正的 ground truth 是 API 拒绝。<code>internal/llm</code> 需要先把 SDK 错误分类成
+        <code>ErrContextLength</code> 哨兵错误（匹配
+        <code>context_length_exceeded</code>、<code>prompt_too_long</code>、400+length 类
+        message、413 等各家形态），循环体捕获后执行一次比常规更激进的压缩（边界切得更深），<b>重试一次</b>；仍失败就上抛，不再压缩——压过一遍还超限，再压也不会更小。
+      </p>
+      <div class="note">
+        <div class="nt">为什么不在 agent.go 的现有 TODO 位置顺手做</div>
+        <p><code>agent.go:128-151</code> 的 TODO 已经预留了 reactive compact 的位置和 reason-code 思路。本方案把它具体化：错误分类归
+          <code>internal/llm</code>（适配器职责），改写 history 归循环体。两者分层的理由 TODO 里已写明。
+        </p>
+      </div>
+
+      <h3>4.7 主动通道：模型 compact 工具与 /compact</h3>
+      <p>自动通道管"到线必压"，主动通道管"可以提前压"。两个主动入口复用同一个 <code>compact.Run</code>，只在
+        boundary 的 <code>reason</code> 字段上区分来源。</p>
+
+      <p><b>模型入口</b>：<code>compact</code> 注册进 <code>tools.Registry</code>（<code>main.go</code>
+        装配），无必需参数；系统提示里写明它的用途与调用时机——任务阶段切换、确认大段中间结果不再使用。循环体在工具分发处对它特判，顺序如下：</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>同组其它 tool_calls 先跑完</b>
+            <div class="sd">同一 assistant 消息里混有其它调用时，先正常执行并回填，保持调用组配对完整（约束 3）。同组出现多个
+              compact 调用时，只有第一个生效，其余回填提示并跳过。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>先跑摘要调用</b>
+            <div class="sd">即 <code>compact.Run</code> 的第 1–2 步：组装 transcript、调 <code>llm.Chat</code>（空
+              tools）。熔断中（4.8）或调用失败时，直接给该 compact 调用回填一条记失败原因的 tool 结果行，history
+              原样继续——与 4.5 的失败语义一致。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>成功则回填 tool 结果行</b>
+            <div class="sd">内容为 <code>context compacted</code>。这一步把发起压缩的调用组补成完整原子单元。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>走 compact.Run 的第 3–5 步</b>
+            <div class="sd">写 boundary（reason=model）→ 写 summary → 内存重组。发起压缩的调用组是最新的消息，落在尾部，原样保留在视图里：模型下一轮能看到
+              <code>context compacted</code>，知道压缩已完成；配对完整，不引入任何特例。
+            </div>
+          </div>
+        </div>
+      </div>
+      <p><b>用户入口</b>：<code>/compact</code> 注册进 <code>slashCommands</code>（<code>tui/suggest.go</code>），轮间直接调
+        <code>compact.Run</code>（reason=manual）。
+      </p>
+      <div class="note">
+        <div class="nt">为什么不违背约束 1</div>
+        <p>约束 1
+          保证的是"代码手里有一根不依赖模型的保险丝"，不是"模型无权碰压缩"。主动调用只能把压缩提前，推迟或取消阈值判定都不在模型手里；模型想不起调用时，托底线照常生效。真正的风险方向相反——上下文将满时模型判断力已降，更容易忘记调用——托底线正是为这种时刻准备的。<code>RUNE_AUTOCOMPACT=off</code>
+          只关自动通道，两个主动入口与阻断线不受影响。提醒线（4.4）把两个通道接起来：用量过提醒线时提示模型择机调用 compact，模型不调用、用量继续涨到强制压缩线时，代码兜底。</p>
+      </div>
+
+      <h3>4.8 熔断器：摘要压缩连续失败后停手</h3>
+      <p>摘要压缩会失败：端点报错、模型输出不合格式、或摘要太长压完还在线上。没有熔断时，循环体每轮过线都会重试，变成"每轮一次失败的
+        API 调用"，费用照付、上下文不降。熔断器在连续失败 3 次后停掉摘要压缩，直到有一次成功。</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>项</th>
+              <th>规则</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>计为失败</td>
+              <td>①摘要调用报错（含超时）；②输出缺 <code>SUMMARY:</code> 段或摘要为空；③压缩无效——写入后重新估算仍 ≥
+                强制压缩线。第 ③ 类最容易被漏掉，而它正是"持续压缩"的根源。reactive 重试失败同样计入。</td>
+            </tr>
+            <tr>
+              <td>计数</td>
+              <td><code>session_state.consecutiveFailures</code>，落库而非放内存，resume 后计数还在。任一次成功清零。</td>
+            </tr>
+            <tr>
+              <td>断开条件</td>
+              <td>连续失败达到 3 次（对齐 CC 的 autocompact 熔断阈值）。</td>
+            </tr>
+            <tr>
+              <td>断开后：自动通道</td>
+              <td>跳过摘要压缩，不调 API。</td>
+            </tr>
+            <tr>
+              <td>断开后：模型 compact 工具</td>
+              <td>不执行，回填固定结果 <code>compaction unavailable: circuit open after 3 consecutive failures</code>，调用组配对保持完整。
+              </td>
+            </tr>
+            <tr>
+              <td>断开后：reactive</td>
+              <td>不压缩，<code>ErrContextLength</code> 直接上抛。</td>
+            </tr>
+            <tr>
+              <td>断开后：用户 /compact</td>
+              <td>照常执行，作为人工试探：成功则清零、熔断恢复；失败则保持断开，并把失败原因显示给用户。</td>
+            </tr>
+            <tr>
+              <td>不受影响</td>
+              <td>4.2 回填层与 4.3 卸载层——它们不调 API，结果确定，不会反复失败。</td>
+            </tr>
+            <tr>
+              <td>最后防线</td>
+              <td>断开期间用量到达阻断线时拒发请求；TUI 显示原因，并给出两个出路：<code>/compact</code> 或开新会话。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>每次失败写一条英文日志，带失败类别（<code>summary_call_error</code> / <code>summary_unparsable</code> /
+        <code>compaction_ineffective</code>）、session_id 与压缩前后 token 数，不写摘要正文。熔断器只管失败；模型成功但调用过于频繁是另一个问题，见第 8 章的冷却方案。
+      </p>
+
+      <h3>4.9 子代理：继承管线，改五处</h3>
+      <p>子代理与主代理用同一个 <code>agent.Run</code> 循环（<code>subagent.go:159</code> 调用 <code>agent.New</code>），4.2–4.8
+        的管线原样作用到子代理上。子代理有自己的子会话（<code>kind=subagent</code>，<code>parent_id</code> 指回父会话），所以
+        blob、boundary、view_clear、requests
+        与熔断计数都按子会话隔离，不需要新机制。但子代理有三个与主代理不同的性质，继承下来的行为有五处要改：</p>
+      <ul>
+        <li><b>目标不同</b>：子代理要交出结论，不长期工作；上限 40 步、10 分钟（<code>subagent.go:41</code>、<code>:47</code>）。</li>
+        <li><b>起点不同</b>：<code>normal</code> 型以父会话快照开头（<code>subagent.go:227</code>），一启动就带着父会话的用量。</li>
+        <li><b>出口不同</b>：只有最后一条 assistant 文本回到父会话，作为 task 工具的结果（<code>subagent.go:277</code>）。</li>
+      </ul>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>任务消息总是钉进首部</b>
+            <div class="sd">子代理整个运行只有一个用户轮。按 3.2 的规则，尾部收缩到"按调用组去掉"时，任务消息作为轮的起点会被切进中段、再被摘要——子代理最重要的指令被转述。规则：子代理的首部
+              = 继承来的首部（<code>general_purpose</code> 型为空）+ 任务消息。任务消息不计入首部 8K 上限，总是钉住。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>不给 compact 工具，提醒改为收尾提醒</b>
+            <div class="sd">子代理不注册 compact 工具。过提醒线时注入另一段固定文本：
+              <code>&lt;system-reminder&gt;Context is nearly full. Finish the current step and reply with your conclusion
+                now.&lt;/system-reminder&gt;</code>。过强制压缩线时仍按"卸载 → 摘要"兜底，熔断器照常生效。装配由 <code>main.go</code>
+              传给 task 工具的 <code>Wire</code> 完成：子代理挂收尾提醒 hook，不挂压缩提醒 hook。摘要调用计入 10 分钟时限，不计入 40 步。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>normal 型：起点过线时先卸载继承快照</b>
+            <div class="sd">继承快照的用量 U ≥ 提醒线时，spawn 后、第一次 Chat 前，对快照的中段执行 4.3 卸载（无损、确定、不调
+              API）。否则子代理第一步就会摘要，等于花一次 API 费用重新摘要父会话的历史。继承快照里已 spill 的结果只是指向父会话 blob 的指针，所以
+              <code>LoadBlob</code> 在当前会话查不到时沿 <code>parent_id</code> 链向上查找祖先会话（同租户校验照旧）：子代理能读祖先的
+              blob，不复制。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>继承标记改为 fork 控制行，记父水印</b>
+            <div class="sd">现状：为避免嵌套时 O(n²) 膨胀，子会话不复制父快照，只落一条 user 消息
+              <code>[inherited N messages from parent session …]</code>（<code>subagent.go:189-193</code>）。子会话自己的行里没有这段快照，5.3
+              的按水印重放做不到。改为追加一条 <code>kind='fork'</code> 控制行，meta 记
+              <code>{parent_session_id, parent_upto_msg_id, parent_upto_blob_id}</code>。<code>LoadView</code>
+              重放子会话时 = 父会话在该水印处的视图 + 子会话自己的行。嵌套时 fork 行指向上一层子会话，递归成立。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">5</div>
+          <div class="st"><b>结论不引用子会话的 blob</b>
+            <div class="sd">子代理 spill 出的 blob 属于子会话。结论里若引用 <code>blob://call_x</code>，父代理按父会话查找，结果是"不存在"。v1
+              规则：子代理系统提示（<code>DefaultPrompt</code>）要求结论自成一体、不引用 <code>blob://</code>；task 工具发现结论含
+              <code>blob://</code> 时，在结果末尾追加固定说明
+              <code>(note: blob:// references above belong to the subagent session and cannot be read here)</code>。
+            </div>
+          </div>
+        </div>
+      </div>
+      <p><b>父侧</b>：task 结果是一个子任务的浓缩成果，模型需要全文的概率高，性质接近 assistant 文本。≤8K 的 task 结果不卸载（4.3
+        第 2 步的豁免项），只参与摘要；超过 50K 时照常 spill（4.2）——结论这么长，本身就说明子代理没有按要求简洁作答。</p>
+      <div class="note">
+        <div class="nt">Store 不可为空</div>
+        <p>Store 在进程启动时初始化（<code>main.go</code> 打开 SQLite，打不开即退出），不存在"不持久化"的运行形态。task 工具与压缩器在构造时要求非 nil
+          的 Store，删除 <code>subagent.go</code> 里 <code>Store == nil</code> 的分支；单元测试用 sqlite <code>:memory:</code>
+          或 fake。读取方向只开放"后代读祖先"（第 3 步）；"祖先读后代"留到 v2，v1 用第 5 步的说明绕开。</p>
+      </div>
+    </section>
+
+    <!-- ============ 5. schema ============ -->
+    <section id="schema">
+      <div class="chap">第 5 章 · Schema v2</div>
+      <h2>四张新东西：两个列、两张表、一个 kv</h2>
+      <p class="lede">schemaVersion 从 1 升到 2。<code>PRAGMA user_version</code> 迁移机制已有，追加一个 <code>v &lt; 2</code>
+        分支即可，不引迁移框架。</p>
+
+      <pre><span class="cm">-- messages 加两列：视图类型 + usage 锚点</span>
+ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'msg';
+  <span class="cm">-- 'msg' | 'inject' | 'compact_boundary' | 'compact_summary' | 'view_clear' | 'fork'
+  -- 'inject' = hook 注入的 user 消息（todo nag、压缩提醒），3.2 选首部、切用户轮时跳过
+  -- 'fork'   = 子会话的继承控制行，meta 记父会话水印（4.9）</span>
+ALTER TABLE messages ADD COLUMN usage_json TEXT NOT NULL DEFAULT '';
+  <span class="cm">-- assistant 行的 {"prompt":N,"cached":N,"completion":N}；
+  -- 其余角色恒空。用 JSON 一列装下，避免以后补 cached 再迁移</span>
+
+<span class="cm">-- blobs：被削减的工具结果全文，ref = tool_call_id</span>
+CREATE TABLE blobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  ref TEXT NOT NULL,
+  content TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(session_id, ref)
+);
+CREATE INDEX idx_blobs_session ON blobs(session_id);
+
+<span class="cm">-- session_state：每会话一行的小状态（熔断计数等非投影状态）</span>
+CREATE TABLE session_state (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+  state_json TEXT NOT NULL DEFAULT '{}',
+  updated_at INTEGER NOT NULL
+);
+
+<span class="cm">-- requests：每次 Chat 的发送留痕；payload 仅出错时落盘</span>
+CREATE TABLE requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  upto_msg_id INTEGER NOT NULL,             <span class="cm">-- 本次视图覆盖到的最大 messages.id</span>
+  upto_blob_id INTEGER NOT NULL DEFAULT 0,  <span class="cm">-- 同上，blobs 侧</span>
+  view_hash TEXT NOT NULL,                  <span class="cm">-- 发送形态的哈希，重放核对用</span>
+  payload_json TEXT NOT NULL DEFAULT '',    <span class="cm">-- 仅 Chat 出错时写：完整发送形态</span>
+  error TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_requests_session ON requests(session_id);</pre>
+
+      <h3>5.1 Store 接口加七个方法</h3>
+      <pre><span class="cm">// internal/session/session.go 追加（Store 接口实现者同步实现）</span>
+<span class="kw">AppendBlob</span>(ctx, ref string, content []byte) error
+<span class="kw">LoadBlob</span>(ctx, sessionID, ref string) ([]byte, error)         <span class="cm">// blob:// 取回，单条 lazy</span>
+<span class="kw">LoadBlobs</span>(ctx, sessionID string) (map[string][]byte, error)  <span class="cm">// 视图组装批量取</span>
+<span class="kw">PutState / GetState</span>(ctx, sessionID string) (json.RawMessage, error)
+<span class="kw">AppendRequest</span>(ctx, r RequestLog) error                        <span class="cm">// 每次 Chat 一条</span>
+<span class="kw">LoadRequests</span>(ctx, sessionID string) ([]RequestLog, error)</pre>
+      <p>Append 的行为不变：写进去的就是 raw transcript。boundary / summary / view_clear 也是走 Append
+        的普通消息行，靠 <code>kind</code> 列区分——时序天然有序，fold 只需一次 max 查询。
+      </p>
+      <div class="note">
+        <div class="nt">为什么 boundary 不放 session_state</div>
+        <p>放 kv 里要另外维护"第几次压缩覆盖到哪"的序列；放 messages 里，<code>id</code> 自增就是天然时序，fold
+          规则一句话讲完。kind 列同时给 TUI 用——压缩事件可以在消息流里渲染成一条分隔符，用户能看到"这里发生过一次压缩"。</p>
+      </div>
+
+      <h3>5.2 读路径分工</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>调用方</th>
+              <th>用什么</th>
+              <th>得到什么</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>agent loop / resume / TUI 回放</td>
+              <td><code>LoadHistory</code>（默认折叠+卸载替换）</td>
+              <td>可直接发给 API 的上下文</td>
+            </tr>
+            <tr>
+              <td>审计、调试、导出</td>
+              <td><code>LoadRawHistory</code>（新）</td>
+              <td>全部原始行 + 全部 blob 引用</td>
+            </tr>
+            <tr>
+              <td>复现"当时发了什么"</td>
+              <td><code>requests</code> 表 + <code>LoadView</code>（新，按水印组装）</td>
+              <td>任一历史请求的发送形态；出错请求的 payload 原文</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>把"默认返回可跑视图"藏在 LoadHistory 里有个好处：现有调用方（resume、<code>--continue</code>）零改动即正确。</p>
+
+      <h3>5.3 发送形态的可重现性</h3>
+      <p>读侧投影要正面回答一个问题：事后怎么知道某次 Chat 实际发了什么。本方案的回答分三层：</p>
+      <ul>
+        <li><b>可重现是硬要求</b>。发送形态应只取决于"id ≤ 水印的全部 messages 行与 blobs 行"（水印 = 本次视图覆盖到的最大行
+          id）。两张表都 append-only，所以读侧给一个水印就能确定性地重装出该次视图：<code>LoadView(ctx, sessionID,
+            uptoMsgID, uptoBlobID)</code>。清空集合放覆盖式 kv 会破坏这条性质，所以 4.3 把它改成了追加行。</li>
+        <li><b>每次请求留痕</b>。循环体在 Chat 时写一条 <code>requests</code> 行：双水印 +
+          视图哈希。它枚举出每一次发送；用 <code>LoadView</code> 重放后与 <code>view_hash</code>
+          比对，可发现组装代码变更导致的字节漂移。</li>
+        <li><b>错误现场冻结</b>。Chat 出错时，组装好的发送形态还在内存里——连同错误原文写进该请求的
+          <code>payload_json</code>。这是排查 API 错误的最终证据，不受之后代码变更影响。
+        </li>
+      </ul>
+      <div class="note">
+        <div class="nt">为什么不把发送形态直接写进 messages</div>
+        <p>那样表里能直接看到的是"现在会发什么"。但卸载与 fold 都是回头改旧行的操作——行被回写后，更早请求的形态照样丢，还赔上
+          append-only 与 raw 表的审计便利。"某次请求发了什么"只有按请求留痕才能回答，与视图落不落库无关；留痕 +
+          重放的成本远低于逐请求复制整份上下文。</p>
+      </div>
+    </section>
+
+    <!-- ============ 6. 摘要设计 ============ -->
+    <section id="summary">
+      <div class="chap">第 6 章 · 摘要设计</div>
+      <h2>摘要 prompt：两段式 + 增量合并 + 禁工具</h2>
+      <p class="lede">CC 的摘要 prompt 里值钱的是结构，不是措辞。它先让模型产出一份按时间顺序的分析草稿，再让模型基于草稿写定格式摘要。草稿逼模型通读全文，写完即弃、不进上下文。RH
+        的消息没有 thinking 块可借，同样的思路改用纯文本两段指令实现。</p>
+
+      <div class="ba">
+        <div class="side">
+          <div class="ba-label">CC 的做法</div>
+          <pre>指令 = 长 prompt +
+  "&lt;analysis&gt; 先逐条分析 &lt;/analysis&gt;
+   &lt;summary&gt; 再写九段摘要 &lt;/summary&gt;"
+收到后剥掉 &lt;analysis&gt; 只留 summary</pre>
+        </div>
+        <div class="side">
+          <div class="ba-label">RH 翻译版</div>
+          <pre>指令 = "先输出一段 ANALYSIS:
+   按时间顺序列出新事件；
+   空一行后输出 SUMMARY: 八段式"
+输入 = 旧摘要 + 新事件
+解析时按 "SUMMARY:" 一分为二</pre>
+        </div>
+      </div>
+
+      <p>摘要 schema 从 CC 的九段裁成八段，对齐 RH 实际有的东西：</p>
+      <ul>
+        <li><b>任务与进展</b>：用户要什么、已完成哪些子目标、卡在哪</li>
+        <li><b>用户指令</b>：中段里每条用户消息原文或近原文。它们是约束条件，转述会丢细节；对应 CC 的 "All user messages"。首部的 3
+          条已原文保留，不重复</li>
+        <li><b>关键文件与标识符</b>：读改过哪些路径、各自的作用；路径、函数名、命令照抄</li>
+        <li><b>决策与原因</b>：为什么这么实现、被否掉的方案</li>
+        <li><b>错误与修复</b>：踩过的坑和对应的修法；报错原文照抄</li>
+        <li><b>工作记忆</b>：todo 列表当前状态、运行中的子代理</li>
+        <li><b>结果索引</b>：值得以后重读的已卸载结果，每条一行，给出 <code>blob://</code> 引用与一句说明</li>
+        <li><b>下一步</b>：压缩发生那一刻手头做的事 + 逐字引用的待办</li>
+      </ul>
+
+      <h3>6.1 提示词骨架</h3>
+      <p>提示词面向模型，用英文写，固定在 <code>internal/compact/prompt.go</code>。骨架如下，<code>&lt;N&gt;</code> 为摘要预算：</p>
+      <pre>You are compacting an agent session. You have no tools; do not call any.
+Input: EXISTING SUMMARY (may be empty) and NEW EVENTS that happened after it.
+The first user messages and the most recent turns stay verbatim outside
+this summary. Do not restate them.
+
+Write two parts.
+ANALYSIS: go through NEW EVENTS in order and note what changed.
+SUMMARY: an updated summary that replaces EXISTING SUMMARY.
+  Keep facts that are still valid. Remove what is resolved or obsolete.
+  Add the new events. Use these sections:
+  1. Task and progress
+  2. User instructions (quote each user message in NEW EVENTS)
+  3. Key files and identifiers
+  4. Decisions and reasons (include rejected options)
+  5. Errors and fixes (quote error text exactly)
+  6. Working memory (todo state, running subagents)
+  7. Result index (one line per blob:// ref worth re-reading)
+  8. Next step
+
+Rules:
+- Copy paths, identifiers, commands and error strings exactly.
+- Do not invent facts. Mark anything uncertain as "uncertain".
+- A result marked "superseded by" is outdated; do not report its content as current.
+- Write in the language of the conversation.
+- Keep SUMMARY under &lt;N&gt; tokens.</pre>
+      <p>增量指令（Keep / Remove / Add）是滚动摘要的关键。没有它，模型倾向于把旧摘要原样抄一遍再追加，摘要只增不减，几轮后自己就超出预算。用户
+        <code>/compact [指令]</code> 带的附加指令追加在 Rules 之后。
+      </p>
+      <p>三个硬规则照搬：<b>压缩调用不传 tools</b>（直接调 <code>llm.Chat</code>，绕开注册表）；summary 消息是
+        <code>role=user</code>（OpenAI 形态下模型的"下一条输入"）且附一句"这是压缩摘要，原始 transcript
+        仍在会话存储中"；摘要调用失败后 history 原样继续，只记熔断计数。
+      </p>
+    </section>
+
+    <!-- ============ 7. 落地顺序 ============ -->
+    <section id="phases">
+      <div class="chap">第 7 章 · 落地顺序</div>
+      <h2>六个阶段，每个都能独立验证</h2>
+      <p class="lede">排序按"可独立合并的最小增量"，不按 CC 原版的管线序——CC 的顺序是运行时开销序，落地的顺序是依赖序。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>阶段</th>
+              <th>内容</th>
+              <th>动到的文件</th>
+              <th>验证方式</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>P0</b> 估算地基</td>
+              <td>usage 透传管道 + <code>estimate.go</code> + messages.usage_json 列</td>
+              <td>
+                <code>llm/openai.go</code>、<code>agent/message.go</code>、<code>agent/agent.go</code>、<code>session/*</code>
+              </td>
+              <td>fake LLM 断言 usage 落列；估算器单测（CJK/ASCII 混合、排除 Thinking）</td>
+            </tr>
+            <tr>
+              <td><b>P1</b> 回填层</td>
+              <td>空结果固定标记 + blobs 表 + requests 表 + 回填时 spill（50K / 整批 200K / 硬顶 400KB）+ read_file 的
+                offset/limit 与 blob:// 分支</td>
+              <td>
+                <code>session/sqlite/sqlite.go</code>、<code>compact/spill.go</code>、<code>tools/fs.go</code>、<code>tools/shell.go</code>、<code>agent/agent.go</code>（回填挂点
+                + 写 requests）
+              </td>
+              <td>空串与纯空白结果断言写成固定标记（成功 / 失败两种）；造 300KB run_command 输出断言落指针行、blob
+                出全文、预览含尾部；30KB 结果断言直接进上下文；read_file 超长断言返回续读坐标、不落 blob；LoadView 重放与
+                view_hash 一致；blob:// 分页取回断言（含越界 ref）</td>
+            </tr>
+            <tr>
+              <td><b>P2</b> 压缩主流程</td>
+              <td>首尾分段 + 卸载层（含过期标记、大参数）+ 阈值判定 + 滚动增量摘要 + boundary/summary 落库 + fold + 熔断器 + 注入消息标
+                kind='inject'</td>
+              <td>
+                <code>compact/segment.go</code>、<code>compact/offload.go</code>、<code>compact/compact.go</code>、<code>compact/prompt.go</code>、<code>agent/agent.go</code>（插管线点、注入消息标
+                kind）、schema v2
+              </td>
+              <td>阈值单测：128K / 200K 窗口算出 72K/95K/108K 与 144K/167K/180K；分段单测：50 个用户轮的 history 断言首部 = 前 3
+                条真实用户消息（跳过 inject 行）、尾部 ≤40 轮且 ≤40K、超预算时按轮再按调用组收缩、切点落在原子单元边界；构造过强制压缩线 history：断言只卸载中段、每条都有
+                blob、配对完整、过期结果带 superseded 标记、&gt;2K 参数换索引且仍是合法 JSON；卸载后仍过线：断言 Chat
+                收到"system + 首部 + 摘要 + 尾部"视图、DB 出现 boundary+summary、resume 视图一致；二次压缩断言摘要输入 = 旧摘要 + 新进入中段的行、首部逐字节不变；fake
+                LLM 连续返回错误 / 无 SUMMARY / 无效摘要：断言第 3
+                次后自动通道不再调 API、compact 工具回填固定结果、/compact 成功后清零</td>
+            </tr>
+            <tr>
+              <td><b>P3</b> reactive 兜底</td>
+              <td><code>ErrContextLength</code> 分类器 + 激进压缩重试一次</td>
+              <td><code>llm/openai.go</code>（错误包装）、<code>agent/agent.go</code>（TODO 处落地）</td>
+              <td>fake LLM 返回 context_length_exceeded，断言压缩后重试且只重试一次</td>
+            </tr>
+            <tr>
+              <td><b>P4</b> 主动通道与收尾</td>
+              <td>模型 compact 工具（注册 + 循环体特判）、提醒线 PreChat hook、手动 /compact、TUI 用量提示与 ctxChars 口径修正、session-memory 笔记</td>
+              <td>
+                <code>main.go</code>、<code>agent/agent.go</code>、<code>tui/model.go</code>、<code>tui/suggest.go</code>、<code>compact/*</code>
+              </td>
+              <td>fake 模型发 compact tool_call：断言按 4.7 时序落库、boundary reason=model；用量过提醒线：断言注入一次提醒、同一压缩周期内不重复；/compact 走同一
+                compact.Run</td>
+            </tr>
+            <tr>
+              <td><b>P5</b> 子代理</td>
+              <td>任务消息钉首部、收尾提醒 hook、子代理不注册 compact、normal 型起点卸载、fork 控制行、结论 blob:// 说明、父侧 ≤8K task 结果豁免卸载</td>
+              <td>
+                <code>subagent/subagent.go</code>、<code>main.go</code>（Wire
+                装配）、<code>compact/segment.go</code>、<code>session/sqlite/sqlite.go</code>（fork 行与
+                LoadView 递归）
+              </td>
+              <td>子代理长任务过线：断言任务消息仍在视图里、注入的是收尾提醒、子代理工具表无 compact；normal 型以 ≥ 提醒线的快照启动：断言第一次 Chat
+                前已卸载、子会话能读到父会话的 blob、未调摘要；子会话 LoadView 重放 = 父会话水印处视图 + 子会话行（含两层嵌套）；结论含 blob:// 时断言追加固定说明；父侧
+                5K task 结果在卸载后仍为原文</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note ok">
+        <div class="nt">顺序说明</div>
+        <p>P0 应先做——后面每层的触发都靠它；P1 与 P2 可以并行，但 P1 先做更划算（最便宜、先拦住"读大文件就把窗口吃掉"的日常事故）；P3 与
+          P4 的主动通道都依赖 P2 的压缩入口；P4 其余内容是增量体验项，任意独立取舍；P5 依赖 P2（分段、卸载）与 P4（提醒 hook 机制）。</p>
+      </div>
+    </section>
+
+    <!-- ============ 8. 风险 ============ -->
+    <section id="risks">
+      <div class="chap">第 8 章 · 风险与未定项</div>
+      <h2>哪些地方可能翻车</h2>
+
+      <div class="steps">
+        <div class="step">
+          <div class="n">!</div>
+          <div class="st"><b>估算口径对中文失真</b>
+            <div class="sd">len/4 对中文严重低估（一个汉字约 1–2 token）。锚点缺失时偏差会放大。对策已写进 4.1 的 rune
+              估算；长期应引入真 tokenizer（端点若支持 <code>/tokenize</code> 或本地 tiktoken 兼容库）——未定，留为开放项。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">!</div>
+          <div class="st"><b>端点不返 usage</b>
+            <div class="sd">部分 OpenAI 兼容实现流式不回 usage，锚点退化成全量粗估。各阈值线会偏保守（更早压），不致命；运维端点宜选返回 usage 的实现。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">!</div>
+          <div class="st"><b>同会话并发写</b>
+            <div class="sd">云端多实例同 session 并发时，两个实例可能同时判定过线、各写一条 boundary。现状：SQLite
+              单连接串行写、Append 内做租户校验，双写不会错乱但会产生两条边界。fold 取最后一条，语义仍正确；但要明确"同会话同进程串行"
+              是部署约束，写进云端部署文档。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">!</div>
+          <div class="st"><b>DB 体积与 GC</b>
+            <div class="sd">blobs 会让 DB 比纯消息大几倍。需要配套：删会话时级联清 blobs（FK 已挂）、提供
+              VACUUM 或按时间 TTL 的运维手段——本条是 TODO，v1 可以先不管，记档即可。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">!</div>
+          <div class="st"><b>发送形态不落表，观测靠重放</b>
+            <div class="sd">表里直接能查的是 raw transcript 与投影状态；模型实际看到的内容应跑组装代码才出现。缓解见
+              5.3：投影输入全部 append-only、<code>requests</code> 逐请求记水印与 <code>view_hash</code>、错误路径冻结
+              payload。残余风险：组装代码升级后重放旧请求得到不同字节——<code>view_hash</code>
+              能发现不一致；如需逐请求冻结发送形态，可加配置开关，v1 只在错误路径落盘。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">!</div>
+          <div class="st"><b>模型过于频繁地调 compact</b>
+            <div class="sd">主动通道允许模型提前压缩，也意味着它可能在短间隔内连续调用——每次都是一次有损摘要加一笔 API
+              费用。v1 不设节流；若实测出现，按熔断计数的同款位置加"reason=model 在 N 轮内只生效一次"的冷却。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">!</div>
+          <div class="st"><b>摘要质量本身</b>
+            <div class="sd">压缩必然有损。兜底叙事是：原始 transcript 永远在 DB 里，<code>LoadRawHistory</code>
+              可全文回查——这是 RH 相对 CC（要去翻 jsonl 文件）的审计优势。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 9. 附录 ============ -->
+    <section id="appendix">
+      <div class="chap">附录 · 文档间关系</div>
+      <h2>这份方案在 docs/ 里的位置</h2>
+      <ul>
+        <li><code>claude-code-compaction.html</code>：机制出处。本文所有"对应 CC 的 X"都能在那里查到源码行号。</li>
+        <li><code>session-persistence-plan.html</code>：已定契约"DB = raw transcript、摘要作为新消息落库"。本文把这句契约展开成
+          boundary/summary + fold 的具体形态。</li>
+        <li><code>s08-context-compact.html</code>：四层管线的教学参照；本文 L1–L4 与它的层序一一对应，差异在各层的持久化语义。</li>
+        <li><code>runeharness-compaction-tradeoffs.html</code>：本文关键取舍的决策记录——为什么这么定、否掉了什么、各自要付的账。</li>
+      </ul>
+      <h2>实现偏差记录（v1 落地时）</h2>
+      <ul>
+        <li><b>请求水位的口径</b>：<code>upto_msg_id</code> 取写入时刻本会话
+          <code>MAX(messages.id)</code>，连控制行一起覆盖。若只记视图里最大的消息行 id，压缩控制行
+          （view_clear/boundary/summary）会落在水位之外，重放出的形态与 <code>view_hash</code> 对不上。
+        </li>
+        <li><b>摘要行先于 boundary 落库</b>：boundary 的 meta 带 <code>summary_id</code> 精确指向摘要行。
+          进程若死在两次 append 之间，留下的只是不被引用的孤儿摘要行，而不是悬空 boundary 把中段静默丢掉。</li>
+        <li><b>熔断计数</b>：自动压缩途中摘要失败不再中止本轮——history 原样继续、计入熔断，只有用量超过阻断线
+          且压不下来时才拒发（<code>agent.ErrContextFull</code>）。</li>
+        <li><b>子代理起点卸载</b>：实现为 <code>Compactor.Prime</code>——normal 型继承快照用量 ≥ 提醒线时先卸载
+          中段再跑；卸载出的 blob 落在子会话名下，指向父会话 blob 的旧索引经 parent_id 祖先链照常可读。</li>
+        <li><b>运行日志</b>：TUI 占终端，压缩器的 INFO/WARN 日志（失败类别、熔断计数、省下的 token）写到会话库
+          旁边的 <code>rune.log</code>。</li>
+        <li><b>摘要预算</b>：提示词按 20K 摘要预留硬编码给出上限提示，未按 <code>RUNE_MAX_OUTPUT_TOKENS</code>
+          动态缩小——端点输出上限只有 8K 时，预留里有一段用不上（tradeoffs 未决项）。</li>
+      </ul>
+    </section>
+
+    <footer>
+      RuneHarness · docs/runeharness-compaction-plan.html · v1.9 草案（已落地，见"实现偏差记录"）
+    </footer>
+  </div>
+
+</body>
+
+</html>

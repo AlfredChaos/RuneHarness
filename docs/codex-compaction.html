@@ -1,0 +1,1615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenAI Codex 会话压缩机制 — 源码级拆解</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 0 28px 140px
+    }
+
+    header {
+      padding: 80px 0 44px;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1.5px;
+      background: var(--teal)
+    }
+
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -.015em;
+      line-height: 1.3;
+      margin-bottom: 16px
+    }
+
+    .subtitle {
+      color: var(--ink-2);
+      font-size: 17px;
+      max-width: 700px
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 26px
+    }
+
+    .meta span {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 4px 11px;
+      border-radius: 99px
+    }
+
+    .guide {
+      padding: 36px 0 8px
+    }
+
+    .guide .inner {
+      background: var(--teal-bg);
+      border: 1px solid #CFE8E4;
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      font-size: 15px
+    }
+
+    .guide b {
+      color: var(--teal)
+    }
+
+    section {
+      padding-top: 64px
+    }
+
+    .chap {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px
+    }
+
+    h2 {
+      font-size: 27px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.35;
+      margin-bottom: 14px
+    }
+
+    h3 {
+      font-size: 19px;
+      font-weight: 650;
+      margin: 40px 0 12px
+    }
+
+    h4 {
+      font-size: 16px;
+      font-weight: 650;
+      margin: 26px 0 8px
+    }
+
+    p {
+      margin-bottom: 14px
+    }
+
+    .lede {
+      color: var(--ink-2);
+      font-size: 16.5px;
+      margin-bottom: 24px
+    }
+
+    ul,
+    ol {
+      padding-left: 24px;
+      margin-bottom: 14px
+    }
+
+    li {
+      margin-bottom: 6px
+    }
+
+    strong {
+      font-weight: 650
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      padding: 1px 7px;
+      border-radius: 5px;
+      color: #7A5410;
+      word-break: break-word
+    }
+
+    pre {
+      background: #2B2925;
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.75;
+      overflow-x: auto;
+      margin: 16px 0 22px;
+      color: #EDEAE3
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit
+    }
+
+    pre .cm {
+      color: #8A857E
+    }
+
+    pre .hl {
+      color: #7FDCC8;
+      font-weight: 600
+    }
+
+    pre .numc {
+      color: #F0B86A
+    }
+
+    pre .kw {
+      color: #C4A8F0
+    }
+
+    pre .str {
+      color: #A8D5A2
+    }
+
+    pre .del {
+      color: #F09AA5
+    }
+
+    .scene {
+      margin: 32px 0
+    }
+
+    .scene-head {
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .scene-tag {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: #fff;
+      background: var(--teal);
+      border-radius: 6px;
+      padding: 4px 10px;
+      flex-shrink: 0
+    }
+
+    .scene.amber .scene-tag {
+      background: var(--amber)
+    }
+
+    .scene.rose .scene-tag {
+      background: var(--rose)
+    }
+
+    .scene.blue .scene-tag {
+      background: var(--blue)
+    }
+
+    .scene.violet .scene-tag {
+      background: var(--violet)
+    }
+
+    .scene-title {
+      font-size: 19px;
+      font-weight: 700
+    }
+
+    .scene-body {
+      border-left: 3px solid var(--line-2);
+      margin-left: 14px;
+      padding: 8px 0 4px 26px
+    }
+
+    .scene.amber .scene-body {
+      border-color: #E8C89A
+    }
+
+    .scene.rose .scene-body {
+      border-color: #E8AEBC
+    }
+
+    .scene.blue .scene-body {
+      border-color: #B3C4EA
+    }
+
+    .scene.violet .scene-body {
+      border-color: #C9B0EA
+    }
+
+    .scene-q {
+      color: var(--ink-2);
+      margin-bottom: 14px
+    }
+
+    .scene-q::before {
+      content: "情境";
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: .1em;
+      color: var(--ink-3);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 2px 7px;
+      margin-right: 10px;
+      font-style: normal;
+      vertical-align: 2px
+    }
+
+    .ba {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 16px 0 22px;
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    .ba .side {
+      padding: 16px 20px
+    }
+
+    .ba .side+.side {
+      border-left: 1px solid var(--line)
+    }
+
+    .ba .ba-label {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 8px
+    }
+
+    .ba .before .ba-label {
+      color: var(--rose)
+    }
+
+    .ba .after .ba-label {
+      color: var(--green)
+    }
+
+    .ba pre {
+      margin: 0;
+      background: var(--code-bg);
+      color: var(--ink);
+      font-size: 11.5px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line)
+    }
+
+    .ba pre .cm {
+      color: var(--ink-3)
+    }
+
+    .ba pre .hl {
+      color: var(--teal);
+      font-weight: 600
+    }
+
+    .ba pre .del {
+      color: var(--rose)
+    }
+
+    @media(max-width:680px) {
+      .ba {
+        grid-template-columns: 1fr
+      }
+
+      .ba .side+.side {
+        border-left: none;
+        border-top: 1px solid var(--line)
+      }
+    }
+
+    .thread {
+      margin: 16px 0 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+      box-shadow: var(--shadow)
+    }
+
+    .msg {
+      display: flex;
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13.5px
+    }
+
+    .msg:last-child {
+      border-bottom: none
+    }
+
+    .msg .who {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      width: 64px;
+      flex-shrink: 0;
+      padding-top: 3px;
+      letter-spacing: .04em
+    }
+
+    .msg.u .who {
+      color: var(--blue)
+    }
+
+    .msg.a .who {
+      color: var(--violet)
+    }
+
+    .msg.t .who {
+      color: var(--amber)
+    }
+
+    .msg.s .who {
+      color: var(--ink-3)
+    }
+
+    .msg .bd {
+      color: var(--ink-2);
+      min-width: 0
+    }
+
+    .msg .bd code {
+      font-size: 11.5px
+    }
+
+    .msg.faded {
+      opacity: .45
+    }
+
+    .msg.faded .bd {
+      text-decoration: line-through;
+      text-decoration-color: var(--line-2)
+    }
+
+    .msg.new {
+      background: var(--green-bg)
+    }
+
+    .msg.new .who {
+      color: var(--green)
+    }
+
+    .msg.sum {
+      background: var(--teal-bg)
+    }
+
+    .msg.sum .who {
+      color: var(--teal)
+    }
+
+    .msg.boundary {
+      background: #F6F5F1;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3);
+      justify-content: center;
+      letter-spacing: .06em
+    }
+
+    .msg.boundary .bd {
+      text-align: center
+    }
+
+    .note {
+      border-left: 3px solid var(--blue);
+      background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px;
+      margin: 18px 0;
+      font-size: 15px
+    }
+
+    .note.warn {
+      border-color: var(--amber);
+      background: var(--amber-bg)
+    }
+
+    .note.danger {
+      border-color: var(--rose);
+      background: var(--rose-bg)
+    }
+
+    .note.ok {
+      border-color: var(--green);
+      background: var(--green-bg)
+    }
+
+    .note.teal {
+      border-color: var(--teal);
+      background: var(--teal-bg)
+    }
+
+    .note .nt {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 6px
+    }
+
+    .note.warn .nt {
+      color: var(--amber)
+    }
+
+    .note.danger .nt {
+      color: var(--rose)
+    }
+
+    .note.ok .nt {
+      color: var(--green)
+    }
+
+    .note.teal .nt {
+      color: var(--teal)
+    }
+
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt {
+      color: var(--blue)
+    }
+
+    .note p {
+      margin-bottom: 8px
+    }
+
+    .note p:last-child {
+      margin-bottom: 0
+    }
+
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px
+    }
+
+    th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: #F6F5F0;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top
+    }
+
+    tr:last-child td {
+      border-bottom: none
+    }
+
+    td code {
+      font-size: 12px
+    }
+
+    td .dim {
+      color: var(--ink-3);
+      font-size: 13px
+    }
+
+    .steps {
+      margin: 20px 0
+    }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px dashed var(--line)
+    }
+
+    .step:last-child {
+      border-bottom: none
+    }
+
+    .step .n {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--paper);
+      border: 1.5px solid var(--teal);
+      color: var(--teal);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 3px
+    }
+
+    .step .st {
+      font-size: 15px
+    }
+
+    .step .st b {
+      font-weight: 650
+    }
+
+    .step .sd {
+      font-size: 14px;
+      color: var(--ink-2);
+      margin-top: 3px
+    }
+
+    /* 三路径卡片 */
+    .lanes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin: 20px 0 24px
+    }
+
+    .lane {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px 18px 14px;
+      box-shadow: var(--shadow);
+      border-top: 3px solid var(--teal)
+    }
+
+    .lane.l2 {
+      border-top-color: var(--violet)
+    }
+
+    .lane.l3 {
+      border-top-color: var(--amber)
+    }
+
+    .lane .lt {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 6px
+    }
+
+    .lane h4 {
+      margin: 0 0 6px;
+      font-size: 15.5px
+    }
+
+    .lane p {
+      font-size: 13.5px;
+      color: var(--ink-2);
+      margin-bottom: 8px;
+      line-height: 1.65
+    }
+
+    .lane .cond {
+      font-family: var(--mono);
+      font-size: 11px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 6px 9px;
+      color: var(--ink-2);
+      line-height: 1.6
+    }
+
+    @media(max-width:780px) {
+      .lanes {
+        grid-template-columns: 1fr
+      }
+    }
+
+    /* 阈值进度条 */
+    .meter {
+      margin: 22px 0
+    }
+
+    .meter .bar {
+      position: relative;
+      height: 34px;
+      border-radius: 8px;
+      background: linear-gradient(90deg, #BFE6DE 0%, #F3DFA8 68%, #F0B2A5 90%, #E88B7E 100%);
+      border: 1px solid var(--line)
+    }
+
+    .meter .mark {
+      position: absolute;
+      top: -6px;
+      bottom: -6px;
+      width: 2.5px;
+      background: var(--ink)
+    }
+
+    .meter .mark.soft {
+      background: var(--amber);
+      border-style: dashed
+    }
+
+    .meter .mlab {
+      position: absolute;
+      top: 40px;
+      transform: translateX(-50%);
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--ink-2);
+      text-align: center;
+      width: 130px;
+      line-height: 1.45
+    }
+
+    .meter .mlab b {
+      display: block;
+      color: var(--ink);
+      font-size: 11.5px
+    }
+    .meter .mlab.left {
+      transform: none;
+      text-align: left
+    }
+
+    .meter .mlab.right {
+      transform: translateX(-100%);
+      text-align: right
+    }
+
+
+    .meter .zone {
+      position: absolute;
+      top: 8px;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .06em
+    }
+
+    .meter .zone.z1 {
+      left: 8px;
+      color: #0A574E
+    }
+
+    .meter .zone.z2 {
+      right: 8px;
+      color: #7A2818
+    }
+
+    /* 决策问答 */
+    .dd {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      margin: 14px 0 20px;
+      overflow: hidden
+    }
+
+    .dd .dq {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+      font-weight: 650;
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      font-size: 15.5px
+    }
+
+    .dd .dq .tag {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: #fff;
+      background: var(--violet);
+      border-radius: 5px;
+      padding: 3px 8px;
+      flex-shrink: 0
+    }
+
+    .dd .da {
+      display: grid;
+      grid-template-columns: 1fr 1fr
+    }
+
+    .dd .da>div {
+      padding: 14px 20px;
+      font-size: 14px;
+      color: var(--ink-2)
+    }
+
+    .dd .da>div:first-child {
+      border-right: 1px solid var(--line)
+    }
+
+    .dd .da .lab {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 5px
+    }
+
+    .dd .da .why .lab {
+      color: var(--teal)
+    }
+
+    .dd .da .else .lab {
+      color: var(--rose)
+    }
+
+    @media(max-width:680px) {
+      .dd .da {
+        grid-template-columns: 1fr
+      }
+
+      .dd .da>div:first-child {
+        border-right: none;
+        border-bottom: 1px solid var(--line)
+      }
+    }
+
+    .bigconclusion {
+      background: linear-gradient(135deg, #EDF7F5, #EFF3FC);
+      border: 1px solid #CFE0E8;
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      margin: 24px 0;
+      font-size: 17px;
+      line-height: 1.8
+    }
+
+    .svg-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 26px;
+      overflow-x: auto;
+      box-shadow: var(--shadow);
+      margin: 18px 0 8px
+    }
+
+    .svg-cap {
+      font-size: 12.5px;
+      color: var(--ink-3);
+      text-align: center;
+      margin-top: 12px;
+      font-family: var(--mono)
+    }
+
+    .src {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3)
+    }
+
+    .src code {
+      font-size: 11px;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--teal)
+    }
+
+    .klist {
+      margin: 14px 0 20px
+    }
+
+    .klist .ki {
+      display: flex;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px dashed var(--line);
+      font-size: 14.5px
+    }
+
+    .klist .ki:last-child {
+      border-bottom: none
+    }
+
+    .klist .kk {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--teal);
+      white-space: nowrap;
+      padding-top: 3px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">Source Analysis · openai/codex · codex-rs</div>
+      <h1>Codex 会话压缩（Compaction）机制全景拆解</h1>
+      <p class="subtitle">对话超出上下文窗口时，Codex 不直接截断历史。Codex 把历史压缩成一份交接摘要，再带着摘要继续工作。本文按 <code>codex-rs</code> 源码拆解四个问题：什么时候触发压缩、压缩请求怎么构造、压缩后历史变成什么样、为什么这样设计。</p>
+      <div class="meta">
+        <span>codex-rs/core/src/compact.rs</span>
+        <span>codex-rs/core/src/compact_remote_v2.rs</span>
+        <span>codex-rs/core/src/session/turn.rs</span>
+        <span>codex-rs/core/src/session/context_window.rs</span>
+        <span>codex-rs/prompts/templates/compact/</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>阅读导引：</b>第一章讲触发条件和阈值。第二至四章拆解三条压缩路径：服务端 Compaction V2、本地摘要、Token Budget 重置。同一次压缩只走其中一条路径。第五章讲压缩结果怎么写回历史、怎么落盘。第六章集中回答"为什么这么设计、不这么做会怎样"。
+      </div>
+    </div>
+
+    <!-- ========== 1. 总览 ========== -->
+    <section>
+      <div class="chap">Chapter 01 · Overview</div>
+      <h2>一次压缩的完整生命周期</h2>
+      <p class="lede">Codex 把压缩当成一个独立任务来执行。压缩有独立的 turn 生命周期事件、分析埋点和 PreCompact / PostCompact 钩子，最后以一条 <code>ContextCompaction</code> turn item 结束。</p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 820 300" width="100%" font-family="-apple-system,'PingFang SC',sans-serif">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#9A948A" />
+            </marker>
+          </defs>
+          <!-- 阶段条 -->
+          <rect x="10" y="18" width="180" height="34" rx="8" fill="#EFF3FC" stroke="#B3C4EA" />
+          <text x="100" y="40" text-anchor="middle" font-size="12.5" font-weight="600" fill="#2657C4">触发判定</text>
+          <rect x="220" y="18" width="180" height="34" rx="8" fill="#EDF7F5" stroke="#A9D8CF" />
+          <text x="310" y="40" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0E7368">构造压缩请求</text>
+          <rect x="430" y="18" width="180" height="34" rx="8" fill="#F4EFFC" stroke="#C9B0EA" />
+          <text x="520" y="40" text-anchor="middle" font-size="12.5" font-weight="600" fill="#6528C9">模型产出摘要</text>
+          <rect x="640" y="18" width="170" height="34" rx="8" fill="#EEF7F0" stroke="#AFD8BC" />
+          <text x="725" y="40" text-anchor="middle" font-size="12.5" font-weight="600" fill="#177245">重写并持久化历史</text>
+          <!-- 详细流程 -->
+          <g font-size="11.5" fill="#26241F">
+            <rect x="20" y="90" width="170" height="58" rx="8" fill="#fff" stroke="#E9E6DE" />
+            <text x="105" y="112" text-anchor="middle" font-weight="650">token 用量 ≥ 阈值</text>
+            <text x="105" y="130" text-anchor="middle" fill="#5B564E">或用户 /compact</text>
+            <text x="105" y="143" text-anchor="middle" fill="#9A948A" font-size="10">turn.rs · context_window.rs</text>
+            <rect x="220" y="90" width="170" height="58" rx="8" fill="#fff" stroke="#E9E6DE" />
+            <text x="305" y="112" text-anchor="middle" font-weight="650">PreCompact hooks</text>
+            <text x="305" y="130" text-anchor="middle" fill="#5B564E">emit_turn_item_started</text>
+            <text x="305" y="143" text-anchor="middle" fill="#9A948A" font-size="10">hook_runtime.rs</text>
+            <rect x="420" y="90" width="170" height="58" rx="8" fill="#fff" stroke="#E9E6DE" />
+            <text x="505" y="112" text-anchor="middle" font-weight="650">整段历史 + 指令</text>
+            <text x="505" y="130" text-anchor="middle" fill="#5B564E">发给模型做总结</text>
+            <text x="505" y="143" text-anchor="middle" fill="#9A948A" font-size="10">compact.rs / compact_remote_v2.rs</text>
+            <rect x="620" y="90" width="180" height="58" rx="8" fill="#fff" stroke="#E9E6DE" />
+            <text x="710" y="112" text-anchor="middle" font-weight="650">新历史 = 保留消息 + 摘要</text>
+            <text x="710" y="130" text-anchor="middle" fill="#5B564E">替换 live history</text>
+            <text x="710" y="143" text-anchor="middle" fill="#9A948A" font-size="10">session/mod.rs:3993</text>
+            <!-- 第二行 -->
+            <rect x="120" y="190" width="250" height="58" rx="8" fill="#FCF4E8" stroke="#E8C89A" />
+            <text x="245" y="212" text-anchor="middle" font-weight="650" fill="#A85507">失败处理</text>
+            <text x="245" y="230" text-anchor="middle" font-size="10.5" fill="#5B564E">网络错误退避重试；压缩请求本身超限</text>
+            <text x="245" y="242" text-anchor="middle" font-size="10.5" fill="#5B564E">→ 删最旧条目再试</text>
+            <rect x="420" y="190" width="260" height="58" rx="8" fill="#fff" stroke="#E9E6DE" />
+            <text x="550" y="212" text-anchor="middle" font-weight="650">RolloutItem::Compacted 落盘</text>
+            <text x="550" y="230" text-anchor="middle" font-size="10.5" fill="#5B564E">replacement_history + window_id +</text>
+            <text x="550" y="242" text-anchor="middle" font-size="10.5" fill="#5B564E">compaction_response_id</text>
+            <!-- 箭头 -->
+            <line x1="190" y1="119" x2="216" y2="119" stroke="#9A948A" stroke-width="1.5" marker-end="url(#arr)" />
+            <line x1="390" y1="119" x2="416" y2="119" stroke="#9A948A" stroke-width="1.5" marker-end="url(#arr)" />
+            <line x1="590" y1="119" x2="616" y2="119" stroke="#9A948A" stroke-width="1.5" marker-end="url(#arr)" />
+            <line x1="505" y1="148" x2="505" y2="170" stroke="#E8C89A" stroke-width="1.5" stroke-dasharray="4 3" />
+            <line x1="505" y1="170" x2="370" y2="170" stroke="#E8C89A" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)" />
+            <line x1="710" y1="148" x2="710" y2="170" stroke="#9A948A" stroke-width="1.5" stroke-dasharray="4 3" />
+            <line x1="710" y1="170" x2="682" y2="170" stroke="#9A948A" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr)" />
+          </g>
+          <text x="20" y="285" font-size="10.5" fill="#9A948A" font-family="monospace">压缩完成后：PostCompact hooks → warning 事件（"长线程 + 多次压缩会降低准确性"）→ 会话用新历史继续</text>
+        </svg>
+        <div class="svg-cap">压缩生命周期 · compact.rs / compact_remote_v2.rs / session/mod.rs</div>
+      </div>
+
+      <h3>三条互斥的实现路径</h3>
+      <p>同一个压缩动作，Codex 按会话能力在三条路径里选一条。手动压缩的分发点在 <code>tasks/compact.rs</code>，自动压缩的分发点在 <code>session/turn.rs</code> 的 <code>run_auto_compact</code>。</p>
+      <div class="lanes">
+        <div class="lane l2">
+          <div class="lt">Path A · 默认（OpenAI 后端）</div>
+          <h4>Remote Compaction V2</h4>
+          <p>客户端在历史尾部追加 <code>CompactionTrigger</code> 请求控制项，发给服务端。服务端返回一个 <code>Compaction</code> 条目（带 <code>encrypted_content</code>）。新历史 = 保留的用户消息和代理消息 + 该条目。</p>
+          <div class="cond">provider.capabilities().remote_compaction == V2<br>（OpenAI / Azure Responses 默认开启）</div>
+        </div>
+        <div class="lane">
+          <div class="lt">Path B · 第三方 provider 回退</div>
+          <h4>本地摘要（Local）</h4>
+          <p>客户端把总结指令作为一条 user 消息追加到历史尾部，让当前模型再跑一个 turn 产出文字摘要。新历史 = 保留的用户消息（上限 20k tokens）+ <code>SUMMARY_PREFIX</code> + 摘要文本。</p>
+          <div class="cond">RemoteCompactionSupport::Unsupported<br>（非 OpenAI provider 默认）</div>
+        </div>
+        <div class="lane l3">
+          <div class="lt">Path C · 实验特性</div>
+          <h4>Token Budget 重置</h4>
+          <p>开启 <code>token_budget</code> feature 后，压缩不再产出摘要。客户端丢弃旧历史，从当前环境重建一份初始上下文（world state + 环境信息）。效果相当于开新窗口、保留工作区。</p>
+          <div class="cond">Feature::TokenBudget enabled<br>compact_token_budget.rs</div>
+        </div>
+      </div>
+      <div class="src">分发依据：<code>core/src/tasks/compact.rs:43-75</code> 与 <code>core/src/session/turn.rs:1499-1544</code>。provider 能力判定见 <code>model-provider/src/capabilities.rs:31-39</code>。</div>
+    </section>
+
+    <!-- ========== 2. 触发 ========== -->
+    <section>
+      <div class="chap">Chapter 02 · Triggers</div>
+      <h2>什么时候触发压缩</h2>
+      <p class="lede">压缩有两类触发方式。第一类是用户手动输入 <code>/compact</code>，走 <code>StandaloneTurn</code> 阶段。第二类是 token 阈值驱动的自动压缩，按发生时机分成 PreTurn、MidTurn、PostTurn 三个阶段。</p>
+
+      <h3>阈值怎么算</h3>
+      <p>每轮采样前后，core 调用 <code>context_window_token_status()</code> 算出一组状态位。核心规则见 <code>session/context_window.rs:53-130</code>：</p>
+      <ul>
+        <li><strong>auto_compact_token_limit</strong>：自动压缩阈值。模型元数据可以给出这个值，<code>model_auto_compact_token_limit</code> 配置可以覆盖它。缺省值是 <strong>context_window 的 90%</strong>（<code>openai_models.rs</code> 的 <code>auto_compact_token_limit()</code>）。</li>
+        <li><strong>full_context_window_limit</strong>：硬上限 = <code>context_window × effective_context_window_percent</code>，默认 95%。</li>
+        <li><strong>token_limit_reached</strong>：scope_tokens ≥（压缩阈值 + fallback buffer），或者 active_tokens ≥ 95% 硬上限。满足任一条件就触发压缩。</li>
+        <li><strong>scope 口径</strong>（<code>AutoCompactTokenLimitScope</code>）：<code>Total</code>（默认）统计整个活动上下文；<code>BodyAfterPrefix</code> 只统计压缩窗口前缀之后新增的 token，计数基线来自 <code>auto_compact_window.rs</code> 记录的 prefill 值。</li>
+      </ul>
+
+      <div class="meter">
+        <div class="bar">
+          <div class="zone z1">正常工作区</div>
+          <div class="zone z2">压缩</div>
+          <div class="mark" style="left:90%"></div>
+          <div class="mark" style="left:95%"></div>
+          <div class="mlab left" style="left:2%;top:44px;width:300px"><b>90% · 自动压缩阈值</b>auto_compact_token_limit（模型可配，缺省 = context_window × 90%；model_auto_compact_token_limit 可调低）</div>
+          <div class="mlab right" style="left:99%;top:44px;width:300px"><b>95% · 硬上限</b>full_context_window_limit = context_window × effective_context_window_percent</div>
+          <div style="position:absolute;left:90%;top:34px;width:1.5px;height:8px;background:#9A948A"></div>
+          <div style="position:absolute;left:95%;top:34px;width:1.5px;height:8px;background:#9A948A"></div>
+        </div>
+        <div style="height:56px"></div>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>触发点</th>
+            <th>CompactionPhase</th>
+            <th>条件（源码）</th>
+            <th>Reason</th>
+          </tr>
+          <tr>
+            <td>用户输入 <code>/compact</code> 或 app-server 请求</td>
+            <td><code>StandaloneTurn</code></td>
+            <td><code>Op::Compact</code> → <code>CompactTask</code>（handlers.rs:252）</td>
+            <td><code>UserRequested</code>（Manual）</td>
+          </tr>
+          <tr>
+            <td>本轮采样开始<b>之前</b></td>
+            <td><code>PreTurn</code></td>
+            <td><code>token_limit_reached</code>（turn.rs:1316）</td>
+            <td><code>ContextLimit</code></td>
+          </tr>
+          <tr>
+            <td>模型切换且历史放不下，或 comp_hash 变化</td>
+            <td><code>PreTurn</code></td>
+            <td>切到窗口更小的模型且已超限；或上一模型与当前模型的 <code>comp_hash</code> 不同（turn.rs:1374-1473）</td>
+            <td><code>ModelDownshift</code> / <code>CompHashChanged</code></td>
+          </tr>
+          <tr>
+            <td>一次采样<b>之后</b>（工具还要继续跑）</td>
+            <td><code>MidTurn</code></td>
+            <td><code>needs_follow_up &amp;&amp; (new_context_window 请求 || token_limit_reached)</code>（turn.rs:601-624）</td>
+            <td><code>ContextLimit</code></td>
+          </tr>
+          <tr>
+            <td>一轮正常<b>结束之后</b></td>
+            <td><code>PostTurn</code></td>
+            <td><code>model_post_turn_compact_threshold_percent &gt; 0</code> 且用量 ≥ 该百分比 × 硬上限（默认 0 = 关闭，turn.rs:716-734）</td>
+            <td><code>ContextLimit</code></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="scene blue">
+        <div class="scene-head">
+          <span class="scene-tag">场景 A</span>
+          <span class="scene-title">连续编译报错对话 20 轮后触发 PreTurn 压缩</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">用户让 codex 修一个 Rust workspace 的编译错误。模型反复执行 <code>cargo build</code>，每轮输出几千行日志，改代码，再执行 build。到第 20 轮时，累计 token 用量越过 90% 阈值。</p>
+          <p>第 21 轮开始，<code>run_turn</code> 在采样之前调用 <code>run_pre_sampling_compact</code>（turn.rs:1304）。该函数发现 <code>token_limit_reached = true</code>，先执行压缩，压缩完成后才继续正常采样。用户这条新输入已先写入历史（compact.rs:264），所以压缩请求里包含用户的最新诉求。</p>
+          <div class="note teal">
+            <div class="nt">为什么是 PreTurn，而不是等 ContextWindowExceeded 错误</div>
+            <p>压缩是预防性动作：core 在服务端拒绝请求之前主动压缩。如果等 400 错误再补救，会浪费一次完整上行流量的延迟，有些 provider 还会直接断开连接。压缩失败时，PreTurn 阶段会保留用户输入，由 <code>run_turn</code> 外层统一上报错误（compact.rs:240-245）。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="scene amber">
+        <div class="scene-head">
+          <span class="scene-tag">场景 B</span>
+          <span class="scene-title">模型调用 new_context 工具 → MidTurn 压缩</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">模型在长任务中途自己判断该换窗口了，调用 <code>new_context_window</code> 工具。该 handler 只置一个标志位 <code>request_new_context_window()</code>（new_context_window.rs:38），不立即重置。</p>
+          <p>采样结束回到 turn 循环，<code>should_roll_over = needs_follow_up &amp;&amp; (take_new_context_window_request() || token_limit_reached)</code> 成立，触发 MidTurn 压缩。这次压缩用 <code>InitialContextInjection::BeforeLastUserMessage</code> 模式注入环境上下文（后述）。工具调用继续，对话不中断。</p>
+          <div class="note warn">
+            <div class="nt">为什么 MidTurn 要把 initial context 注入压缩后历史</div>
+            <p>源码注释写明：模型按训练预期，压缩摘要应是历史中的最后一条内容（compact.rs:67-69）。MidTurn 之后马上接同一段对话的后续采样，所以环境上下文（cwd、git 状态、AGENTS.md）应保留且位置正确：插在"最后一条真实用户消息之前"。PreTurn 和 StandaloneTurn 不注入（<code>DoNotInject</code>），因为下一个常规 turn 会完整重建 initial context，注入两份只会浪费 token。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag">场景 C</span>
+          <span class="scene-title">用户觉得对话太长，输入 /compact</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">用户在 TUI 底部输入 <code>/compact</code>。</p>
+          <p>调用链：<code>slash_dispatch.rs:329</code> → <code>app_event_tx.compact()</code> → 提交 <code>Op::Compact</code> 给 core → <code>handlers.rs:252</code> 启动 <code>CompactTask</code>。任务按 provider 能力分发：OpenAI 后端走远端 V2，其他 provider 走本地摘要。压缩期间 TUI 状态栏显示 "Compacting context — Making room to continue."，完成后在转录区输出 "Context compacted · 12s"（chatwidget/compaction.rs）。</p>
+        </div>
+      </div>
+
+      <h3>两种辅助触发</h3>
+      <div class="klist">
+        <div class="ki"><span class="kk">Guardian</span><span>Guardian 审查上下文超限时（<code>finalize_guardian_input</code> 返回 <code>ContextWindowExceeded</code>），core 先执行 PreTurn 压缩，再用 <code>HistoryTruncation::Allow</code> 重试（turn.rs:325-366）。MidTurn 中 guardian budget 超限也会触发一次压缩，每步只重试一次，防止死循环（turn.rs:759-791）。</span></div>
+        <div class="ki"><span class="kk">模型切换</span><span>用户切换到窗口更小的模型、且当前用量超过新模型阈值时，core 执行 <code>ModelDownshift</code> 压缩。两个模型的 <code>comp_hash</code>（压缩兼容哈希）不同时，core 执行 <code>CompHashChanged</code> 压缩，保证压缩产物由与历史兼容的模型产出。旧模型压缩失败时，core 用当前模型重试一次（compact_model_fallback.rs）。</span></div>
+      </div>
+    </section>
+
+    <!-- ========== 3. 本地摘要路径 ========== -->
+    <section>
+      <div class="chap">Chapter 03 · Local Compaction</div>
+      <h2>路径 B：本地摘要（第三方 provider 的默认实现）</h2>
+      <p class="lede">provider 不支持远端压缩（<code>RemoteCompactionSupport::Unsupported</code>）时，Codex 在客户端完成摘要。实现见 <code>core/src/compact.rs</code>。</p>
+
+      <h3>压缩 prompt：一条伪装成用户消息的指令</h3>
+      <p>本地压缩不引入新协议。core 把内置指令作为 <code>UserInput::Text</code> 追加进历史（compact.rs:121-131），再让模型正常跑一个流式 turn。内置 prompt 全文见 <code>prompts/templates/compact/prompt.md</code>：</p>
+      <pre><code><span class="hl">You are performing a CONTEXT CHECKPOINT COMPACTION.</span>
+Create a handoff summary for another LLM that will resume the task.
+
+Include:
+- Current progress and key decisions made
+- Important context, constraints, or user preferences
+- What remains to be done (clear next steps)
+- Any critical data, examples, or references needed to continue
+
+Be concise, structured, and focused on helping the next LLM
+seamlessly continue the work.</code></pre>
+      <p>用户可以用 <code>compact_prompt</code> 配置或 <code>experimental_compact_prompt_file</code> 覆盖这段指令（config/mod.rs:3996-4082）。</p>
+      <div class="note">
+        <div class="nt">设计理由 · 为什么 prompt 说"总结给下一个 LLM"</div>
+        <p><b>场景：</b>prompt 如果写成"总结这段对话"，模型会输出"我们讨论了 XX"这类面向人的叙事。文件路径、错误码、下一步命令会在叙事中丢失，压缩后的模型拿不到恢复工作所需的精确信息。</p>
+        <p>摘要的读者是另一个模型，不是人。这个措辞让模型输出交接清单（进度、决策、待办、关键数据），而不是叙事报告。</p>
+      </div>
+
+      <h3>请求构造与流式收集</h3>
+      <div class="steps">
+        <div class="step"><span class="n">1</span>
+          <div class="st"><b>记录压缩指令</b><div class="sd">core 把 summarization prompt 作为 user 消息写入历史副本（<code>record_items</code>，compact.rs:262-267）。core 同时采集 <code>input_goal_ids</code>：用户目标消息的 id 集合，写回时用于保序。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">2</span>
+          <div class="st"><b>构建 Prompt</b><div class="sd"><code>history.for_prompt()</code> 按模型输入模态过滤历史。<code>executed_tool_calls.attach_to_compaction_prompt()</code> 给每条历史项附上"工具实际执行结果"元数据（request_metadata.rs:12），让摘要模型看到工具真实做了什么。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">3</span>
+          <div class="st"><b>流式请求 + 重试</b><div class="sd"><code>drain_to_completed</code> 消费响应流。每个 <code>OutputItemDone</code> 立即以 <code>compaction_output: true</code> 元数据写回 live history（PostTurn 阶段例外：先缓存，成功才提交，compact.rs:789-807）。重试复用同一个 <code>ModelClientSession</code>，保住 sticky routing。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">4</span>
+          <div class="st"><b>超限自救</b><div class="sd">压缩请求本身撞 <code>ContextWindowExceeded</code> 时，<code>history.remove_first_item()</code> 删掉最旧条目再试（compact.rs:317-328）。从头删而不是从尾删，是为了保留前缀缓存。注释原文："Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact"。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">5</span>
+          <div class="st"><b>取摘要文本</b><div class="sd">core 取最后一条 assistant 消息作为摘要正文，前面拼 <code>SUMMARY_PREFIX</code>。前缀文本见 prompts/templates/compact/summary_prefix.md，内容是"另一个语言模型解决了这个问题并给出了其思路摘要……"。摘要为空时兜底为 <code>(no summary available)</code>。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">6</span>
+          <div class="st"><b>造新历史</b><div class="sd"><code>build_compacted_history</code> 从新到旧选取保留的 user 消息，总上限 <span class="numc">20_000</span> tokens，再压上摘要消息。摘要恒为最后一项。</div>
+          </div>
+        </div>
+      </div>
+
+      <h3>压缩前后历史长什么样</h3>
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">Before · 压缩前历史（≈ 25 items）</div>
+          <pre><code><span class="cm"># turn.rs / compact.rs 输入侧</span>
+<span class="del">[initial context: env, AGENTS.md, git status]</span>
+<span class="del">user: 帮我修 cargo build 的报错</span>
+<span class="del">assistant: 我先跑 build 看错误…</span>
+<span class="del">tool: cargo build → 87 errors…</span>
+<span class="del">assistant: 主要是 E0308…</span>
+<span class="del">…（20 轮 build/修/再 build）…</span>
+<span class="del">tool: cargo build → ok</span>
+user: 顺便把 clippy warning 也清了
+<span class="hl">user: [SUMMARIZATION_PROMPT]  ← 压缩指令</span>
+<span class="hl">assistant: - 进度：已修复 E0308… ← 新产出摘要</span></code></pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">After · 替换后的历史（≤ 3 items）</div>
+          <pre><code><span class="cm"># replace_compacted_history 写入</span>
+user: 帮我修 cargo build 的报错   <span class="hl">← 保留</span>
+user: 顺便把 clippy warning 也清了 <span class="hl">← 保留（新的优先）</span>
+<span class="hl">user: [SUMMARY_PREFIX]
+Another language model started to solve
+this problem… Here is the summary:
+- 进度：修复了 E0308（类型不匹配），
+  修改文件 src/lib.rs:42 src/main.rs:10
+- 决策：用 Box&lt;T&gt; 替代 Rc 满足 Send
+- 待办：清 clippy warnings
+- 关键数据：cargo build 现已通过</span></code></pre>
+        </div>
+      </div>
+
+      <h3>保留什么、丢什么</h3>
+      <ul>
+        <li><strong>只保留 user 消息</strong>：<code>collect_annotated_user_messages</code> 过滤出 <code>TurnItem::UserMessage</code>。assistant 回复、工具调用、reasoning 全部丢弃（compact.rs:557-564）。</li>
+        <li><strong>排除旧摘要</strong>：<code>is_summary_message</code> 剔除以 <code>SUMMARY_PREFIX</code> 开头的消息（compact.rs:584-586）。没有这一步，上次压缩的摘要会被当成用户原话再次保留，第二次压缩后历史里会叠两层摘要。</li>
+        <li><strong>从新往旧选，预算 20k tokens</strong>：最新的用户消息优先保留。放不下时，<code>truncate_text</code> 截断最后一条，并标记 <code>mark_retained_sources_incomplete</code>（compact.rs:669-747）。</li>
+        <li><strong>非文本内容降级</strong>：超预算或含非 <code>InputText</code> 部件的消息只重建文本部分，图片等媒体不克隆（compact.rs:697-711，注释 "never clone discarded media"）。</li>
+        <li><strong>初始上下文重建而非拷贝</strong>：环境信息不进保留列表。MidTurn 时 <code>build_compaction_initial_context</code> 从当前 world state 重新渲染后插入；PreTurn 和 StandaloneTurn 等下一轮自然重建。</li>
+      </ul>
+      <div class="note">
+        <div class="nt">设计理由 · 为什么只保留用户消息</div>
+        <p><b>场景：</b>用户在第 3 轮说过"不要改 public API"，这个约束只有 user 消息里有。如果连 user 消息都丢，模型只能靠摘要的二手转述。摘要漏掉这条偏好，模型就可能改 public API。</p>
+        <p>用户消息是需求侧的权威记录：目标、约束、偏好都在里面，而且通常很短。assistant 的推理和工具输出占 token 的大头，但其中的信息模型可以从摘要和工作区状态重建。全部保留会让压缩收益太小，全部丢弃会让模型失去用户原话。20k tokens 上限是安全网：防止用户贴了整份日志的超长消息再次挤爆窗口。</p>
+      </div>
+    </section>
+
+    <!-- ========== 4. Remote V2 ========== -->
+    <section>
+      <div class="chap">Chapter 04 · Remote Compaction V2</div>
+      <h2>路径 A：服务端压缩（OpenAI 后端默认）</h2>
+      <p class="lede">OpenAI / Azure Responses provider 默认启用 <code>RemoteCompactionSupport::V2</code>（capabilities.rs:33-39）。这条路径里"怎么总结"由服务端负责，客户端只做三件事：发触发器、收压缩条目、重组历史。实现见 <code>core/src/compact_remote_v2.rs</code>（1302 行）。</p>
+
+      <h3>请求侧：历史 + CompactionTrigger</h3>
+      <div class="steps">
+        <div class="step"><span class="n">1</span>
+          <div class="st"><b>瘦身历史（可选）</b><div class="sd"><code>trim_function_call_history_to_fit_context_window</code>：历史超过模型窗口时，从尾部向前截短过大的 function call output，直到估算 token 落回窗口内（compact_remote_history.rs）。标记文本："Output exceeded the available model context and was truncated"。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">2</span>
+          <div class="st"><b>追加触发器</b><div class="sd"><code>input.push(ResponseItem::CompactionTrigger {})</code>。<code>CompactionTrigger</code> 是不持久化的请求控制项，放在历史尾部告诉服务端"对这个输入做压缩"（compact_remote_v2_attempt.rs:83；models.rs:1241，注释 "request controls, not durable response items"）。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">3</span>
+          <div class="st"><b>流式请求 + 校验</b><div class="sd">服务端应返回<b>恰好一个</b> <code>ResponseItem::Compaction</code> 输出项（含 <code>encrypted_content</code>）。数量不对直接报 <code>CodexErr::Fatal</code>（<code>collect_compaction_output</code>，490-494）。重试上限比常规流式更保守：min（provider 重试数，<span class="numc">2</span>）。注释说明原因：压缩可能跑很久，所以传输层重试预算收紧。</div>
+          </div>
+        </div>
+        <div class="step"><span class="n">4</span>
+          <div class="st"><b>重组新历史</b><div class="sd"><code>build_v2_compacted_history</code> = 过滤保留项（预算 <span class="numc">64_000</span> tokens）+ 服务端返回的 Compaction 条目压尾。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="nt">设计理由 · 为什么把压缩交给服务端、产出加密条目</div>
+        <p><b>场景：</b>走本地路径时，压缩要把整段历史再发一遍，消耗一整轮输入 token 和一整轮输出 token，还占用用户模型的推理配额。服务端压缩是平台内建能力，不经过这条链路。</p>
+        <p>摘要和检查点以 <code>encrypted_content</code> 加密形式存在：模型读得懂，客户端和用户看不到明文（<code>CompactionCheckpoint::is_usable</code> 检查 id 和非空 encrypted_content，history/src/compaction_checkpoint.rs:36-50）。好处有两个：服务端可以用专用摘要能力，checkpoint 还可以携带对人不透明的状态。代价是非 OpenAI provider 用不了，所以保留 Path B 兜底。</p>
+      </div>
+
+      <h3>保留过滤规则（is_retained_for_remote_compaction_v2）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>条目类型</th>
+            <th>保留？</th>
+            <th>规则细节（compact_remote_v2.rs:557-602）</th>
+          </tr>
+          <tr>
+            <td>user 消息（真实用户输入 / hook prompt）</td>
+            <td>✅</td>
+            <td>role="user" 且解析为 <code>UserMessage</code> 或 <code>HookPrompt</code></td>
+          </tr>
+          <tr>
+            <td>developer 消息（客户端作者）</td>
+            <td>条件保留</td>
+            <td>仅当 <code>RetainClientDeveloperMessages</code> feature 开启且 <code>metadata.client_authored</code></td>
+          </tr>
+          <tr>
+            <td>AgentMessage（多代理间消息）</td>
+            <td>条件保留</td>
+            <td>排除子代理进度汇报（MESSAGE / CHANNEL_POST），排除 FINAL_ANSWER，且单条 ≤ <span class="numc">10_000</span> tokens</td>
+          </tr>
+          <tr>
+            <td>工具调用 / 输出 / reasoning / 其他</td>
+            <td>❌</td>
+            <td>一律不保留</td>
+          </tr>
+        </table>
+      </div>
+      <p>保留集合再从新到旧套 64k tokens 预算（<code>truncate_retained_messages</code>）：整条放得下就整条收，放不下就按 token 截断文本部件后收尾。开启 <code>CompactionImageBudget</code> 后图片也计入预算；图片过大时直接停止回填更早的消息（662-675）。</p>
+
+      <h3>压缩前后对比（远端路径）</h3>
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">Before · 发给服务端的 prompt.input</div>
+          <pre><code><span class="del">[initial context items]</span>
+user: 目标：给 harness 加 compaction
+assistant: 收到，先看 internal/agent…
+tool: read_file → …
+<span class="del">…（大量 reasoning/工具项）…</span>
+assistant: 已实现 hooks 三道闸
+user: 好，跑 go test 验证
+<span class="hl">CompactionTrigger {}  ← 控制项，不落盘</span></code></pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">After · 替换后的历史</div>
+          <pre><code>user: 目标：给 harness 加 compaction <span class="hl">← 保留</span>
+user: 好，跑 go test 验证        <span class="hl">← 保留（新→旧，64k）</span>
+<span class="hl">Compaction {
+  id: "cmp_…",
+  encrypted_content: "eyJ…"   ← 服务端压缩产物，
+}                                 模型可读、人不可读</span></code></pre>
+        </div>
+      </div>
+      <p>远端路径与本地路径的关键差异：摘要不是可见的 user 文本，而是 <code>Compaction</code> / <code>ContextCompaction</code> 专用条目。压缩条目类型独立，所以 V2 不需要本地路径那套 "<code>SUMMARY_PREFIX</code> 排除旧摘要" 的逻辑。V2 同样用 <code>insert_initial_context_before_last_real_user_or_summary</code> 做 MidTurn 上下文注入，同样走 <code>advance_auto_compact_window</code> 和 <code>replace_compacted_history</code> 落盘。</p>
+
+      <h3>模型切换时的压缩兼容性</h3>
+      <p>V2 压缩条目记录产出它的模型哈希（<code>compaction_model_hash</code>）。用户切换模型导致 <code>comp_hash</code> 变化时，两个模型对压缩格式的解读不兼容。core 会在下一轮采样前<b>用上一轮的旧模型</b>再跑一次压缩（<code>maybe_run_previous_model_inline_compact</code>，turn.rs:1374-1425）。旧模型压缩失败时，core 用当前模型兜底重试，并上报埋点 <code>codex.compaction.model_fallback</code>（compact_model_fallback.rs）。</p>
+      <div class="note warn">
+        <div class="nt">设计理由 · 为什么先用旧模型压一遍</div>
+        <p><b>场景：</b>用户从窗口 272k 的模型切到窗口更小的模型。旧 checkpoint 是大模型产出的加密 blob，小模型直接读会读错或报格式错误。core 先用旧模型把历史重新压成新格式，新模型再接续工作。</p>
+        <p>加密 checkpoint 的读者应与作者是同族模型。<code>comp_hash</code> 就是压缩格式的版本号：两边都给出且不等才触发重压，缺失时不臆测（<code>comp_hash_changed</code>，turn.rs:1337）。</p>
+      </div>
+    </section>
+
+    <!-- ========== 5. Token Budget ========== -->
+    <section>
+      <div class="chap">Chapter 05 · Token Budget Path</div>
+      <h2>路径 C：Token Budget — 不总结，直接换新窗口</h2>
+      <p class="lede">实验特性 <code>features.token_budget</code> 开启后，压缩语义改变。<code>compact_token_budget.rs</code>（84 行）跳过一切模型侧和服务端侧总结，直接调用 <code>start_new_context_window</code>。</p>
+
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">传统压缩（A/B 路径）</div>
+          <pre><code><span class="cm"># 思路：蒸馏过去</span>
+旧历史 ──► 模型/服务端总结 ──► 摘要
+摘要 + 保留的 user 消息 = 新历史
+
+<span class="del">代价：一次完整推理调用；
+摘要质量决定"失忆"程度</span></code></pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">Token Budget（C 路径）</div>
+          <pre><code><span class="cm"># 思路：承认过去读不完，只看当下</span>
+旧历史 ──► 全部丢弃
+新历史 = 重新渲染的 initial context
+        (env/cwd/git/AGENTS.md/world state)
+      + 保留的客户端 developer 消息（可选）
+
+<span class="hl">零推理成本；工具结果是权威状态</span></code></pre>
+        </div>
+      </div>
+
+      <ul>
+        <li>手动 <code>/compact</code> 和自动超限走同一个 <code>run_compact_task_inner</code>：PreCompact hooks → <code>ContextCompaction</code> item started → <code>start_new_context_window</code> → completed → PostCompact hooks。生命周期事件与 A/B 路径一致。注释原文："still modeled as compaction so compact hooks and ContextCompaction turn items observe the same lifecycle"。</li>
+        <li><code>start_new_context_window</code>（session/mod.rs:4536）用当前 StepContext 重建 initial context 和 world state 快照。模型声明 <code>token_budget</code> 默认值时，core 在模型激活时自动启用该 feature（token_budget.rs:123-159，受订阅计划门槛约束）。</li>
+        <li>辅助机制：<code>reminder_threshold_tokens</code> 接近阈值时，core 往历史里插一条提醒。窗口耗尽且配置了 <code>auto_compact_fallback_prompt</code> 时，core 先给模型一次"主动收尾"的 fallback prompt，再强制重置（token_budget.rs:161-224，每窗口只发一次）。</li>
+      </ul>
+      <div class="note warn">
+        <div class="nt">设计理由 · 为什么敢于不总结</div>
+        <p><b>场景：</b>长会话末尾，用户在第 5 轮口头约定"不要改 public API"，该约定没有写进任何文件。TokenBudget 重置后模型读不到这条约定，可能直接修改 public API。</p>
+        <p>编码 agent 的状态大头在文件系统和工具输出里，不在对话里。摘要里的"我改了 lib.rs:42"随时可以重新读文件验证。不总结省掉一整轮推理调用，也消除了摘要丢细节导致跑偏的风险。代价同样清楚：只存在于语言层的上下文（用户口头偏好、讨论过但未落地的决策理由）会全部丢失。所以该特性关在 feature flag 后面，由模型声明默认值、按订阅计划放行，不默认开启。</p>
+      </div>
+    </section>
+
+    <!-- ========== 6. 写回与持久化 ========== -->
+    <section>
+      <div class="chap">Chapter 06 · Persistence &amp; UX</div>
+      <h2>压缩结果怎么写回、落盘、呈现</h2>
+
+      <h3>replace_compacted_history：一次原子替换</h3>
+      <p>三条路径殊途同归（C 路径走 <code>start_new_context_window</code> 的等价逻辑），最终都调 <code>session/mod.rs::replace_compacted_history</code>（3993-4119）。该函数做六件事：</p>
+      <ol>
+        <li>给所有新历史项补 item id，把 MCP attribution checkpoint 记到最后一项；</li>
+        <li>新历史含 Compaction / ContextCompaction 条目时，写入 <code>compaction_model_hash</code>；</li>
+        <li>把压缩<b>之后</b>用户新编辑的 goal 消息按原序补到替换历史尾部，防止压缩瞬间的用户编辑被吞（4041-4059）；</li>
+        <li>替换 live history，更新 world state baseline，把 reasoning effort pin 置为 <code>Compacted</code>；</li>
+        <li>落盘 <code>RolloutItem::Compacted(CompactedItem)</code>。内容包括 <code>replacement_history</code>、<code>window_number</code>、三个 window id、<code>compaction_response_id</code>、token usage 快照和 resume 元数据。随后追加 WorldState / TurnContext / 设置事件项；</li>
+        <li>排队一个 <code>SessionStartSource::Compact</code> 的 session-start hook，重算 token usage，发出"长线程多次压缩会降低准确性"的 Warning 事件。</li>
+      </ol>
+      <p>恢复会话（resume）时，<code>rollout_reconstruction.rs</code> 只认"最新一条带 replacement_history 的 Compacted"作为完整历史基线，再重放其后的输入事件（<code>select_input_compaction</code>，61-140）。旧格式压缩项（无 <code>window_number</code>）走兼容分支。</p>
+
+      <h3>AutoCompactWindow：压缩窗口编号</h3>
+      <p>每次压缩时 <code>advance_auto_compact_window()</code> 递增 <code>window_number</code>，并滚动一组 UUID（first / previous / current window id）。这组编号有三个用途：</p>
+      <ul>
+        <li><code>BodyAfterPrefix</code> 口径下，计算"前缀之后新增 token"的基线（<code>prefill_input_tokens</code>，服务器观测值优先于估算值）；</li>
+        <li>resume 时，判断压缩边界与 replay 段的一致性；</li>
+        <li>限制 token-budget 提醒和 fallback prompt 每窗口只发一次（<code>claim_*</code> 一次性位）。</li>
+      </ul>
+
+      <h3>用户能看到什么</h3>
+      <div class="thread">
+        <div class="msg s"><span class="who">STATUS</span>
+          <div class="bd">状态栏：<b>Compacting context</b> — Making room to continue.（独立计时）</div>
+        </div>
+        <div class="msg t"><span class="who">TURN ITEM</span>
+          <div class="bd"><code>ContextCompaction</code> item started → completed，转录区显示 "Context compacted · 12s"</div>
+        </div>
+        <div class="msg u"><span class="who">WARNING</span>
+          <div class="bd">"Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted."（compact.rs:404-407）</div>
+        </div>
+        <div class="msg a"><span class="who">HISTORY</span>
+          <div class="bd">对话记录照旧展示；压缩条目和摘要写入 rollout 文件（~/.codex/sessions/*.jsonl），可用 --resume 恢复</div>
+        </div>
+      </div>
+      <div class="note ok">
+        <div class="nt">设计理由 · 为什么压缩也要发 PreCompact / PostCompact hooks</div>
+        <p><b>场景：</b>用户写了 PreCompact hook，用于在压缩前把关键笔记追加进历史。如果 TokenBudget 路径不走 hook，这条脚本对 Path C 失效，上下文会被"隐形清空"。</p>
+        <p>压缩是有损的上下文操作，扩展系统应有机会拦截。PreCompact 返回 Stopped 时整个压缩放弃，PostCompact 也可中止。三条路径统一走 hook（包括不做总结的 TokenBudget 路径），用户脚本监听一对事件即可感知全部压缩行为。</p>
+      </div>
+    </section>
+
+    <!-- ========== 7. 设计决策 ========== -->
+    <section>
+      <div class="chap">Chapter 07 · Design Decisions</div>
+      <h2>为什么这么设计，不这么做会怎样</h2>
+
+      <div class="dd">
+        <div class="dq"><span class="tag">决策</span>阈值设 90%（硬上限 95%），而不是 100%</div>
+        <div class="da">
+          <div class="why">
+            <div class="lab">为什么</div>
+            <p>压缩请求本身要消耗上下文（整段历史 + 指令），服务端还要给输出留余量。<code>effective_context_window_percent</code>（默认 95）为系统提示、工具开销和模型输出预留余量。90% 的压缩阈值再留 5%，让"压缩那一轮"本身不超窗。</p>
+          </div>
+          <div class="else">
+            <div class="lab">不这么做会怎样</div>
+            <p><b>场景：</b>第 40 轮对话，token 用量到 91%。压缩这一轮要把整段历史再发一遍。若阈值设在 100%，压缩请求本身就超限，core 只能靠"删最旧条目重试"兜底；极端情况下压缩请求发不出去，会话卡死，用户只能手动开新线程。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="dd">
+        <div class="dq"><span class="tag">决策</span>本地压缩失败后，从头删历史再试，而非从尾删或放弃</div>
+        <div class="da">
+          <div class="why">
+            <div class="lab">为什么</div>
+            <p>LLM 推理缓存是前缀式的：删最早的一条，剩余前缀仍可能命中缓存；且最新消息（当前任务状态）价值最高。注释原话："Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact"（compact.rs:319）。</p>
+          </div>
+          <div class="else">
+            <div class="lab">不这么做会怎样</div>
+            <p><b>场景：</b>压缩请求超限，历史尾部是刚跑完的 <code>cargo test</code> 结果。从尾删会丢掉这段结果，摘要把"测试已通过"记成"未验证"。直接放弃会让会话不可用。从头删只丢最早的环境信息，近期状态保留。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="dd">
+        <div class="dq"><span class="tag">决策</span>摘要伪装成 user 消息 + SUMMARY_PREFIX 标记，而非新类型</div>
+        <div class="da">
+          <div class="why">
+            <div class="lab">为什么</div>
+            <p>本地路径要兼容任意 OpenAI 兼容 provider，这些 provider 只认标准 message role。前缀标记告诉下游：这是机器交接摘要，不是用户新指令。下一次压缩也能用 <code>is_summary_message</code> 按前缀把旧摘要从保留列表剔除。</p>
+          </div>
+          <div class="else">
+            <div class="lab">不这么做会怎样</div>
+            <p><b>场景：</b>第二次压缩时，历史里有上一次压缩的摘要。没有 <code>SUMMARY_PREFIX</code>，这条摘要会被当成"用户说过的话"保留进新历史，摘要套摘要，模型分不清哪个是权威。用自定义类型则非 OpenAI 后端不认。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="dd">
+        <div class="dq"><span class="tag">决策</span>MidTurn 压缩把 initial context 插回历史，PreTurn 不插</div>
+        <div class="da">
+          <div class="why">
+            <div class="lab">为什么</div>
+            <p>MidTurn 后紧接着还是同一段对话的采样。模型按训练预期"摘要是历史最后一项"，所以环境上下文应保留在正确位置：最后一条真实用户消息之前。PreTurn / StandaloneTurn 的下一个常规 turn 本来就完整重建 initial context，插进去就是重复（<code>InitialContextInjection</code> 文档，compact.rs:61-69）。</p>
+          </div>
+          <div class="else">
+            <div class="lab">不这么做会怎样</div>
+            <p><b>场景：</b>模型在一个 turn 中途触发压缩，下一段采样马上开始。不注入 initial context，模型不知道 cwd 和 git 分支，<code>apply_patch</code> 可能写错路径。PreTurn 注入则同一内容出现两份，吃掉压缩省下的 token。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="dd">
+        <div class="dq"><span class="tag">决策</span>持久化整条 replacement_history，而非只存摘要文本</div>
+        <div class="da">
+          <div class="why">
+            <div class="lab">为什么</div>
+            <p>resume 重建需要精确的 item 序列（含 id、metadata、mcp attribution）。<code>CompactedItem.replacement_history</code> 让"最新一条完整压缩"可以直接作为 replay 基线，不用重新推导保留规则（rollout_reconstruction.rs:57-140）。</p>
+          </div>
+          <div class="else">
+            <div class="lab">不这么做会怎样</div>
+            <p><b>场景：</b>用户压缩后关掉终端，三天后执行 <code>codex resume</code>。若只存摘要文本，resume 要重新执行保留算法，任何版本差异都会重建出与压缩时不一致的历史，"续跑"变成"跑一条分叉的历史"。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="dd">
+        <div class="dq"><span class="tag">决策</span>压缩条目记录 comp_hash；模型切换先按旧模型重压</div>
+        <div class="da">
+          <div class="why">
+            <div class="lab">为什么</div>
+            <p>远端压缩产物是加密 blob，格式与产出模型绑定。切换到 comp_hash 不同的模型时，core 先用旧模型把历史重新压成兼容形态，新模型才能正确消费（turn.rs:1370-1425）。</p>
+          </div>
+          <div class="else">
+            <div class="lab">不这么做会怎样</div>
+            <p><b>场景：</b>会话中途用户从模型 A 切到模型 B，两者 comp_hash 不同。模型 B 直接读模型 A 的加密 checkpoint，请求被拒或上下文静默错乱。用户看到的症状是"换模型后模型突然失忆、行为怪异"。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bigconclusion">
+        <b>一句话总结：</b>Codex 的压缩是"带检查点的有损历史重写"。阈值（90% 软 / 95% 硬）预防超限。三条实现路径按 provider 能力降级：服务端加密 checkpoint → 本地文本摘要 → 无总结窗口重置。保留策略只留需求侧的用户消息加一段交接摘要。写回时同步持久化整条替换历史，保证 resume 一致。所有取舍围绕同一目标：让对话能持续下去，同时把"忘掉的代价"控制在摘要质量这一个变量上。
+      </div>
+    </section>
+
+    <!-- ========== 8. 文件索引 ========== -->
+    <section>
+      <div class="chap">Appendix · Source Index</div>
+      <h2>关键源码文件索引</h2>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>文件</th>
+            <th>职责</th>
+          </tr>
+          <tr>
+            <td><code>core/src/compact.rs</code></td>
+            <td>本地摘要压缩：prompt 追加、流式收集、保留消息筛选、新历史构造、写回（843 行）</td>
+          </tr>
+          <tr>
+            <td><code>core/src/compact_remote_v2.rs</code> / <code>_attempt.rs</code> / <code>_images.rs</code></td>
+            <td>远端 V2：CompactionTrigger 请求、输出校验、保留过滤（64k tokens 预算）、模型切换兜底（1302 + 143 + 103 行）</td>
+          </tr>
+          <tr>
+            <td><code>core/src/compact_remote_history.rs</code></td>
+            <td>历史分组（item + 附着 notice）；把过大的 tool output 截断后塞进窗口（190 行）</td>
+          </tr>
+          <tr>
+            <td><code>core/src/compact_token_budget.rs</code></td>
+            <td>TokenBudget 路径：跳过总结直接调 <code>start_new_context_window</code>（84 行）</td>
+          </tr>
+          <tr>
+            <td><code>core/src/session/turn.rs</code></td>
+            <td>触发判定：PreTurn / MidTurn / PostTurn / 模型切换压缩，<code>run_auto_compact</code> 分发（3230 行文件中的压缩逻辑所在段）</td>
+          </tr>
+          <tr>
+            <td><code>core/src/session/context_window.rs</code></td>
+            <td>token 用量状态：scope 口径、90% / 95% 阈值、turn-end 阈值（130 行）</td>
+          </tr>
+          <tr>
+            <td><code>core/src/session/mod.rs:3993</code></td>
+            <td><code>replace_compacted_history</code>：live 替换 + CompactedItem 落盘</td>
+          </tr>
+          <tr>
+            <td><code>core/src/session/rollout_reconstruction.rs</code></td>
+            <td>resume 时选取压缩检查点并重放尾部</td>
+          </tr>
+          <tr>
+            <td><code>core/src/state/auto_compact_window.rs</code></td>
+            <td>压缩窗口编号 / prefill token 基线 / 一次性提醒位</td>
+          </tr>
+          <tr>
+            <td><code>core/src/tasks/compact.rs</code></td>
+            <td>手动 /compact 任务：按 provider 能力与 feature 分发三条路径</td>
+          </tr>
+          <tr>
+            <td><code>prompts/templates/compact/{prompt,summary_prefix}.md</code></td>
+            <td>本地压缩指令与摘要前缀文本</td>
+          </tr>
+          <tr>
+            <td><code>hooks/src/events/compact.rs</code></td>
+            <td>PreCompact / PostCompact hook 协议与执行</td>
+          </tr>
+          <tr>
+            <td><code>tui/src/chatwidget/compaction.rs</code>、<code>slash_dispatch.rs:329</code></td>
+            <td>TUI：/compact 命令、状态栏计时、完成提示</td>
+          </tr>
+          <tr>
+            <td><code>protocol/src/models.rs:1227-1253</code></td>
+            <td><code>ResponseItem::Compaction</code> / <code>CompactionTrigger</code> / <code>ContextCompaction</code> 类型</td>
+          </tr>
+          <tr>
+            <td><code>protocol/src/openai_models.rs:457-537</code></td>
+            <td><code>auto_compact_token_limit</code> 语义（默认 90%）与 <code>comp_hash</code></td>
+          </tr>
+        </table>
+      </div>
+      <p class="src">分析基于 <code>github.com/openai/codex</code> 浅克隆快照（2026-10）。仓库仍在快速演进，文中行号可能漂移，定位以函数名和文件名为准。</p>
+    </section>
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 压缩方案 — 决策记录与取舍</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 28px 140px
+    }
+
+    header {
+      padding: 80px 0 44px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 0
+    }
+
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1.5px;
+      background: var(--teal)
+    }
+
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -.015em;
+      line-height: 1.3;
+      margin-bottom: 16px
+    }
+
+    .subtitle {
+      color: var(--ink-2);
+      font-size: 17px;
+      max-width: 660px
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 26px
+    }
+
+    .meta span {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 4px 11px;
+      border-radius: 99px
+    }
+
+    .guide {
+      padding: 36px 0 8px
+    }
+
+    .guide .inner {
+      background: var(--teal-bg);
+      border: 1px solid #CFE8E4;
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      font-size: 15px
+    }
+
+    .guide b {
+      color: var(--teal)
+    }
+
+    section {
+      padding-top: 64px
+    }
+
+    .chap {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px
+    }
+
+    h2 {
+      font-size: 27px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.35;
+      margin-bottom: 14px
+    }
+
+    h3 {
+      font-size: 19px;
+      font-weight: 650;
+      margin: 40px 0 12px
+    }
+
+    p {
+      margin-bottom: 14px
+    }
+
+    .lede {
+      color: var(--ink-2);
+      font-size: 16.5px;
+      margin-bottom: 24px
+    }
+
+    ul,
+    ol {
+      padding-left: 24px;
+      margin-bottom: 14px
+    }
+
+    li {
+      margin-bottom: 6px
+    }
+
+    strong,
+    b {
+      font-weight: 650
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      padding: 1px 7px;
+      border-radius: 5px;
+      color: #7A5410;
+      word-break: break-word
+    }
+
+    .note {
+      border-left: 3px solid var(--blue);
+      background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px;
+      margin: 18px 0;
+      font-size: 15px
+    }
+
+    .note.warn {
+      border-color: var(--amber);
+      background: var(--amber-bg)
+    }
+
+    .note.danger {
+      border-color: var(--rose);
+      background: var(--rose-bg)
+    }
+
+    .note.ok {
+      border-color: var(--green);
+      background: var(--green-bg)
+    }
+
+    .note.teal {
+      border-color: var(--teal);
+      background: var(--teal-bg)
+    }
+
+    .note .nt {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 6px
+    }
+
+    .note.warn .nt {
+      color: var(--amber)
+    }
+
+    .note.danger .nt {
+      color: var(--rose)
+    }
+
+    .note.ok .nt {
+      color: var(--green)
+    }
+
+    .note.teal .nt {
+      color: var(--teal)
+    }
+
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt {
+      color: var(--blue)
+    }
+
+    .note p {
+      margin-bottom: 8px
+    }
+
+    .note p:last-child {
+      margin-bottom: 0
+    }
+
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px
+    }
+
+    th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: #F6F5F0;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top
+    }
+
+    tr:last-child td {
+      border-bottom: none
+    }
+
+    td code {
+      font-size: 12px
+    }
+
+    td .dim {
+      color: var(--ink-3);
+      font-size: 13px
+    }
+
+    .verdict {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      border-radius: 5px;
+      padding: 2px 9px;
+      white-space: nowrap
+    }
+
+    .verdict.yes {
+      color: var(--green);
+      background: var(--green-bg)
+    }
+
+    .verdict.no {
+      color: var(--rose);
+      background: var(--rose-bg)
+    }
+
+    .verdict.alt {
+      color: var(--amber);
+      background: var(--amber-bg)
+    }
+
+    .src {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3)
+    }
+
+    .src code {
+      font-size: 11px;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--teal)
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      margin-top: 80px;
+      padding-top: 28px;
+      color: var(--ink-3);
+      font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">决策记录 · RuneHarness Internals</div>
+      <h1>压缩方案：决策记录与取舍</h1>
+      <p class="subtitle"><code>runeharness-compaction-plan.html</code>
+        回答"怎么实现"，这份记录回答"为什么这么定"。十一个关键取舍、被否掉的方案、各自要付的账——评审修改设计稿时按这里的路径走，不重新开庭。
+      </p>
+      <div class="meta">
+        <span>配套 plan v1.7</span>
+        <span>决策日期 2026-10-06</span>
+        <span>v2 · 浅色</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读：</b>每条决策一个编号（D1–D11）、一个模板——张力、候选与结论、决定、代价与后续。D1–D4 管"状态放哪、怎么取回"，D5–D10
+        管"压缩什么时候做、怎么做"，D11 管子代理。文末两节：贯穿全部决策的公共原则，以及当时没定、留给实现期的事。
+      </div>
+    </div>
+
+    <!-- ============ D1 ============ -->
+    <section id="d1">
+      <div class="chap">决策 D1</div>
+      <h2>触发权：模型能不能自己发起压缩</h2>
+      <p class="lede">原方案把"模型自主 compact 工具"列进"明确不做"，理由是与约束 1（触发由代码判定）冲突。评审认为这是对约束
+        1 的过度解读：约束 1 要守住的是"代码手里有一根不依赖模型的保险丝"，不是"模型无权碰压缩"。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>纯代码阈值（原方案）</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>保险丝有了，但缺"提前泄压"通道：任务阶段切换、大段中间结果作废时，只能干等阈值线。</td>
+            </tr>
+            <tr>
+              <td>纯模型触发</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>上下文越满模型越容易忘事——把保险丝交给火源。</td>
+            </tr>
+            <tr>
+              <td>双通道：模型工具 + 用户命令 + 代码托底</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>模型 <code>compact</code> 工具与用户 <code>/compact</code> 共用 <code>compact.Run</code>；代码阈值到线必压，模型不调用时照常生效。
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：双通道。约束 1 改写为"代码阈值是托底，不依赖模型自觉"。模型入口时序定在 plan §4.7：同组其它
+        tool_calls 先跑完、摘要调用先于 tool 结果行；发起压缩的调用组落在尾部、原样保留（D9），模型下一轮能看到压缩已完成；boundary 的 reason 区分
+        manual / model。两个通道之间由提醒线衔接（D6）：用量过提醒线时提示模型择机调用 compact，模型不调用、用量涨到强制压缩线时代码兜底。</p>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>模型获得"提前压"的能力，也意味着它可能在短间隔内连续调用——每次都是一次有损摘要加一笔 API 费用。v1
+          不设节流；实测出现后按熔断计数的同款位置加"reason=model 在 N 轮内只生效一次"的冷却。</p>
+      </div>
+    </section>
+
+    <!-- ============ D2 ============ -->
+    <section id="d2">
+      <div class="chap">决策 D2</div>
+      <h2>发送形态：发给模型的内容要不要落表</h2>
+      <p class="lede">投影设计下 messages 存 raw transcript、发送形态由读侧组装。评审指出三个实际后果：真实发送内容与持久化会话不一致；事后无法追踪某次
+        Chat 发了什么；LLM 出错时无法重现发送形态。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>发送形态直接写进 messages</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>看着一致，但卸载与 fold 本质是回写旧行——行被改写后，更早请求的形态照样丢；还赔上 append-only 与 raw 审计。</td>
+            </tr>
+            <tr>
+              <td>投影 + 不追历史形态（原方案）</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>清空集合放覆盖式 <code>session_state</code>，旧值被冲掉后历史形态连确定性重放都做不到——评审抓到的实锤漏洞。</td>
+            </tr>
+            <tr>
+              <td>投影 + append-only 投影输入 + 按请求留痕</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>发送形态 = f(id ≤ 水印的行) 成为硬不变量；<code>requests</code> 表逐请求记双水印 +
+                <code>view_hash</code>；Chat 出错时冻结完整 payload。
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：采纳第三案，落为 plan §5.3 的三层回答：<code>LoadView(uptoMsgID, uptoBlobID)</code>
+        按水印确定性重放任一历史请求；<code>requests</code> 行枚举每一次发送；错误路径的 payload 是排查 API
+        错误的最终证据。连带改动：清空集合从覆盖式 kv 改为 <code>view_clear</code> 追加控制行。</p>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>发送形态仍不落表——"现在会发什么"查表即得，"当时发过什么"应跑 <code>LoadView</code>
+          重放。组装代码升级后重放字节漂移由 <code>view_hash</code> 发现；如需逐请求冻结可加全量 payload 开关，v1
+          只在错误路径落盘。</p>
+      </div>
+    </section>
+
+    <!-- ============ D3 ============ -->
+    <section id="d3">
+      <div class="chap">决策 D3</div>
+      <h2>取回通道：blob 里的全文，模型怎么读</h2>
+      <p class="lede">CC 把卸载内容写文件、发送形态里给路径、模型用 Read 自取。RH 的卸载内容在
+        sqlite——写真路径模型够不着，给"读库工具"概念上太重。原稿还有一处自相矛盾：预览注明"用 read_file 自取"，但
+        blob 不在文件系统。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>临时文件物化</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>模型侧体验同 CC，但三笔账：单进程多租户下 OS 文件权限失效，隔离只能靠新写的应用层路径闸（read_file
+                与 list_dir 同闸、按 scope 前缀检查）；文件与 blob 构成第二事实源；容器无写盘权时云端退化。</td>
+            </tr>
+            <tr>
+              <td>独立 read_blob 工具</td>
+              <td><span class="verdict alt">备选</span></td>
+              <td>实现量与采纳案相当；代价是工具命名空间 +1，模型要理解"普通文件 vs 溢出结果"两套取回通道。</td>
+            </tr>
+            <tr>
+              <td><code>blob://</code> 虚拟路径（read_file 加 scheme 分支）</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>模型侧与 CC 文件体验一致——看到一个"路径"，用已经会的 read_file 去读；session_id 从 ctx 的
+                scope 取，模型无法指定他人 session，隔离强于文件路径。</td>
+            </tr>
+            <tr>
+              <td>不提供取回</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>预览只能提示"按更窄条件重取"；不可再导出的结果（task 输出、非幂等命令）成死重。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：<code>blob://</code> 虚拟路径。<code>read_file("blob://&lt;tool_call_id&gt;")</code> 走
+        <code>Store.LoadBlob(sessionID, ref)</code>，不走文件系统；约束 2（压缩状态不落本地文件）不破，本地云端同一份代码。
+      </p>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p><code>read_file</code> 应补按行的 <code>offset</code>/<code>limit</code>（对齐 CC Read
+          参数形态），否则 300KB 的 blob 模型永远只能拿到头一段。这组参数一身二用：既是文件读取的请求侧限额，也是
+          <code>blob://</code> 的分页机制。越界或他人 session 的 ref 一律返回"不存在"。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ D4 ============ -->
+    <section id="d4">
+      <div class="chap">决策 D4</div>
+      <h2>8KB 截断：超限结果在哪切、切完放哪</h2>
+      <p class="lede"><code>truncate()</code> 在工具内部把 8KB 之后的输出直接销毁。两类来源命运不同：read_file / list_dir
+        的源在盘上（没丢，只是不可达——分页可解）；run_command / task 的输出是一次性的（截断 = 销毁，分页救不了）。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>保留工具内 truncate（现状）</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>不可再导出输出永久丢失，连 blob 都没有原文可存。</td>
+            </tr>
+            <tr>
+              <td>视图层 spill（原方案）</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>spill 前后发送形态前缀分叉，服务端 prefix cache 在 spill 点整段失效——CC
+                的决策冻结机制就是为治这个病存在，写侧天然免疫。</td>
+            </tr>
+            <tr>
+              <td>写侧 spill：agent 回填时判定 + 指针定型</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>工具不自截断；循环体回填时判单条上限，指针形态追加即定型，之后每轮请求看到同一份形态。</td>
+            </tr>
+            <tr>
+              <td>统一都落 blob</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>规则最简，但文件内容重复进 DB——read_file 是最常见的超限来源。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：写侧 spill。read_file、list_dir 不进 spill，改为请求侧限额：<code>offset</code>/<code>limit</code>
+        决定一次读多少，超出时返回续读坐标——模型点名要读的内容，先落盘再让它重读是纯亏；read_file 读
+        <code>blob://</code> 的结果若再被 spill 还会形成循环。其他工具单条超过 <code>min(工具自声明上限, 50K
+        字符)</code> 或整批超过 200K 字符时，<code>AppendBlob(ref=tool_call_id)</code> + 头尾预览 +
+        <code>blob://</code> 指针。架构原则随之成形：<b>能在追加时定的就在追加时定，只有追溯性操作留在视图</b>——读路径的视图变换只剩
+        fold 与卸载两个。
+      </p>
+      <div class="note danger">
+        <div class="nt">修正记录（2026-10-06）</div>
+        <p>初版把 spill 阈值写成 8KB，直接沿用了旧截断值 <code>maxToolOutput</code>。两者作用不同：截断值只防撑爆上下文，spill
+          阈值要平衡"放进上下文的持续占用"与"多一次往返"。8KB 时，12KB 源文件、15KB 测试输出这类模型本来要整篇看的结果也会被
+          spill，多一轮往返后内容照样进上下文。现改为对齐 CC 的 50K / 200K / 400KB。</p>
+      </div>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>工具不再截断意味着输出可能无界——工具侧保留 400KB 硬上限当保险丝。它与 50K spill 阈值分工不同："多大开始
+          spill"归阈值，"多大算异常"归硬上限。raw 行形态变为"预览 + 指针"，审计口径 <code>messages + blobs</code>
+          join 不变（plan §5.2）。</p>
+      </div>
+    </section>
+
+    <!-- ============ D5 ============ -->
+    <section id="d5">
+      <div class="chap">决策 D5</div>
+      <h2>空结果：工具没有输出时写回什么</h2>
+      <p class="lede"><code>agent.go</code> 把工具结果原样写回。<code>touch</code>、<code>mkdir</code>
+        这类命令必然返回空串。两个后果：部分 OpenAI 兼容端点对空 content 直接报 400；模型读到空结果，可能判断"没有进展"而回复纯文本，循环体见到无
+        tool_calls 的 stop 就退出本轮。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>原样写回（现状）</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>上面两个后果都会发生，而且没有任何报错，难以定位。</td>
+            </tr>
+            <tr>
+              <td>各工具自己补默认输出</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>每个工具重复一遍，新工具容易漏；子代理回流的结果也覆盖不到。</td>
+            </tr>
+            <tr>
+              <td>回填点统一写固定标记</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>一个挂点覆盖全部工具，与 spill 同在回填处（plan §4.2 第 1 步）。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：结果为空串或只含空白时，成功写 <code>(no output)</code>，失败写 <code>error: tool failed with no
+          output</code>。</p>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>固定标记是对模型的协议，改文本要同步改测试。只含空白的输出也会被替换；这类输出极少有意义，接受。</p>
+      </div>
+    </section>
+
+    <!-- ============ D6 ============ -->
+    <section id="d6">
+      <div class="chap">决策 D6</div>
+      <h2>阈值：三条线怎么算、各自做什么</h2>
+      <p class="lede">初版照搬 CC 的公式：<code>effective = W − min(max_output, 20K)</code>，触发线再减 13K，警告线再减
+        20K，阻断线 = effective − 3K。公式能用，但每段预留留给谁说不清，警告线也只是 TUI 显示，没有和模型通道（D1）接上。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>照搬 CC 公式（初版）</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>预留语义不清；警告线不作用于模型。</td>
+            </tr>
+            <tr>
+              <td>从窗口顶部逐层预留 + 提醒线</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>四段预留各有用途：摘要输出 20K、缓冲 13K、用户余量 3K、提醒层 20K。提醒线把"模型择机压缩"接进阈值体系。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：<code>reminder = W − 56K</code>（注入一次提醒，提示模型择机调用 compact）、<code>compact = W −
+          33K</code>（代码强制压缩）、<code>block = W − 20K</code>（auto 关闭或熔断时拒发）。128K 窗口为 72K / 95K / 108K；200K
+        窗口为 144K / 167K / 180K，强制压缩线与 CC 相同。另有两个附带取舍：</p>
+      <ul>
+        <li><b>卸载挂在强制压缩线，不挂在提醒线</b>。挂在提醒线时，一过线就卸载，用量马上回落，模型基本看不到提醒，"择机压缩"失去意义。</li>
+        <li><b>提醒每个压缩周期只注入一次</b>。每轮都注入会让提醒本身成为膨胀源。</li>
+      </ul>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>摘要预留固定 20K，不再取 <code>min(max_output, 20K)</code>。端点输出上限只有 8K 时，摘要最多输出 8K，预留里有 12K
+          用不上。阻断线不在用户给出的公式里，是为 auto 关闭与熔断补的：再往上，压缩请求连 20K 摘要输出都放不下。</p>
+      </div>
+    </section>
+
+    <!-- ============ D7 ============ -->
+    <section id="d7">
+      <div class="chap">决策 D7</div>
+      <h2>早期结果卸载：长会话里旧工具结果怎么处理</h2>
+      <p class="lede">长时间工作后，早期工具结果多半已经用完：文件读过、命令跑过、结论已写进后续消息。它们仍占着窗口，每轮都重发。初版的"清旧层"只处理白名单工具、保留最近
+        5 条，可再导出的结果指回原路径。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>不卸载，直接摘要</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>摘要有损，而这些结果本可以无损移出。</td>
+            </tr>
+            <tr>
+              <td>清旧层（初版）：白名单 + 指回原路径</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>指回原路径不可靠：文件可能已改，重读得到的不是当时的结果。</td>
+            </tr>
+            <tr>
+              <td>全部落 blob、原位留索引</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>不分工具，每条都保证有 blob；索引带工具名、大小与 <code>blob://</code> 引用，取回结果与当时一致。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：强制压缩的第一步是卸载中段（D9）的全部工具结果，跳过不足 1K 的结果与 compact 工具自己的结果；卸载后仍过强制压缩线才做摘要。决策以
+        <code>view_clear</code> 控制行追加，可重放（D2）。
+      </p>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>prefix cache 从最早一条被卸载的行开始失效，所以按批卸载、不逐条卸载。read_file 结果也落 blob，DB 里会多一份文件内容副本。可选优化：距上次请求超过端点
+          cache 有效期时缓存已冷，此时提前卸载不额外付缓存代价。</p>
+      </div>
+    </section>
+
+    <!-- ============ D8 ============ -->
+    <section id="d8">
+      <div class="chap">决策 D8</div>
+      <h2>熔断器：摘要压缩失败后怎么停</h2>
+      <p class="lede">摘要压缩会失败：端点报错、输出不合格式、或摘要太长压完还在线上。没有熔断时，每轮过线都重试，变成"每轮一次失败的 API 调用"。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>不熔断</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>费用照付、上下文不降，形成死循环。</td>
+            </tr>
+            <tr>
+              <td>只把调用报错计为失败</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>漏掉"压缩无效"：调用成功但压完仍过线。它恰恰是持续压缩的根源。</td>
+            </tr>
+            <tr>
+              <td>三类失败 + 连续 3 次断开 + 按入口区分行为</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>覆盖全部失败形态；断开后自动通道与 reactive 停手，用户仍有人工试探的入口。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：计为失败的三类——调用报错、缺 <code>SUMMARY:</code> 或摘要为空、压缩后仍 ≥ 强制压缩线。计数落
+        <code>session_state</code>，任一次成功清零。断开后：自动通道跳过；模型 compact 工具回填固定结果；reactive 直接上抛；用户
+        <code>/compact</code> 照常执行，成功即恢复。卸载与回填不受影响——它们不调 API。
+      </p>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>断开期间只剩阻断线兜底，用量到线后需要用户手动 <code>/compact</code> 或开新会话。熔断器只管失败；模型成功但调用过于频繁是另一个问题，冷却方案见未决项。</p>
+      </div>
+    </section>
+
+    <!-- ============ D9 ============ -->
+    <section id="d9">
+      <div class="chap">决策 D9</div>
+      <h2>首尾保护与滚动摘要：压缩动哪里、摘要怎么做</h2>
+      <p class="lede">初版是全量压缩：除 system 外全部变成一段摘要。压缩一发生，当前的工作现场（刚读的文件、刚跑出的报错）就全被转述，这是信息损失最大的位置。评审提议首部 3
+        轮、尾部 40 轮不压缩。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>全量压缩（初版）</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>工作现场被转述，压完模型要重新摸索当前状态。</td>
+            </tr>
+            <tr>
+              <td>首 3 轮、尾 40 轮，按条数</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>一个用户轮可含几十步工具调用，尾部可能本身就超过强制压缩线：中段无物可压，判为压缩无效，触发熔断。</td>
+            </tr>
+            <tr>
+              <td>条数上限 + token 上限</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>首部：前 3 条真实用户消息原文，≤8K token；尾部：最近 40 个用户轮，≤40K token。参照 CC（尾部 10K–40K）与 Codex（≤20K）。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：卸载与摘要都只处理中段。三个配套取舍：</p>
+      <ul>
+        <li><b>首部只钉用户消息，不钉整轮</b>。这几轮里的工具步骤可能很大，整轮钉住会永久占窗口。首部的主要价值是原始任务描述保持原文；prefix cache
+          收益只覆盖几千 token，是次要的。</li>
+        <li><b>滚动增量摘要，不全量重写</b>。输入 = 旧摘要 + 新进入中段的消息，输出替换旧摘要。提示词带 Keep / Remove / Add
+          指令，否则模型会把旧摘要抄一遍再追加，摘要只增不减。</li>
+        <li><b>hook 注入的消息单独标 <code>kind='inject'</code></b>。现状注入消息与真实用户消息存成同一种行，选首部、切用户轮时分不出来。</li>
+      </ul>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>当前用户轮的最后一个调用组本身超过 40K 时，尾部收缩不到预算以内，压缩会判为无效，连续 3 次后熔断。回填时 50K 以上已 spill（D4），所以实际很少发生。boundary 的 meta
+          从 <code>covers_until</code> 改为 <code>{head_ids, covers_to_id}</code>，fold 规则随之改变。</p>
+      </div>
+    </section>
+
+    <!-- ============ D10 ============ -->
+    <section id="d10">
+      <div class="chap">决策 D10</div>
+      <h2>中间阶段：卸载与摘要之外还能做什么</h2>
+      <p class="lede">卸载和摘要都在过线后才动手。上下文膨胀还有其他来源，可以在中间阶段处理。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>过期结果优先卸载</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>同一路径重读、同一命令重跑后，旧结果已被取代。无论大小都卸载，索引加 <code>superseded by &lt;ref&gt;</code>，模型与摘要调用都不会把旧版本当现状。</td>
+            </tr>
+            <tr>
+              <td>大参数卸载</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>RH 特有的膨胀源：写操作经 run_command，heredoc 写文件时整个文件内容留在 <code>tool_calls[].Arguments</code>
+                里，只卸载工具结果管不到。中段里超过 2K 的参数字段换成 <code>blob://args/&lt;id&gt;</code>，JSON 保持合法。</td>
+            </tr>
+            <tr>
+              <td>源头减量与子代理引导</td>
+              <td><span class="verdict alt">暂缓</span></td>
+              <td>read_file 默认行数上限已在 D4 内；系统提示引导用 grep/head 与 task 子代理，留到实测后再定。</td>
+            </tr>
+            <tr>
+              <td>会话笔记</td>
+              <td><span class="verdict alt">暂缓</span></td>
+              <td>模型持续维护进度笔记可降低摘要损失，保留为 P4 可选项。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：过期结果与大参数两项并入卸载层（plan §4.3 第 5、6 步），随强制压缩一起执行，只作用于中段。</p>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>过期判定按路径与命令串字面匹配，不理解语义：同一命令前后两次的含义可能不同（如 <code>ls</code>
+          前后有文件变化），但较新的结果总是更接近现状，按"取代"处理可以接受。大参数改写只替换字段值，字段名与结构不变。</p>
+      </div>
+    </section>
+
+    <!-- ============ D11 ============ -->
+    <section id="d11">
+      <div class="chap">决策 D11</div>
+      <h2>子代理：继承主代理的管线，哪些行为要改</h2>
+      <p class="lede">子代理与主代理用同一个 <code>agent.Run</code> 循环，D4–D10 的管线原样作用到子代理上。但子代理目标不同（要交出结论）、起点不同（normal
+        型继承父会话快照）、出口不同（只回传最后一条文本），继承下来的行为有几处不适合。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>候选</th>
+              <th>结论</th>
+              <th>理由</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>子代理不压缩</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>40 步里每步读一个大文件就能超过窗口。</td>
+            </tr>
+            <tr>
+              <td>原样继承主代理行为</td>
+              <td><span class="verdict no">弃</span></td>
+              <td>任务消息会被切进中段并摘要；"择机压缩"不符合"尽快交结论"的目标；normal 型可能一启动就花 API 费用重新摘要父会话。</td>
+            </tr>
+            <tr>
+              <td>继承管线，改五处</td>
+              <td><span class="verdict yes">采</span></td>
+              <td>任务消息钉首部；不给 compact 工具、改为收尾提醒；normal 型起点过线先卸载；继承标记改为 fork 控制行；结论不引用子会话 blob。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><b>决定</b>：按 plan §4.9 的五处修改执行。两个附带取舍：</p>
+      <ul>
+        <li><b>Store 不可为空</b>。Store 在进程启动时初始化，打不开即退出；task 工具与压缩器在构造时要求非 nil，删除 <code>Store == nil</code>
+          的分支。理由：blob、boundary、熔断计数都依赖 Store，"不持久化"形态要为每一层准备退化行为，复杂度不值得。</li>
+        <li><b>只开放"后代读祖先"的 blob 读取</b>。normal 型继承的快照里，已 spill 的结果是指向父会话 blob 的指针；<code>LoadBlob</code>
+          在当前会话查不到时沿 <code>parent_id</code> 链向上查找。比"复制进子会话"少一份数据、少一段代码；同租户校验不变。"祖先读后代"留到
+          v2，v1 由 task 工具在结论含 <code>blob://</code> 时追加固定说明。</li>
+      </ul>
+      <div class="note warn">
+        <div class="nt">代价与后续</div>
+        <p>单元测试不能再用 nil Store 跑子代理，需改用 fake 或 sqlite <code>:memory:</code>。父代理读不到子代理 blob，依赖子代理遵守"结论自成一体"的提示。</p>
+      </div>
+    </section>
+
+    <!-- ============ 贯穿原则 ============ -->
+    <section id="principles">
+      <div class="chap">贯穿原则</div>
+      <h2>十一条决策里长出来的公共原则</h2>
+      <ul>
+        <li><b>追加时定型，追溯留视图</b>（D4 → D2）：凡能在写库那一刻定型的变换——spill、boundary、view_clear——就在追加时定；只有天然追溯性的操作（fold、卸载）留在读侧组装。</li>
+        <li><b>投影输入都应保持 append-only</b>（D2）：任何参与发送形态组装的状态一旦可覆盖写，历史形态就不可重现。"当时发了什么"要靠水印重放来回答。</li>
+        <li><b>隔离靠不可寻址，不靠藏</b>（D3）：给模型的引用走"session 从 ctx 取"的通道，不给可猜可枚举的路径。OS 权限对单进程多租户无效，应用层路径闸是文件方案唯一的真机制。</li>
+        <li><b>保险丝在代码手里</b>（D1、D6、D8）：主动权可以放给模型，兜底判定不能；兜底本身失败时也要有停手的规则。</li>
+        <li><b>有损操作放在最后</b>（D7、D9、D10）：顺序是回填时 spill → 卸载（无损）→ 摘要（有损）；摘要只动中段，信息损失落在价值最低的位置。</li>
+        <li><b>条数上限都配 token 上限</b>（D9）：消息条数不代表体积，只按条数限额会出现预算外的情况。</li>
+        <li><b>给模型的固定文本是协议</b>（D5、D8、D7）：空结果标记、熔断结果、卸载索引都是固定串，改动要同步测试与提示词。</li>
+      </ul>
+    </section>
+
+    <!-- ============ 未决项 ============ -->
+    <section id="open">
+      <div class="chap">未决项</div>
+      <h2>当时没定、留给实现期的事</h2>
+      <ul>
+
+        <li><code>reason=model</code> 的调用冷却：v1 不节流；阈值与实现位置（熔断计数同款）未定。</li>
+        <li>逐请求 payload 全量留证：v1 只在错误路径落盘；是否加配置开关未定。</li>
+        <li>中文 token 估算失真：rune 粗估已在方案内；真 tokenizer（端点 <code>/tokenize</code> 或本地兼容库）未定。</li>
+        <li>blobs / messages 的 GC 与 TTL：FK 级联已挂；运维手段（VACUUM、按时间清理）未定。</li>
+        <li>摘要预留固定 20K 对小输出端点的浪费（D6）：是否改回 <code>min(max_output, 20K)</code> 未定。</li>
+        <li>各项数值待实测调整：首部 3 条 / 8K、尾部 40 轮 / 40K、摘要预算 8K、卸载门槛 1K、大参数门槛 2K、熔断 3 次。</li>
+        <li>缓存已冷时提前卸载（D7）：可选优化，判定所需的端点 cache 有效期未定。</li>
+        <li>源头减量的系统提示引导与会话笔记（D10）：暂缓，实测后再定。</li>
+      </ul>
+      <p class="src">
+        文档间关系：<code>runeharness-compaction-plan.html</code>（设计本体）、<code>session-persistence-plan.html</code>（存储契约）、<code>claude-code-compaction.html</code>（机制出处）。
+      </p>
+    </section>
+
+    <footer>
+      RuneHarness · docs/runeharness-compaction-tradeoffs.html · v2 · 2026-10-06
+    </footer>
+  </div>
+
+</body>
+
+</html>

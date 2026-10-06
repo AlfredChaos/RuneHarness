@@ -1,0 +1,1660 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 记忆模块方案 — 设计文档</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 28px 140px
+    }
+
+    header {
+      padding: 80px 0 44px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 0
+    }
+
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1.5px;
+      background: var(--teal)
+    }
+
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -.015em;
+      line-height: 1.3;
+      margin-bottom: 16px
+    }
+
+    .subtitle {
+      color: var(--ink-2);
+      font-size: 17px;
+      max-width: 660px
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 26px
+    }
+
+    .meta span {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 4px 11px;
+      border-radius: 99px
+    }
+
+    .guide {
+      padding: 36px 0 8px
+    }
+
+    .guide .inner {
+      background: var(--teal-bg);
+      border: 1px solid #CFE8E4;
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      font-size: 15px
+    }
+
+    .guide b {
+      color: var(--teal)
+    }
+
+    section {
+      padding-top: 64px
+    }
+
+    .chap {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px
+    }
+
+    h2 {
+      font-size: 27px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.35;
+      margin-bottom: 14px
+    }
+
+    h3 {
+      font-size: 19px;
+      font-weight: 650;
+      margin: 40px 0 12px
+    }
+
+    h4 {
+      font-size: 16px;
+      font-weight: 650;
+      margin: 26px 0 8px
+    }
+
+    p {
+      margin-bottom: 14px
+    }
+
+    .lede {
+      color: var(--ink-2);
+      font-size: 16.5px;
+      margin-bottom: 24px
+    }
+
+    ul,
+    ol {
+      padding-left: 24px;
+      margin-bottom: 14px
+    }
+
+    li {
+      margin-bottom: 6px
+    }
+
+    strong {
+      font-weight: 650
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      padding: 1px 7px;
+      border-radius: 5px;
+      color: #7A5410;
+      word-break: break-word
+    }
+
+    pre {
+      background: #2B2925;
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.75;
+      overflow-x: auto;
+      margin: 16px 0 22px;
+      color: #EDEAE3
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit
+    }
+
+    pre .cm {
+      color: #8A857E
+    }
+
+    pre .hl {
+      color: #7FDCC8;
+      font-weight: 600
+    }
+
+    pre .numc {
+      color: #F0B86A
+    }
+
+    pre .kw {
+      color: #C4A8F0
+    }
+
+    pre .str {
+      color: #A8D5A2
+    }
+
+    pre .del {
+      color: #F09AA5
+    }
+
+    .scene {
+      margin: 32px 0
+    }
+
+    .scene-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 0
+    }
+
+    .scene-tag {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: #fff;
+      background: var(--teal);
+      border-radius: 6px;
+      padding: 4px 10px;
+      flex-shrink: 0;
+    }
+
+    .scene.amber .scene-tag {
+      background: var(--amber)
+    }
+
+    .scene.rose .scene-tag {
+      background: var(--rose)
+    }
+
+    .scene.blue .scene-tag {
+      background: var(--blue)
+    }
+
+    .scene.violet .scene-tag {
+      background: var(--violet)
+    }
+
+    .scene-title {
+      font-size: 19px;
+      font-weight: 700
+    }
+
+    .scene-body {
+      border-left: 3px solid var(--line-2);
+      margin-left: 14px;
+      padding: 8px 0 4px 26px;
+    }
+
+    .scene.amber .scene-body {
+      border-color: #E8C89A
+    }
+
+    .scene.rose .scene-body {
+      border-color: #E8AEBC
+    }
+
+    .scene.blue .scene-body {
+      border-color: #B3C4EA
+    }
+
+    .scene.violet .scene-body {
+      border-color: #C9B0EA
+    }
+
+    .scene-q {
+      color: var(--ink-2);
+      font-style: normal;
+      margin-bottom: 14px
+    }
+
+    .scene-q::before {
+      content: "情境";
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: .1em;
+      color: var(--ink-3);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 2px 7px;
+      margin-right: 10px;
+      font-style: normal;
+      vertical-align: 2px
+    }
+
+    .ba {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 16px 0 22px;
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    .ba .side {
+      padding: 16px 20px
+    }
+
+    .ba .side+.side {
+      border-left: 1px solid var(--line)
+    }
+
+    .ba .ba-label {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 8px
+    }
+
+    .ba .before .ba-label {
+      color: var(--rose)
+    }
+
+    .ba .after .ba-label {
+      color: var(--green)
+    }
+
+    .ba pre {
+      margin: 0;
+      background: var(--code-bg);
+      color: var(--ink);
+      font-size: 11.5px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line)
+    }
+
+    .ba pre .cm {
+      color: var(--ink-3)
+    }
+
+    .ba pre .hl {
+      color: var(--teal);
+      font-weight: 600
+    }
+
+    .ba pre .del {
+      color: var(--rose)
+    }
+
+    @media(max-width:680px) {
+      .ba {
+        grid-template-columns: 1fr
+      }
+
+      .ba .side+.side {
+        border-left: none;
+        border-top: 1px solid var(--line)
+      }
+    }
+
+    .thread {
+      margin: 16px 0 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+      box-shadow: var(--shadow)
+    }
+
+    .msg {
+      display: flex;
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13.5px
+    }
+
+    .msg:last-child {
+      border-bottom: none
+    }
+
+    .msg .who {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      width: 64px;
+      flex-shrink: 0;
+      padding-top: 3px;
+      letter-spacing: .04em
+    }
+
+    .msg.u .who {
+      color: var(--blue)
+    }
+
+    .msg.a .who {
+      color: var(--violet)
+    }
+
+    .msg.t .who {
+      color: var(--amber)
+    }
+
+    .msg.s .who {
+      color: var(--ink-3)
+    }
+
+    .msg .bd {
+      color: var(--ink-2);
+      min-width: 0
+    }
+
+    .msg .bd code {
+      font-size: 11.5px
+    }
+
+    .msg.faded {
+      opacity: .45
+    }
+
+    .msg.faded .bd {
+      text-decoration: line-through;
+      text-decoration-color: var(--line-2)
+    }
+
+    .msg.new {
+      background: var(--green-bg)
+    }
+
+    .msg.new .who {
+      color: var(--green)
+    }
+
+    .msg.sum {
+      background: var(--teal-bg)
+    }
+
+    .msg.sum .who {
+      color: var(--teal)
+    }
+
+    .msg.boundary {
+      background: #F6F5F1;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3);
+      justify-content: center;
+      letter-spacing: .06em
+    }
+
+    .msg.boundary .bd {
+      text-align: center
+    }
+
+    .note {
+      border-left: 3px solid var(--blue);
+      background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px;
+      margin: 18px 0;
+      font-size: 15px
+    }
+
+    .note.warn {
+      border-color: var(--amber);
+      background: var(--amber-bg)
+    }
+
+    .note.danger {
+      border-color: var(--rose);
+      background: var(--rose-bg)
+    }
+
+    .note.ok {
+      border-color: var(--green);
+      background: var(--green-bg)
+    }
+
+    .note.teal {
+      border-color: var(--teal);
+      background: var(--teal-bg)
+    }
+
+    .note .nt {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 6px
+    }
+
+    .note.warn .nt {
+      color: var(--amber)
+    }
+
+    .note.danger .nt {
+      color: var(--rose)
+    }
+
+    .note.ok .nt {
+      color: var(--green)
+    }
+
+    .note.teal .nt {
+      color: var(--teal)
+    }
+
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt {
+      color: var(--blue)
+    }
+
+    .note p {
+      margin-bottom: 8px
+    }
+
+    .note p:last-child {
+      margin-bottom: 0
+    }
+
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px
+    }
+
+    th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: #F6F5F0;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top
+    }
+
+    tr:last-child td {
+      border-bottom: none
+    }
+
+    td code {
+      font-size: 12px
+    }
+
+    td .dim {
+      color: var(--ink-3);
+      font-size: 13px
+    }
+
+    .steps {
+      margin: 20px 0
+    }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px dashed var(--line)
+    }
+
+    .step:last-child {
+      border-bottom: none
+    }
+
+    .step .n {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--paper);
+      border: 1.5px solid var(--teal);
+      color: var(--teal);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 3px
+    }
+
+    .step .st {
+      font-size: 15px
+    }
+
+    .step .st b {
+      font-weight: 650
+    }
+
+    .step .sd {
+      font-size: 14px;
+      color: var(--ink-2);
+      margin-top: 3px
+    }
+
+    .bigconclusion {
+      background: linear-gradient(135deg, #EDF7F5, #EFF3FC);
+      border: 1px solid #CFE0E8;
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      margin: 24px 0;
+      font-size: 17px;
+      line-height: 1.8
+    }
+
+    .svg-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 26px;
+      overflow-x: auto;
+      box-shadow: var(--shadow);
+      margin: 18px 0 8px
+    }
+
+    .svg-cap {
+      font-size: 12.5px;
+      color: var(--ink-3);
+      text-align: center;
+      margin-top: 12px;
+      font-family: var(--mono)
+    }
+
+    .src {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3)
+    }
+
+    .src code {
+      font-size: 11px;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--teal)
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      margin-top: 80px;
+      padding-top: 28px;
+      color: var(--ink-3);
+      font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">设计文档 · RuneHarness Internals</div>
+      <h1>RuneHarness 记忆模块方案</h1>
+      <p class="subtitle">一层不丢细节的存储：文件仓库 + 索引 + 按需召回 + 后台提取。同一份机制按
+        <code>Profile</code> 分形——coding agent 记工程经验，陪伴 agent 记人，专家 agent 记领域事实。
+      </p>
+      <div class="meta">
+        <span>依据 s09 教学版 + CC src/memdir、services/{extractMemories, autoDream, SessionMemory}</span>
+        <span>衔接 docs/runeharness-compaction-plan.html</span>
+        <span>v0.1 草案 · 2026-10-06</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读：</b>第 1 章给结论与四个关键取舍；第 2 章对比教学版与 CC 实装、说明每条抄什么；第 3 章列 RH
+        现状里决定方案形态的六条约束；第 4 章定义两个核心抽象（Space / Profile）；第 5–8 章是存储、读、写、整理四条机制；第 9
+        章给两个内置 Profile 的完整定义；第 10–12 章是装配、边界与安全；第 13–14 章排阶段与未决项。<br>
+        前置约定：下文"视图"指 <code>session.Fold</code> 组装出的发送形态，"原始行"指
+        <code>LoadRawHistory</code> 返回的 append-only 行；两者不是一回事，方案里反复用到这个区分。
+      </div>
+    </div>
+
+    <!-- ============ 1. 结论先行 ============ -->
+    <section id="conclusion">
+      <div class="chap">第 1 章 · 结论先行</div>
+      <h2>一个目录、一份索引、两条写路径、两条读路径</h2>
+
+      <div class="bigconclusion">
+        记忆 = <b>记忆空间</b>（一个按 scope 派生的目录）里的 <code>.md</code> 文件集 +
+        <code>MEMORY.md</code> 索引。<b>读</b>：索引随 user 消息按需注入，正文由一次 side-query 按查询选 ≤5
+        篇附加。<b>写</b>：模型经专用 <code>memory</code> 工具直写（索引由代码重建，模型不碰索引）+ Stop hook
+        触发后台提取（side-query 出 JSON ops，代码落盘）。<b>整理</b>：低频 Dream 合并去重。<b>换 persona =
+          换一个 <code>Profile</code> 对象</b>——类型辞典、提取焦点、空间键、读写节奏四个旋钮决定"记什么、往哪记、怎么取"。
+      </div>
+
+      <p>方案由四个取舍定形：</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>记忆落文件，不落 DB——与压缩相反</b>
+            <div class="sd">压缩状态是机器中间态，所以进 <code>session.Store</code>；记忆是知识资产：用户要能读、能手改、能带走、能
+              grep。文件形态与 CC 一致，与 skill 的渐进披露一致。云端形态下文件后端可换对象存储，
+              <code>Store</code> 接口不变（§15）。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>内容注入走 user 消息，行为指令走 system</b>
+            <div class="sd"><code>prompt.go</code> 已定约定：会话内可变内容不进 system 行（前缀缓存）。所以 Profile 的稳定指令段进
+              system prompt，索引与选中正文拼进当轮 user 消息——与 <code>expandMentions</code> 的
+              <code>&lt;attachments&gt;</code> 块同一形态（§6）。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>写入面由专用工具封死</b>
+            <div class="sd">RH 没有 <code>write_file</code>，写文件只能经 <code>run_command</code>——模型每存一条记忆都会撞 Gate3
+              确认弹窗，且无法限制写哪里。<code>memory</code> 工具把写盘封死在记忆目录内：slug
+              清洗、保留名拒绝、索引重建全部在代码侧（§7.1）。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>提取是 side-query，不是 forked agent</b>
+            <div class="sd">CC 用 forked agent（共享 prompt 缓存、受限工具表、maxTurns=5）。v1 用单次
+              <code>Chat</code>：输入 = Profile 提取提示 + 已有清单 + 新原始行，输出 = JSON ops
+              数组，代码执行写盘。读改写在文件小时成立；升级路径是换成迷你 agent loop（§15）。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note warn">
+        <div class="nt">明确不做（v1）</div>
+        <p>四件事不在本方案内：<b>embedding 向量检索</b>（文件 ≤200 篇，LLM 直选足够）、<b>session
+            memory 免摘要压缩</b>（RH 已有滚动摘要管线，<code>internal/compact</code>）、<b>多层空间</b>（private + team
+          双目录，留扩展缝）、<b>远端记忆同步</b>。</p>
+      </div>
+    </section>
+
+    <!-- ============ 2. 参照系 ============ -->
+    <section id="reference">
+      <div class="chap">第 2 章 · 参照系</div>
+      <h2>教学版学骨架，CC 实装抄细节</h2>
+
+      <p class="lede">s09 的机制与 CC 源码同构，但实装在五处明显更硬。下表逐条给出 RH 的取法；取教学版的理由几乎都是"RH 已有等价物或 v1
+        不需要"，取实装的理由是"那里有 eval 校准过的细节"。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>机制</th>
+            <th>s09 教学版</th>
+            <th>CC 实装</th>
+            <th>RH 取法</th>
+          </tr>
+          <tr>
+            <td><b>存储</b></td>
+            <td><code>.memory/*.md</code> + <code>MEMORY.md</code></td>
+            <td><code>~/.claude/projects/&lt;sanitized-git-root&gt;/memory/</code>，索引 200 行 / 25KB 截断
+            </td>
+            <td>文件集 + 索引。<br>根：<code>~/.rune/memory/&lt;space&gt;/</code>，space 键按 Profile 从 scope 派生（§4）
+            </td>
+          </tr>
+          <tr>
+            <td><b>索引维护</b></td>
+            <td>代码重建</td>
+            <td>模型两步操作：写文件 + 手改 <code>MEMORY.md</code></td>
+            <td><b>代码重建</b>。模型不碰索引，消掉索引漂移这一失败面（§7.1）
+            </td>
+          </tr>
+          <tr>
+            <td><b>按需召回</b></td>
+            <td>LLM side-query 选 ≤5，关键词降级</td>
+            <td>Sonnet + JSON schema；≤200 文件按 mtime 排；每文件 ≤200 行 / 4KB；session 预算 60KB；每轮
+              prefetch 非阻塞</td>
+            <td>side-query + 关键词降级 + 硬超时。<br><code>alreadySurfaced</code> 去重照抄（§6.2）
+            </td>
+          </tr>
+          <tr>
+            <td><b>提取</b></td>
+            <td><code>stop_reason != tool_use</code> 后 inline 提取</td>
+            <td>stop hook fire-and-forget → forked agent：受限 canUseTool、<code>skipTranscript</code>、maxTurns=5、消息游标、与主代理写盘互斥、连跑合并
+            </td>
+            <td><code>OnStop</code> hook 起 goroutine + 单次 side-query 出 JSON ops。游标、互斥、熔断照抄（§7.2）
+            </td>
+          </tr>
+          <tr>
+            <td><b>整理</b></td>
+            <td>文件数 ≥10 触发</td>
+            <td>四层门控：24h / 扫描节流 / ≥5 会话 / 锁文件</td>
+            <td>三门：24h / 物量（文件数或改动数）/ 锁文件 1h 过期（§8）
+            </td>
+          </tr>
+          <tr>
+            <td><b>类型辞典</b></td>
+            <td>user / feedback / project / reference</td>
+            <td>同上 + <code>&lt;scope&gt;</code> 标签 + eval 校准过的 save/use 段落（<code>memoryTypes.ts</code>）
+            </td>
+            <td>辞典进 <code>Profile</code>，coding profile 直接沿用 CC 四类文案（§9.1）
+            </td>
+          </tr>
+          <tr>
+            <td><b>行为提示</b></td>
+            <td>未细分</td>
+            <td>how-to-save / what-not-to-save / when-to-access / before-recommending 四段，逐句有 eval 依据</td>
+            <td>四段照抄成 Profile 组件，per-profile 可替换（§9）
+            </td>
+          </tr>
+          <tr>
+            <td><b>KAIROS</b></td>
+            <td>无</td>
+            <td>长驻会话只追加日志 <code>logs/YYYY-MM-DD.md</code>，夜间蒸馏进索引</td>
+            <td><code>Mode=journal</code>：陪伴等长驻场景写日志，蒸馏交给整理流程（§7.3）
+            </td>
+          </tr>
+          <tr>
+            <td><b>session memory</b></td>
+            <td>提及</td>
+            <td>独立 <code>memory.md</code>，供免 LLM 压缩</td>
+            <td><b>不做</b>。RH 压缩已滚动摘要；session_state 已有熔断</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="note">
+        <div class="nt">读法</div>
+        <p>CC 实装里真正值得连文案一起抄的是提示词段落：<code>TYPES_SECTION_*</code>、
+          <code>WHAT_NOT_TO_SAVE_SECTION</code>、<code>WHEN_TO_ACCESS_SECTION</code>、
+          <code>TRUSTING_RECALL_SECTION</code> 都标注了 eval 案例（如"ignore memory"反模式、H1
+          验证-再推荐）。这些是磨出来的行为约束，重写一遍只会更差。机制层则可裁剪——forked agent 换成 side-query 属于降级，但游标、互斥、门控这些"形状"必须保留。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ 3. RH 现状约束 ============ -->
+    <section id="constraints">
+      <div class="chap">第 3 章 · 现状约束</div>
+      <h2>RH 里六条已经定死的边界</h2>
+
+      <p class="lede">方案不是从白纸画的，是从现有代码的六个事实倒推的。每条事实直接排除掉一类做法。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>现状</th>
+            <th>位置</th>
+            <th>排除掉的做法 / 推出的结论</th>
+          </tr>
+          <tr>
+            <td>没有 <code>write_file</code>，写文件只能经 <code>run_command</code>，未白名单命令弹 Gate3 确认</td>
+            <td><code>internal/tools</code>、<code>internal/permission</code></td>
+            <td>"教模型用 shell 写记忆"不可行（每存一条弹一次窗，路径还封不住）⇒ 必须有专用写工具</td>
+          </tr>
+          <tr>
+            <td>信任根经 ctx 传播：<code>Scope{TenantID, SessionID, Workspace}</code>，模型参数永远碰不到</td>
+            <td><code>internal/scope/scope.go</code></td>
+            <td>记忆空间键从 scope 函数侧派生；模型工具参数里不出现目录路径。云端加 <code>SubjectID</code> 字段即可扩展（§4.1）
+            </td>
+          </tr>
+          <tr>
+            <td>append-only 消息行 + 控制行；<code>Fold</code> 组装视图 = system + 首部 + 最新摘要 + 尾部</td>
+            <td><code>internal/session/view.go</code></td>
+            <td>注入块是普通 user 消息内容，随 fold/摘要/卸载自然消化——不需要新消息种类，也不需要"过期清理"
+            </td>
+          </tr>
+          <tr>
+            <td><code>prompt.go</code> 注释明示：memory 等会话内可变内容应作为 user 消息注入，避免打碎前缀缓存</td>
+            <td><code>internal/prompt/prompt.go:3-4</code></td>
+            <td>索引/正文一律走 user 消息；system 只收 Profile 的稳定指令段
+            </td>
+          </tr>
+          <tr>
+            <td><code>session_state</code> 是每会话一个 JSON blob，被 compact 整写覆盖</td>
+            <td><code>internal/compact/maintain.go:202-211</code></td>
+            <td>提取游标若写进去会被 compact 的 <code>saveState</code> 抹掉 ⇒ 记忆状态自管文件（<code>.state.json</code> 放记忆目录内）
+            </td>
+          </tr>
+          <tr>
+            <td>hook 五挂点：UserPromptSubmit 可 <code>replace</code>；OnStop 可做副作用；子代理有独立 Hooks 实例</td>
+            <td><code>internal/agent/hooks.go</code></td>
+            <td>召回挂 <code>OnUserPromptSubmit</code>（每用户轮一次，粒度正确）；提取挂 <code>OnStop</code>（fire-and-forget，返回 ""）；不装配进子代理即天然不跑
+            </td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 4. 核心抽象 ============ -->
+    <section id="abstractions">
+      <div class="chap">第 4 章 · 核心抽象</div>
+      <h2>Space 定"记在哪"，Profile 定"记什么、怎么取"</h2>
+
+      <h3>4.1 Space：一个目录 = 一个隔离的记忆全集</h3>
+      <p>Space 是隔离与寻址单元。它由 <code>Profile.Space</code> 声明键型，由 <code>memory.New</code> 从 ctx 的
+        scope 解析出具体目录。模型从始至终不知道路径——写工具参数只有 <code>name/type/description/body</code>，读侧由召回器代读。
+      </p>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>SpaceKind</th>
+            <th>键来源</th>
+            <th>适用 persona</th>
+            <th>本地形态</th>
+          </tr>
+          <tr>
+            <td><code>workspace</code></td>
+            <td><code>scope.Workspace</code> 清洗为 slug（对齐 CC 的 git-root 口径：worktree 归并到同一根）</td>
+            <td>coding agent</td>
+            <td><code>~/.rune/memory/ws/&lt;slug&gt;/</code></td>
+          </tr>
+          <tr>
+            <td><code>subject</code></td>
+            <td><code>scope.SubjectID</code>（新增字段，云端入口注入终端用户 id）</td>
+            <td>陪伴 / 专家 agent</td>
+            <td><code>~/.rune/memory/subject/&lt;tenant&gt;/&lt;subject&gt;/</code>；SubjectID 为空时回落
+              <code>local-user</code></td>
+          </tr>
+          <tr>
+            <td><code>tenant</code></td>
+            <td><code>scope.TenantID</code></td>
+            <td>租户级共享知识（预留）</td>
+            <td><code>~/.rune/memory/tenant/&lt;tenant&gt;/</code></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="note warn">
+        <div class="nt">注意 · scope 加一个字段</div>
+        <p><code>subject</code> 空间需要 <code>Scope.SubjectID</code>：云端请求入口按 auth 身份注入，本地 CLI 恒为
+          <code>local-user</code>。这是本方案对既有代码唯一的横切改动；其余全部在新包 <code>internal/memory</code>
+          内闭环。
+        </p>
+      </div>
+
+      <h3>4.2 Profile：记忆画像</h3>
+      <p>Profile 是"这套 agent 该长什么样的记忆"的全部答案。它不进存储层——存储层只看到目录与文件；它只进
+        prompt 装配与读写节奏。</p>
+
+      <pre><code><span class="kw">type</span> <span class="hl">SpaceKind</span> <span class="kw">string</span> <span class="cm">// workspace | subject | tenant</span>
+<span class="kw">type</span> <span class="hl">Mode</span>     <span class="kw">string</span> <span class="cm">// indexed  | journal</span>
+
+<span class="cm">// TypeDef 是一类记忆的完整说明：名字进 frontmatter，文案进</span>
+<span class="cm">// system 指令段与提取提示（对齐 CC TYPES_SECTION 的逐类型结构）。</span>
+<span class="kw">type</span> <span class="hl">TypeDef</span> <span class="kw">struct</span> {
+    Name    <span class="kw">string</span> <span class="cm">// frontmatter type 值，如 "feedback"</span>
+    Desc    <span class="kw">string</span> <span class="cm">// 这类记忆是什么</span>
+    Save    <span class="kw">string</span> <span class="cm">// 何时存</span>
+    Use     <span class="kw">string</span> <span class="cm">// 读到后怎么用</span>
+    Body    <span class="kw">string</span> <span class="cm">// body 结构约定（如 "**Why:** / **How to apply:**"）</span>
+    Example <span class="kw">string</span> <span class="cm">// 一两条对话示例</span>
+}
+
+<span class="kw">type</span> <span class="hl">ExtractCfg</span> <span class="kw">struct</span> {
+    MinNewRows   <span class="kw">int</span> <span class="cm">// 新原始行数下限，不足不提取（默认 2）</span>
+    EveryTurns   <span class="kw">int</span> <span class="cm">// 每 N 个可提取轮跑一次（coding=1，companion=1）</span>
+    BodyBudget   <span class="kw">int</span> <span class="cm">// 提取输入里允许携带的已有正文总字节（默认 24KB）</span>
+}
+
+<span class="kw">type</span> <span class="hl">RecallCfg</span> <span class="kw">struct</span> {
+    MaxFiles     <span class="kw">int</span> <span class="cm">// 单轮正文注入上限（默认 5）</span>
+    MaxFileBytes <span class="kw">int</span> <span class="cm">// 单篇正文上限（默认 4KB，对齐 CC 4096B）</span>
+    MaxTurnBytes <span class="kw">int</span> <span class="cm">// 单轮正文合计上限（默认 16KB）</span>
+    Selector     <span class="kw">string</span> <span class="cm">// "llm" | "keyword"；llm 失败自动降级</span>
+}
+
+<span class="kw">type</span> <span class="hl">Profile</span> <span class="kw">struct</span> {
+    Name    <span class="kw">string</span>
+    Space   SpaceKind
+    Mode    Mode
+    Types   []TypeDef
+    DoNot   []<span class="kw">string</span> <span class="cm">// "不存"清单</span>
+    Focus   <span class="kw">string</span>   <span class="cm">// 提取侧重点（提取提示的第一段）</span>
+    Extract ExtractCfg
+    Recall  RecallCfg
+    WriteTool <span class="kw">bool</span> <span class="cm">// 是否向模型暴露 memory 写工具</span>
+}</code></pre>
+
+      <p>Profile 两份来源：内置 Go 常量（<code>coding</code> / <code>companion</code> / <code>generic</code>，见 §9）+
+        文件覆盖 <code>~/.rune/profiles/&lt;name&gt;.md</code>（frontmatter 写旋钮，正文写辞典与 Focus——与 skill 的
+        <code>SKILL.md</code> 同一渐进披露形态）。选择顺序：<code>RUNE_MEMORY_PROFILE</code> &gt; 文件 &gt; 内置。
+      </p>
+    </section>
+
+    <!-- ============ 5. 存储 ============ -->
+    <section id="storage">
+      <div class="chap">第 5 章 · 存储</div>
+      <h2>目录布局与文件格式</h2>
+
+      <pre><code>~/.rune/memory/&lt;space-kind&gt;/&lt;key&gt;/
+├── <span class="hl">MEMORY.md</span>            <span class="cm"># 索引：一行一条目，≤200 行 / 25KB（超出截断+警告行，对齐 CC）</span>
+├── user-role.md         <span class="cm"># 一条记忆一个文件，YAML frontmatter + 正文</span>
+├── feedback-testing.md
+├── logs/YYYY/MM/YYYY-MM-DD.md   <span class="cm"># 仅 journal 模式：追加日志</span>
+├── .state.json          <span class="cm"># 代码自管状态：提取游标、熔断计数、上次整理时间</span>
+└── .consolidate.lock    <span class="cm"># 整理锁；mtime 即 lastConsolidatedAt，1h 过期</span></code></pre>
+
+      <h3>5.1 记忆文件</h3>
+      <pre><code>---
+name: user-role
+description: User is a senior Go engineer, new to React — frame frontend answers via backend analogues
+type: user
+---
+
+正文。feedback / project 类建议结构：规则或事实先行，随后 **Why:**（用户给过的理由）
+与 **How to apply:**（何时何地生效）两行——知道 why 才能判断边界情况。</code></pre>
+
+      <ul>
+        <li>文件名 = <code>slug(name)</code>：小写、非字母数字折叠为 <code>-</code>、去 <code>..</code> 与分隔符——路径逃逸在参数层就不成立。
+        </li>
+        <li>保留名拒绝：<code>MEMORY.md</code>、<code>.state.json</code>、<code>.consolidate.lock</code>、<code>logs/</code> 下的名字不能由工具写入。
+        </li>
+        <li>写入原子化：<code>tmp + rename</code>。多进程同空间下最后一个写者赢单文件，索引总是再生成，不失一致性。
+        </li>
+      </ul>
+
+      <h3>5.2 索引</h3>
+      <pre><code>- [user-role](user-role.md) — User is a senior Go engineer, new to React
+- [feedback-testing](feedback-testing.md) — Integration tests must hit a real database, not mocks</code></pre>
+      <p>索引由代码在每次写/删/整理后从 frontmatter 扫描重建，按 type 分组、mtime 降序。单行 ≤150
+        字符。模型只读索引、不写索引——CC 的"两步保存"在 RH 里被收成一步。
+      </p>
+
+      <h3>5.3 配额（全部对齐 CC 数值）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>位置</th>
+            <th>上限</th>
+            <th>超出后的行为</th>
+          </tr>
+          <tr>
+            <td>扫描文件数</td>
+            <td>200 个 .md（mtime 降序）</td>
+            <td>更老的只存在目录里，不进清单——整理流程负责收敛</td>
+          </tr>
+          <tr>
+            <td>frontmatter 读取</td>
+            <td>前 30 行</td>
+            <td>截断解析</td>
+          </tr>
+          <tr>
+            <td><code>MEMORY.md</code> 注入</td>
+            <td>200 行 / 25KB</td>
+            <td>截断 + 追加警告行（写明哪条限命中）</td>
+          </tr>
+          <tr>
+            <td>单篇正文注入</td>
+            <td>4KB</td>
+            <td>截断 + <code>[truncated]</code> 标记</td>
+          </tr>
+          <tr>
+            <td>单轮正文合计</td>
+            <td>16KB（Profile.Recall.MaxTurnBytes）</td>
+            <td>截断候选清单</td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 6. 读路径 ============ -->
+    <section id="read">
+      <div class="chap">第 6 章 · 读路径</div>
+      <h2>索引常驻当轮，正文按需附加</h2>
+
+      <p class="lede">读路径全部挂在 <code>OnUserPromptSubmit</code>：每用户轮恰好一次，hook 的
+        <code>replace</code> 返回值把记忆块拼进 user 消息本体。与 <code>expandMentions</code> 的
+        <code>&lt;attachments&gt;</code> 同一形态——落库、回放、压缩都不需要新机制。</p>
+
+      <h3>6.1 索引注入：变了才注，丢了自愈</h3>
+      <p>索引若每轮重复注入会成为膨胀源（它随每条 user 消息进原始行）。hook 持两个事实做判断：</p>
+      <ol>
+        <li><code>lastIndexHash</code>：上轮注入的索引内容哈希。哈希变化 ⇒ 重新注入完整索引块。</li>
+        <li>自愈扫描：视图尾部 40 条消息内不存在 <code>&lt;memory-index&gt;</code> 标记 ⇒
+          重新注入。压缩把中段连同旧标记摘要掉之后，规则自动复活索引，不需要水印机制。</li>
+      </ol>
+      <p>注入形态（附加在 user 消息尾部）：</p>
+      <pre><code>&lt;memory-index dir="…" updated="2026-10-06T18:23+08:00"&gt;
+- [user-role](user-role.md) — …
+- [feedback-testing](feedback-testing.md) — …
+&lt;/memory-index&gt;</code></pre>
+
+      <h3>6.2 正文召回：LLM 选，关键词兜底</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>扫描清单</b>
+            <div class="sd">读目录下 ≤200 个 .md 的 frontmatter（≤30 行/个），渲染 manifest：
+              <code>- [type] filename (mtime): description</code>。空清单直接短路，不花调用。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>side-query 选择</b>
+            <div class="sd">单次 <code>Chat</code>：system 为选择提示（"不确定就不选"；近期在用的工具不选其用法文档，但仍选其坑——抄
+              <code>findRelevantMemories.ts</code> 的区分规则），user 为 query + manifest，输出 JSON schema
+              <code>{selected: [filename]}</code> ≤5。硬超时 3s。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>降级链</b>
+            <div class="sd">超时/解析失败 → 关键词重叠（query 与 name+description 的词面交集）；清单 ≤N 小
+              ⇒ 也可直接跳过选择全部带上（Profile 配阈值，默认清单 ≤8 篇时全带）。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>去重与限流</b>
+            <div class="sd"><code>alreadySurfaced</code>：本进程已注入且 mtime 未变的文件不再注——选择器的 5
+              个槽位留给新候选（CC 同款过滤）。命中文件读正文、按 §5.3 配额截断，拼
+              <code>&lt;memory&gt;</code> 块。</div>
+          </div>
+        </div>
+      </div>
+
+      <pre><code><span class="cm">// user 消息尾部形态</span>
+{用户原文}
+
+&lt;attachments&gt;…&lt;/attachments&gt;        <span class="cm">// 既有 @path 展开</span>
+&lt;memory-index&gt;…&lt;/memory-index&gt;       <span class="cm">// 仅在变化或丢失时出现</span>
+&lt;memory name="feedback-testing" type="feedback"&gt;
+正文（≤4KB）…
+&lt;/memory&gt;</code></pre>
+
+      <div class="note teal">
+        <div class="nt">为什么不用 embedding</div>
+        <p>文件上限 200 篇、manifest 总量 ≤25KB——向量检索在这个量级只增加依赖与模糊度，不增加命中率。LLM
+          直选还能用语言能力区分"工具用法文档"与"该工具的坑"这类语义差别（CC 选择提示里的真实失败案例）。向量检索留作清单超过千篇后的扩展缝。</p>
+      </div>
+    </section>
+
+    <!-- ============ 7. 写路径 ============ -->
+    <section id="write">
+      <div class="chap">第 7 章 · 写路径</div>
+      <h2>显式直写 + 隐式提取，互为补位</h2>
+
+      <p class="lede">用户说"记住这个"时模型立即直写；用户没明说但反复表达偏好时，后台提取兜底。两条路径写同一套文件，索引都由代码重建。</p>
+
+      <h3>7.1 <code>memory</code> 工具：模型可见的写口</h3>
+      <pre><code>name: memory
+description: Read and update the persistent memory store for this space.
+  Save durable facts (op=save: name, type, description, body),
+  remove stale ones (op=forget: name), or list the index (op=list).
+  Memories persist across sessions — do not store ephemeral task state.
+params:
+  op:    save | forget | list
+  name, type, description, body   <span class="cm"># save 必填；forget 只要 name</span></code></pre>
+
+      <ul>
+        <li><b>注册进 <code>SafeTools</code></b>：写面被工具实现封死在空间目录内，等价于 CC 的
+          <code>isAutoMemPath</code> carve-out，但更强——模型连路径都给不了。</li>
+        <li>写后代码重建 <code>MEMORY.md</code>；工具的返回串固定为 <code>saved: &lt;file&gt;</code> /
+          <code>forgotten: &lt;file&gt;</code>，不在返回里回填索引全文（省 token，模型可从 list 自取）。</li>
+        <li><code>Profile.WriteTool=false</code> 时不注册——陪伴场景可选择"只由后台提取写"，模型不感知记忆的存在（人设更稳）。</li>
+      </ul>
+
+      <h3>7.2 后台提取：Stop hook + side-query</h3>
+      <p>触发点在 <code>OnStop</code>——模型产出纯文本回复、本轮告一段落时。hook 返回
+        <code>""</code>（不续跑），只起一个 goroutine：</p>
+
+      <pre><code><span class="kw">func</span> (m *Memory) extractAsync(ctx, history) {
+    <span class="cm">// WithoutCancel：取消停的是未来工作，提取是已发生对话的收尾——</span>
+    <span class="cm">// 与 record() 落库同一口径（agent.go:461）。</span>
+    ctx = context.WithoutCancel(ctx)
+    ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+    <span class="kw">defer</span> cancel()
+    <span class="cm">// 单飞：inFlight 标志位去重；本轮到达时已有提取在跑 → 标记 dirty，</span>
+    <span class="cm">// 跑完接着跑一轮 trailing（CC pendingContext 同构，最多合并一轮）。</span>
+}</code></pre>
+
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>游标取增量</b>
+            <div class="sd"><code>.state.json</code> 存 <code>{sessions: {&lt;sid&gt;: lastRowID}}</code>。提取输入 =
+              <code>LoadRawHistory</code> 中 <code>id &gt; lastRowID</code> 的非控制行。读原始行而非视图：中段可能已被摘要，
+              原始行不受压缩影响；spill 过的工具结果只剩预览+指针，偏好类信号几乎都在 user/assistant
+              文本里，预览够用。渲染口径对齐 <code>summary.go</code> 的 <code>renderEvent</code>（inject 行标 harness
+              notice）。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>三道跳过闸</b>
+            <div class="sd">新行数 &lt; <code>MinNewRows</code>；距上次提取不足 <code>EveryTurns</code> 轮；本批消息里主代理已调用过
+              <code>memory</code> 工具（<code>hasMemoryWrites</code> 同构：模型自己写了，后台不再重复）。命中即推游标返回。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>提取调用</b>
+            <div class="sd">输入 = Profile 提取提示（Focus + 类型辞典 + DoNot + ops 格式）+ 已有清单（正文总量
+              ≤ <code>BodyBudget</code> 时连正文一起给，否则只给 manifest）+ 新行渲染。输出 JSON：
+              <code>[{op: upsert|delete, name, type, description, body}]</code>。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>落盘与熔断</b>
+            <div class="sd">ops 逐条校验（类型须在辞典内、slug 合法、delete 指向已存在文件）后写盘、重建索引、推游标。失败计
+              <code>.state.json.extractFailures</code>，连续 3 次熔断——与 compact 同一口径。成功后触发
+              <code>OnChange(n)</code> 回调，TUI 落一行提示；整理检查顺手跑（§8）。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="nt">提取提示骨架（以 coding profile 为例）</div>
+        <p>三段式：<b>Focus</b>（本 profile 该捕捉什么，一段散文）→ <b>类型辞典</b>（逐类型的
+          save/use/structure，抄 <code>TYPES_SECTION_INDIVIDUAL</code>）→ <b>不存清单 + ops
+            契约</b>（"没有新信息就返回 []"；已有清单前置给模型做去重）。写记忆的语言跟随对话语言。</p>
+      </div>
+
+      <h3>7.3 journal 模式：长驻会话的追加日志</h3>
+      <p><code>Mode=journal</code> 时提取的产出形态换掉：ops 变为日志条目数组，代码追加到
+        <code>logs/YYYY/MM/YYYY-MM-DD.md</code>，不写主题文件、不动索引。索引由整理流程定期从日志蒸馏重建（§8）。
+        这是 CC KAIROS 的对应物，适合长期运行的陪伴/值守 agent——写入永远 append-only，模型不需要做"改哪篇文件"的决策。</p>
+    </section>
+
+    <!-- ============ 8. 整理 ============ -->
+    <section id="consolidate">
+      <div class="chap">第 8 章 · 整理</div>
+      <h2>Dream：三门之后才动手</h2>
+
+      <p>整理在提取完成后顺手检查，三门全开才执行（CC 四层门控裁剪掉多进程扫描节流——RH 单进程不需要）：</p>
+      <ol>
+        <li><b>时间门</b>：距上次整理 ≥24h（<code>.consolidate.lock</code> 的 mtime）。</li>
+        <li><b>物量门</b>：索引条目 ≥30，或自上次整理以来新增/修改文件 ≥10。</li>
+        <li><b>锁门</b>：无未过期锁文件（1h 过期抗崩溃；执行前先落锁）。</li>
+      </ol>
+
+      <p>执行方式与提取同构——单次 side-query 输入全部 manifest + 正文（超预算时按 mtime 分批），输出 ops
+        数组（upsert/delete/merge-into），代码落盘重建索引、滚动锁 mtime。失败回滚锁 mtime
+        让时间门下次重新放行；连续失败同样熔断。</p>
+
+      <div class="note warn">
+        <div class="nt">注意 · 整理的对象按模式区分</div>
+        <p><code>indexed</code> 模式整理主题文件：去重、合并矛盾、淘汰过时条目。<code>journal</code>
+          模式整理日志：把日志蒸馏成主题文件 + 重建 <code>MEMORY.md</code>——蒸馏完的日志段可截断，原始行保留在文件里。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ 9. 内置 Profile ============ -->
+    <section id="profiles">
+      <div class="chap">第 9 章 · 内置 Profile</div>
+      <h2>两个内置画像：coding 与 companion</h2>
+
+      <h3>9.1 coding：记工程经验</h3>
+      <p>类型辞典直接沿用 CC 四类与 eval 校准过的文案：</p>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>type</th>
+            <th>回答什么</th>
+            <th>示例</th>
+          </tr>
+          <tr>
+            <td><code>user</code></td>
+            <td>用户是谁：角色、目标、知识背景</td>
+            <td>"十年 Go，第一次碰 React——前端解释用后端类比"</td>
+          </tr>
+          <tr>
+            <td><code>feedback</code></td>
+            <td>怎么做事：纠正与被验证的做法，含 why</td>
+            <td>"别 mock 数据库——上季度被坑过"</td>
+          </tr>
+          <tr>
+            <td><code>project</code></td>
+            <td>正在发生什么：代码与 git 推不出的动机、期限、干系人</td>
+            <td>"auth 重写是合规驱动"（相对日期一律转绝对日期）</td>
+          </tr>
+          <tr>
+            <td><code>reference</code></td>
+            <td>东西在哪找：外部系统指针</td>
+            <td>"pipeline bug 都在 Linear INGEST"</td>
+          </tr>
+        </table>
+      </div>
+      <p>DoNot 照抄 <code>WHAT_NOT_TO_SAVE_SECTION</code>：代码模式、架构、git 历史、修法、CLAUDE.md
+        已有内容、临时任务状态——能从当前项目状态推导的一律不存，<b>即使用户显式要求</b>（此时追问"这里面非显然的部分是什么"）。
+      </p>
+
+      <h3>9.2 companion：记人</h3>
+      <p>类型辞典换成面向"人"的四类，Focus 指向情绪与关系线索：</p>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>type</th>
+            <th>回答什么</th>
+            <th>示例</th>
+          </tr>
+          <tr>
+            <td><code>persona</code></td>
+            <td>用户是谁：身份、经历、处境、在意的东西</td>
+            <td>"用户是初三学生的家长，孩子今年中考——谈学习计划时多从这个身份出发"</td>
+          </tr>
+          <tr>
+            <td><code>bond</code></td>
+            <td>我们共同经历过什么：事件、约定、梗、关系进展</td>
+            <td>"2026-09 一起完成了第一次长途徒步，用户称其为'雪山之行'"</td>
+          </tr>
+          <tr>
+            <td><code>expression</code></td>
+            <td>怎么说话：称呼、语气、语言偏好、雷区表达</td>
+            <td>"用户希望被称作'老周'；不喜欢'宝'这类亲昵称呼"</td>
+          </tr>
+          <tr>
+            <td><code>boundary</code></td>
+            <td>绝不能碰什么：禁忌话题、承诺、情绪触发点</td>
+            <td>"不主动提用户父亲的病情——用户说过'我想聊的时候会自己提起'"</td>
+          </tr>
+        </table>
+      </div>
+      <ul>
+        <li><b>Focus</b>：情绪变化（"今天语气明显低落"）、人称细节（家人/同事的名字与关系）、未兑现的承诺与约定、
+          表达习惯的纠正。</li>
+        <li><b>DoNot</b>：一次性寒暄与流水账、能从前几轮对话直接看出的即时状态、任何用户标了"别记"的内容。</li>
+        <li><b>节奏</b>：<code>EveryTurns=1</code>（情感上下文连续性优先）；<code>WriteTool=false</code>
+          可选——不暴露记忆工具时，"记得"完全来自后台提取，人设更一致。</li>
+        <li><b>模式</b>：长驻部署用 <code>journal</code>；交互式会话用 <code>indexed</code>。</li>
+      </ul>
+
+      <h3>9.3 generic 与自定义</h3>
+      <p><code>generic</code> 是最小集（user / fact / preference 三类），作兜底与新 profile 的模板。自定义走
+        <code>~/.rune/profiles/&lt;name&gt;.md</code>：</p>
+      <pre><code>---
+name: reviewer
+space: workspace
+mode: indexed
+write_tool: true
+selector: llm
+---
+# Focus
+本 agent 是代码评审专家：记住每个仓库的评审口径、历史事故、owner 偏好……
+
+# Types
+&lt;type&gt;&lt;name&gt;convention&lt;/name&gt;&lt;desc&gt;…&lt;/desc&gt;&lt;/type&gt;
+…
+
+# DoNot
+- …</code></pre>
+    </section>
+
+    <!-- ============ 10. 装配 ============ -->
+    <section id="wiring">
+      <div class="chap">第 10 章 · 装配</div>
+      <h2>main.go 的五处接线</h2>
+
+      <pre><code><span class="cm">// internal/memory 单例：store 供 LoadRawHistory 取增量，llm 供 side-query</span>
+mem, err := memory.New(store, model, memory.Config{
+    Root:     cfg.MemoryDir,      <span class="cm">// RUNE_MEMORY_DIR；空 → ~/.rune/memory</span>
+    Profile:  prof,               <span class="cm">// cfg.MemoryProfile → 内置表 / ~/.rune/profiles/</span>
+    Extract:  cfg.MemoryExtract,  <span class="cm">// RUNE_MEMORY_EXTRACT，默认开</span>
+})
+<span class="cm">// 写口（Profile.WriteTool 为真时）</span>
+toolSet = append(toolSet, mem.Tool())
+permCfg.SafeTools = append(permCfg.SafeTools, memory.ToolName)
+<span class="cm">// 读：每用户轮一次，拼 &lt;memory-index&gt; / &lt;memory&gt; 块</span>
+a.Hooks.OnUserPromptSubmit(mem.Recall)
+<span class="cm">// 写：轮末后台提取 + 整理检查</span>
+a.Hooks.OnStop(mem.ExtractAndMaintain)
+<span class="cm">// system：profile 的稳定指令段进 Env，拼在 tools 之后</span>
+env.MemoryGuide = mem.SystemGuide()  <span class="cm">// 空串则省略该段</span>
+<span class="cm">// TUI：提取完成后落一行提示</span>
+mem.OnChange = func(n int) { p.Send(tui.MemoryMsg{Saved: n}) }</code></pre>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>环境变量</th>
+            <th>默认</th>
+            <th>作用</th>
+          </tr>
+          <tr>
+            <td><code>RUNE_MEMORY</code></td>
+            <td>on</td>
+            <td>总开关；=0 时整个模块不装配</td>
+          </tr>
+          <tr>
+            <td><code>RUNE_MEMORY_PROFILE</code></td>
+            <td><code>coding</code></td>
+            <td>内置名或 <code>~/.rune/profiles/</code> 下的文件名</td>
+          </tr>
+          <tr>
+            <td><code>RUNE_MEMORY_DIR</code></td>
+            <td><code>~/.rune/memory</code></td>
+            <td>记忆根目录（云端可指向挂载点；校验同 CC：拒绝相对/根/UNC 路径）</td>
+          </tr>
+          <tr>
+            <td><code>RUNE_MEMORY_EXTRACT</code></td>
+            <td>on</td>
+            <td>后台提取开关；关闭后仍可直写与召回</td>
+          </tr>
+          <tr>
+            <td><code>RUNE_MEMORY_MODEL</code></td>
+            <td>主模型</td>
+            <td>side-query 用的小模型名，省成本；空则复用主 client</td>
+          </tr>
+        </table>
+      </div>
+
+      <p>TUI 侧增量：<code>/memory</code> 命令（显示空间目录与索引内容，注册进 <code>suggest.go</code>
+        的 <code>slashCommands</code>）；<code>MemoryMsg</code> 在对话区落一行 <code>memory updated: +2 ~1</code>。
+      </p>
+    </section>
+
+    <!-- ============ 11. 与压缩的边界 ============ -->
+    <section id="boundaries">
+      <div class="chap">第 11 章 · 边界</div>
+      <h2>记忆与压缩各管一段，互不读写对方状态</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th></th>
+            <th>压缩（internal/compact）</th>
+            <th>记忆（internal/memory）</th>
+          </tr>
+          <tr>
+            <td>管什么</td>
+            <td>本会话的发送形态：卸载、摘要、熔断</td>
+            <td>跨会话的知识：偏好、事实、指针</td>
+          </tr>
+          <tr>
+            <td>存哪</td>
+            <td><code>session.Store</code>：消息行、控制行、blob、session_state</td>
+            <td>文件系统：空间目录</td>
+          </tr>
+          <tr>
+            <td>谁写</td>
+            <td>循环内 <code>Maintain/Compact/Backfill</code></td>
+            <td>模型（memory 工具）+ Stop hook goroutine</td>
+          </tr>
+          <tr>
+            <td>谁读</td>
+            <td><code>Fold</code> 组装视图</td>
+            <td><code>OnUserPromptSubmit</code> 拼进 user 消息</td>
+          </tr>
+          <tr>
+            <td>读对方吗</td>
+            <td>不读记忆——压缩只动消息行</td>
+            <td>不读压缩状态——提取走 <code>LoadRawHistory</code> 原始行，天然越过折叠</td>
+          </tr>
+        </table>
+      </div>
+
+      <p>两个交互点都已确认无害：</p>
+      <ul>
+        <li><b>提取落在压缩之后</b>：提取读原始行，视图折叠与否不影响输入；游标按原始行 id 记，压缩不产生新行 id 之外的洞。
+        </li>
+        <li><b>blob 指针</b>：原始行里的 <code>&lt;persisted-output src="blob://…"&gt;</code> 只给预览进提取输入；
+          提取目标是偏好与事实，不依赖工具输出全文。确需全文时提取提示允许模型放弃该条线索（不读 blob——提取无权访问存储面）。
+        </li>
+      </ul>
+    </section>
+
+    <!-- ============ 12. 安全 ============ -->
+    <section id="security">
+      <div class="chap">第 12 章 · 安全与隐私</div>
+      <h2>写面封死在空间内，隔离靠 scope 不靠参数</h2>
+
+      <ul>
+        <li><b>写面</b>：<code>memory</code> 工具与提取代码只允许写空间目录内 <code>&lt;slug&gt;.md</code>；
+          slug 清洗去 <code>..</code>/分隔符/保留名；目录 <code>0700</code>、文件 <code>0600</code>。</li>
+        <li><b>隔离</b>：空间键全部从 ctx scope 派生（tenant/subject/workspace），模型参数里没有空间字段——跨租户读写在参数层不存在。
+        </li>
+        <li><b>不存凭据</b>：所有 Profile 的 DoNot 固定含一条"密钥、凭据、token 一律不存"；提取提示复述这条。</li>
+        <li><b>遗忘权</b>：用户说"忘掉 X"时模型用 <code>op=forget</code> 立即删；陪伴场景还要求提取提示复述"用户标了别记的内容不进记忆"。
+        </li>
+        <li><b>索引不泄密</b>：索引描述行是模型可见文本，提取提示要求 description 只写主题不写敏感值。</li>
+      </ul>
+
+      <div class="note danger">
+        <div class="nt">警告 · 云端部署的敏感面</div>
+        <p>陪伴/专家场景的记忆本质是用户画像——属于个人数据。云端落地时：文件后端挂每租户隔离的卷或对象存储前缀；
+          提取产物跨会话可见，<b>必须</b>保证 <code>SubjectID</code> 注入正确——错一次就是画像串号。上线前建议把
+          "提取输入不跨 subject"写进审计清单。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ 13. 风险 ============ -->
+    <section id="risks">
+      <div class="chap">第 13 章 · 风险</div>
+      <h2>哪些地方可能翻车</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>风险</th>
+            <th>触发条件</th>
+            <th>后果</th>
+            <th>缓解</th>
+          </tr>
+          <tr>
+            <td>side-query 拖慢首响应</td>
+            <td>每 user 轮一次选择调用</td>
+            <td>提交到"waiting for model"多等 ~1–3s</td>
+            <td>3s 硬超时 + 关键词降级 + 小清单短路；<code>RUNE_MEMORY_MODEL</code> 换小模型</td>
+          </tr>
+          <tr>
+            <td>注入膨胀</td>
+            <td>索引反复注入 / 正文超限</td>
+            <td>原始行体积与尾部 token 被记忆吃掉</td>
+            <td>哈希变化才注入 + 尾部扫描自愈 + §5.3 全套配额</td>
+          </tr>
+          <tr>
+            <td>提取质量靠模型自觉</td>
+            <td>JSON 解析失败、乱存、漏存</td>
+            <td>记忆噪声或缺失</td>
+            <td>schema 校验 + 已有清单前置去重 + ops 白名单；连续失败熔断</td>
+          </tr>
+          <tr>
+            <td>多进程同空间竞争</td>
+            <td>两个 rune 实例同一 workspace</td>
+            <td>单文件最后写者赢；整理重复跑</td>
+            <td>原子写 + 锁文件；单文件冲突可接受（记忆不是账本）</td>
+          </tr>
+          <tr>
+            <td>resume 后游标错乱</td>
+            <td>/resume 换绑会话</td>
+            <td>重复提取或漏提</td>
+            <td>游标按 sessionID 键——同一 session 续同一游标；换 session 用各自的游标</td>
+          </tr>
+          <tr>
+            <td>记忆过期仍在被引用</td>
+            <td>事实变化后旧记忆未更新</td>
+            <td>模型按过期事实回答</td>
+            <td>照抄 CC 的 before-recommending 段：涉及文件/函数/旗标的记忆先验证再推荐；冲突时信当下并顺手改记忆</td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 14. 阶段 ============ -->
+    <section id="phases">
+      <div class="chap">第 14 章 · 阶段</div>
+      <h2>五个阶段，每个都能独立验证</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>阶段</th>
+            <th>内容</th>
+            <th>验证方式</th>
+          </tr>
+          <tr>
+            <td><b>P1</b> 存储 + 直写</td>
+            <td><code>internal/memory</code>：空间解析、文件读写、slug/保留名校验、索引重建、
+              <code>memory</code> 工具、coding profile 的 system 指令段</td>
+            <td>纯单测：写/删/列/索引截断/路径逃逸拒绝；手工跑 TUI 说"记住我用 tab"</td>
+          </tr>
+          <tr>
+            <td><b>P2</b> 读路径</td>
+            <td>索引注入（hash + 自愈）、manifest 扫描、关键词召回（先不上 LLM）</td>
+            <td>单测覆盖注入规则；新开会话问"我说过什么偏好"</td>
+          </tr>
+          <tr>
+            <td><b>P3</b> 后台提取</td>
+            <td>Stop hook + 游标 + side-query ops + 熔断 + <code>OnChange</code> 提示</td>
+            <td>fake LLM 单测 ops 落盘；e2e 跑两轮对话看记忆累积</td>
+          </tr>
+          <tr>
+            <td><b>P4</b> 召回升级 + Profile 体系</td>
+            <td>LLM 选择器 + 降级链；companion profile + journal 模式 + 文件 profile 加载；<code>Scope.SubjectID</code>
+            </td>
+            <td>选择器 mock 测试；两个 profile 各跑一轮冒烟</td>
+          </tr>
+          <tr>
+            <td><b>P5</b> 整理 + UX</td>
+            <td>三门 + 整理 side-query；<code>/memory</code> 命令；<code>MemoryMsg</code></td>
+            <td>造 30+ 文件跑整理冒烟；TUI 命令走查</td>
+          </tr>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 15. 未决 ============ -->
+    <section id="open">
+      <div class="chap">第 15 章 · 未决事项</div>
+      <h2>留给第二个真实用例的四件事</h2>
+
+      <ul>
+        <li><b>提取器升级为迷你 agent</b>：side-query 无法"读已有正文再合并"（现靠 BodyBudget 前置正文缓解）。
+          若 ops 质量问题真实出现，换成 <code>agent.New</code> + 受限注册表（read_file + memory）跑读写循环——
+          hook、游标、ops 契约不变。</li>
+        <li><b>文件后端可换</b>：云端形态若不用本地盘，定义 <code>memory.FS</code>
+          接口（read/write/list/stat）接对象存储即可——本方案已把所有 I/O 收进 <code>internal/memory</code> 内部。
+        </li>
+        <li><b>多层空间</b>：private + team 双目录（CC TEAMMEM）有真实多用户需求时再加；届时 Space 从单值变
+          []Space，索引渲染两段式，类型辞典加 <code>&lt;scope&gt;</code> 标签——文案在 CC 源码里是现成的。</li>
+        <li><b>session memory</b>：CC 用每会话 <code>memory.md</code> 替代摘要调用来省一次 LLM
+          请求。RH 压缩已走滚动摘要且成本可控；若侧重回撤质量可考虑，属独立增量。</li>
+      </ul>
+    </section>
+
+    <footer>
+      依据：<code>learn.shareai.run/zh/s09</code>（教学版骨架）、CC 源码
+      <code>src/memdir/{memdir,findRelevantMemories,memoryScan,memoryTypes,paths}.ts</code>、
+      <code>src/services/{extractMemories,autoDream,SessionMemory}</code>。
+      RH 侧现状对照：<code>internal/{agent,session,compact,scope,prompt,subagent}</code>。
+    </footer>
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,1762 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code 会话压缩机制 — 场景化拆解</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 28px 140px
+    }
+
+    header {
+      padding: 80px 0 44px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 0
+    }
+
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1.5px;
+      background: var(--teal)
+    }
+
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -.015em;
+      line-height: 1.3;
+      margin-bottom: 16px
+    }
+
+    .subtitle {
+      color: var(--ink-2);
+      font-size: 17px;
+      max-width: 660px
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 26px
+    }
+
+    .meta span {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 4px 11px;
+      border-radius: 99px
+    }
+
+    /* 阅读导引 */
+    .guide {
+      padding: 36px 0 8px
+    }
+
+    .guide .inner {
+      background: var(--teal-bg);
+      border: 1px solid #CFE8E4;
+      border-radius: var(--radius);
+      padding: 24px 28px;
+      font-size: 15px
+    }
+
+    .guide b {
+      color: var(--teal)
+    }
+
+    /* 章节 */
+    section {
+      padding-top: 64px
+    }
+
+    .chap {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px
+    }
+
+    h2 {
+      font-size: 27px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.35;
+      margin-bottom: 14px
+    }
+
+    h3 {
+      font-size: 19px;
+      font-weight: 650;
+      margin: 40px 0 12px
+    }
+
+    h4 {
+      font-size: 16px;
+      font-weight: 650;
+      margin: 26px 0 8px
+    }
+
+    p {
+      margin-bottom: 14px
+    }
+
+    .lede {
+      color: var(--ink-2);
+      font-size: 16.5px;
+      margin-bottom: 24px
+    }
+
+    ul,
+    ol {
+      padding-left: 24px;
+      margin-bottom: 14px
+    }
+
+    li {
+      margin-bottom: 6px
+    }
+
+    strong {
+      font-weight: 650
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      padding: 1px 7px;
+      border-radius: 5px;
+      color: #7A5410;
+      word-break: break-word
+    }
+
+    pre {
+      background: #2B2925;
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.75;
+      overflow-x: auto;
+      margin: 16px 0 22px;
+      color: #EDEAE3
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit
+    }
+
+    pre .cm {
+      color: #8A857E
+    }
+
+    pre .hl {
+      color: #7FDCC8;
+      font-weight: 600
+    }
+
+    pre .numc {
+      color: #F0B86A
+    }
+
+    pre .kw {
+      color: #C4A8F0
+    }
+
+    pre .str {
+      color: #A8D5A2
+    }
+
+    pre .del {
+      color: #F09AA5
+    }
+
+    /* 场景块 */
+    .scene {
+      margin: 32px 0
+    }
+
+    .scene-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 0
+    }
+
+    .scene-tag {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: #fff;
+      background: var(--teal);
+      border-radius: 6px;
+      padding: 4px 10px;
+      flex-shrink: 0;
+    }
+
+    .scene.amber .scene-tag {
+      background: var(--amber)
+    }
+
+    .scene.rose .scene-tag {
+      background: var(--rose)
+    }
+
+    .scene.blue .scene-tag {
+      background: var(--blue)
+    }
+
+    .scene.violet .scene-tag {
+      background: var(--violet)
+    }
+
+    .scene-title {
+      font-size: 19px;
+      font-weight: 700
+    }
+
+    .scene-body {
+      border-left: 3px solid var(--line-2);
+      margin-left: 14px;
+      padding: 8px 0 4px 26px;
+    }
+
+    .scene.amber .scene-body {
+      border-color: #E8C89A
+    }
+
+    .scene.rose .scene-body {
+      border-color: #E8AEBC
+    }
+
+    .scene.blue .scene-body {
+      border-color: #B3C4EA
+    }
+
+    .scene.violet .scene-body {
+      border-color: #C9B0EA
+    }
+
+    .scene-q {
+      color: var(--ink-2);
+      font-style: normal;
+      margin-bottom: 14px
+    }
+
+    .scene-q::before {
+      content: "情境";
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: .1em;
+      color: var(--ink-3);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 2px 7px;
+      margin-right: 10px;
+      font-style: normal;
+      vertical-align: 2px
+    }
+
+    /* 前后对比 */
+    .ba {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 16px 0 22px;
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    .ba .side {
+      padding: 16px 20px
+    }
+
+    .ba .side+.side {
+      border-left: 1px solid var(--line)
+    }
+
+    .ba .ba-label {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 8px
+    }
+
+    .ba .before .ba-label {
+      color: var(--rose)
+    }
+
+    .ba .after .ba-label {
+      color: var(--green)
+    }
+
+    .ba pre {
+      margin: 0;
+      background: var(--code-bg);
+      color: var(--ink);
+      font-size: 11.5px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line)
+    }
+
+    .ba pre .cm {
+      color: var(--ink-3)
+    }
+
+    .ba pre .hl {
+      color: var(--teal);
+      font-weight: 600
+    }
+
+    .ba pre .del {
+      color: var(--rose)
+    }
+
+    @media(max-width:680px) {
+      .ba {
+        grid-template-columns: 1fr
+      }
+
+      .ba .side+.side {
+        border-left: none;
+        border-top: 1px solid var(--line)
+      }
+    }
+
+    /* 消息气泡示意 */
+    .thread {
+      margin: 16px 0 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+      box-shadow: var(--shadow)
+    }
+
+    .msg {
+      display: flex;
+      gap: 12px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13.5px
+    }
+
+    .msg:last-child {
+      border-bottom: none
+    }
+
+    .msg .who {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      width: 64px;
+      flex-shrink: 0;
+      padding-top: 3px;
+      letter-spacing: .04em
+    }
+
+    .msg.u .who {
+      color: var(--blue)
+    }
+
+    .msg.a .who {
+      color: var(--violet)
+    }
+
+    .msg.t .who {
+      color: var(--amber)
+    }
+
+    .msg.s .who {
+      color: var(--ink-3)
+    }
+
+    .msg .bd {
+      color: var(--ink-2);
+      min-width: 0
+    }
+
+    .msg .bd code {
+      font-size: 11.5px
+    }
+
+    .msg.faded {
+      opacity: .45
+    }
+
+    .msg.faded .bd {
+      text-decoration: line-through;
+      text-decoration-color: var(--line-2)
+    }
+
+    .msg.new {
+      background: var(--green-bg)
+    }
+
+    .msg.new .who {
+      color: var(--green)
+    }
+
+    .msg.sum {
+      background: var(--teal-bg)
+    }
+
+    .msg.sum .who {
+      color: var(--teal)
+    }
+
+    .msg.boundary {
+      background: #F6F5F1;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3);
+      justify-content: center;
+      letter-spacing: .06em
+    }
+
+    .msg.boundary .bd {
+      text-align: center
+    }
+
+    /* 注释卡 / 要点 */
+    .note {
+      border-left: 3px solid var(--blue);
+      background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px;
+      margin: 18px 0;
+      font-size: 15px
+    }
+
+    .note.warn {
+      border-color: var(--amber);
+      background: var(--amber-bg)
+    }
+
+    .note.danger {
+      border-color: var(--rose);
+      background: var(--rose-bg)
+    }
+
+    .note.ok {
+      border-color: var(--green);
+      background: var(--green-bg)
+    }
+
+    .note.teal {
+      border-color: var(--teal);
+      background: var(--teal-bg)
+    }
+
+    .note .nt {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 6px
+    }
+
+    .note.warn .nt {
+      color: var(--amber)
+    }
+
+    .note.danger .nt {
+      color: var(--rose)
+    }
+
+    .note.ok .nt {
+      color: var(--green)
+    }
+
+    .note.teal .nt {
+      color: var(--teal)
+    }
+
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt {
+      color: var(--blue)
+    }
+
+    .note p {
+      margin-bottom: 8px
+    }
+
+    .note p:last-child {
+      margin-bottom: 0
+    }
+
+    /* 表格 */
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px
+    }
+
+    th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: #F6F5F0;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top
+    }
+
+    tr:last-child td {
+      border-bottom: none
+    }
+
+    td code {
+      font-size: 12px
+    }
+
+    td .dim {
+      color: var(--ink-3);
+      font-size: 13px
+    }
+
+    /* 步骤流 */
+    .steps {
+      margin: 20px 0
+    }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px dashed var(--line)
+    }
+
+    .step:last-child {
+      border-bottom: none
+    }
+
+    .step .n {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--paper);
+      border: 1.5px solid var(--teal);
+      color: var(--teal);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 3px
+    }
+
+    .step .st {
+      font-size: 15px
+    }
+
+    .step .st b {
+      font-weight: 650
+    }
+
+    .step .sd {
+      font-size: 14px;
+      color: var(--ink-2);
+      margin-top: 3px
+    }
+
+    /* 大字结论 */
+    .bigconclusion {
+      background: linear-gradient(135deg, #EDF7F5, #EFF3FC);
+      border: 1px solid #CFE0E8;
+      border-radius: var(--radius);
+      padding: 28px 32px;
+      margin: 24px 0;
+      font-size: 17px;
+      line-height: 1.8
+    }
+
+    .svg-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 26px;
+      overflow-x: auto;
+      box-shadow: var(--shadow);
+      margin: 18px 0 8px
+    }
+
+    .svg-cap {
+      font-size: 12.5px;
+      color: var(--ink-3);
+      text-align: center;
+      margin-top: 12px;
+      font-family: var(--mono)
+    }
+
+    .src {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3)
+    }
+
+    .src code {
+      font-size: 11px;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--teal)
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      margin-top: 80px;
+      padding-top: 28px;
+      color: var(--ink-3);
+      font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <header>
+      <div class="eyebrow">源码拆解 · Claude Code Internals</div>
+      <h1>Claude Code 是怎么给会话"减肥"的</h1>
+      <p class="subtitle">不堆术语，跟着一个真实会话从空到爆的全过程走一遍：模型每读一个文件、每跑一条命令，上下文就在长大；Claude Code 在沿途设了五道关卡，一道比一道狠，最后一道是 LLM
+        亲自上手写摘要。</p>
+      <div class="meta">
+        <span>源码 ~/home/opensource/claude-code-source-code</span>
+        <span>核心目录 src/services/compact/</span>
+        <span>场景化版 · 浅色</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读：</b>第 1 章先给你一张会话生命周期的全景图；第 2–6 章按<b>触发顺序</b>逐个场景讲——每个场景都是"发生了什么 → 上下文前后对比 → 源码在哪"。第 7 章讲协议安全（为什么切割不能乱切），第
+        8 章是摘要质量的设计细节，第 9 章映射到 RuneHarness。<br>
+        先记住一个数字语境：下文所有例子都用 <b>200K token 窗口</b>的模型。
+      </div>
+    </div>
+
+    <!-- ============ 1. 全景 ============ -->
+    <section id="story">
+      <div class="chap">第 1 章 · 全景</div>
+      <h2>一个会话的一生：上下文曲线上的五道关卡</h2>
+      <p class="lede">你让 Claude Code 帮你重构一个项目。它开始读文件、跑测试、改代码——每一轮工具结果都往上下文里塞东西。下面这条曲线就是这次会话的"体重变化"，每个转折点对应一道压缩关卡。</p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 340" width="100%" style="min-width:760px" role="img" aria-label="上下文增长曲线">
+          <!-- axes -->
+          <line x1="70" y1="20" x2="70" y2="290" stroke="#DFDAD0" stroke-width="1.5" />
+          <line x1="70" y1="290" x2="890" y2="290" stroke="#DFDAD0" stroke-width="1.5" />
+          <!-- y labels -->
+          <g font-family="var(--mono)" font-size="10.5" fill="#9A948A">
+            <text x="60" y="294" text-anchor="end">0</text>
+            <text x="60" y="198" text-anchor="end">100K</text>
+            <text x="60" y="103" text-anchor="end">200K</text>
+          </g>
+          <line x1="70" y1="194" x2="890" y2="194" stroke="#F0EDE5" stroke-dasharray="4,4" />
+          <line x1="70" y1="99" x2="890" y2="99" stroke="#F0EDE5" stroke-dasharray="4,4" />
+
+          <!-- threshold lines: window 200K, warn 147K, auto 167K, block 177K -->
+          <!-- y = 290 - tokens/200K * 191 -->
+          <line x1="70" y1="149.5" x2="890" y2="149.5" stroke="#A85507" stroke-width="1.4" stroke-dasharray="6,4" />
+          <text x="880" y="143" font-family="var(--mono)" font-size="10" fill="#A85507" text-anchor="end">147K ·
+            警告线（提示你去 /compact）</text>
+          <line x1="70" y1="130.4" x2="890" y2="130.4" stroke="#0E7368" stroke-width="2" stroke-dasharray="6,4" />
+          <text x="880" y="122" font-family="var(--mono)" font-size="10" fill="#0E7368" text-anchor="end"
+            font-weight="700">167K · 强制压缩线（代码自动触发）</text>
+          <line x1="70" y1="95.5" x2="890" y2="95.5" stroke="#26241F" stroke-width="1" stroke-dasharray="2,3"
+            opacity=".4" />
+          <text x="880" y="88" font-family="var(--mono)" font-size="10" fill="#9A948A" text-anchor="end">200K ·
+            物理上限</text>
+
+          <!-- the curve: grows, dips on clear, grows, big drop at compact, grows, 413 edge -->
+          <path d="M75 285
+               C 140 275, 190 258, 240 240
+               C 285 224, 330 210, 370 200
+               L 370 213
+               C 415 200, 470 180, 520 166
+               C 545 159, 565 152, 585 150
+               L 585 158
+               C 615 150, 645 138, 670 131
+               L 670 262
+               C 720 252, 770 232, 815 210
+               L 815 88
+               L 828 96
+               " fill="none" stroke="#2657C4" stroke-width="2.5" stroke-linecap="round" />
+
+          <!-- annotations -->
+          <g font-family="var(--sans)" font-size="11.5" fill="#26241F">
+            <text x="150" y="270">① 正常干活期</text>
+            <text x="150" y="284" font-size="10" fill="#9A948A">读文件/跑测试，曲线稳定增长</text>
+
+            <circle cx="370" cy="206" r="4.5" fill="#177245" />
+            <text x="370" y="232" text-anchor="middle" fill="#177245" font-weight="600">② 预算落盘</text>
+            <text x="370" y="246" text-anchor="middle" font-size="10" fill="#9A948A">大结果存盘留预览（日常削峰）</text>
+
+            <circle cx="585" cy="154" r="4.5" fill="#A85507" />
+            <text x="585" y="178" text-anchor="middle" fill="#A85507" font-weight="600">③ 离开 1 小时回来</text>
+            <text x="585" y="192" text-anchor="middle" font-size="10" fill="#9A948A">旧工具结果原地清空</text>
+
+            <circle cx="670" cy="131" r="5.5" fill="#0E7368" />
+            <text x="670" y="70" text-anchor="middle" fill="#0E7368" font-weight="700" font-size="12">④ 撞线 → 自动压缩</text>
+            <text x="670" y="84" text-anchor="middle" font-size="10" fill="#9A948A">LLM 写摘要，历史换成一条消息</text>
+
+            <circle cx="815" cy="88" r="4.5" fill="#B4123A" />
+            <text x="815" y="70" text-anchor="middle" fill="#B4123A" font-weight="600" font-size="11">⑤ 万一还超 → API
+              413</text>
+            <text x="815" y="284" text-anchor="middle" font-size="10" fill="#B4123A">reactive 兜底再压一次重试</text>
+          </g>
+        </svg>
+        <div class="svg-cap">示意图：同一会话内上下文 token 随轮次的变化 · ②③是零成本维护，④花一次 LLM 调用，⑤是最后的救生圈</div>
+      </div>
+
+      <div class="bigconclusion">
+        一句话原理：<strong>压缩不是等模型想起来要压，而是 harness 每轮发请求前都检查一遍体重秤</strong>。轻的手段（改内容、砍旧结果）每轮白跑；重的手段（让 LLM 写摘要）只在撞线那一刻出手；API
+        报错还有最后一层兜底。模型从头到尾<b>没有被问意见</b>——这是刻意设计。
+      </div>
+    </section>
+
+    <!-- ============ 2. 场景一：大结果落盘 ============ -->
+    <section id="persist">
+      <div class="chap">第 2 章 · 第一道关</div>
+      <h2>场景：模型一口气 cat 了个 80KB 的日志</h2>
+
+      <div class="scene">
+        <div class="scene-head"><span class="scene-tag">场景 A</span><span class="scene-title">单条工具结果太大 → 整个存盘，留 2KB
+            预览</span></div>
+        <div class="scene-body">
+          <p class="scene-q">调试线上问题，模型执行 <code>tail -2000 app.log</code>，返回 152KB 文本。按 4 字节/token 粗算就是 ~38K
+            tokens——一次调用吃掉窗口的五分之一。</p>
+          <p>Claude Code 在结果<b>回到上下文的那一刻</b>就拦下来：阈值是 <code>min(工具自声明上限, 50K 字符)</code>，全局硬顶 400KB。超了就把全文写到会话目录
+            <code>tool-results/{tool_use_id}.txt</code>，上下文里换成一张"收据"：
+          </p>
+
+          <div class="ba">
+            <div class="side before">
+              <div class="ba-label">存盘前 · 发给模型的内容</div>
+              <pre>tool_result (id=call_x9):
+  [152KB 日志原文…
+   38000+ tokens]</pre>
+            </div>
+            <div class="side after">
+              <div class="ba-label">存盘后 · 模型实际看到</div>
+              <pre>tool_result (id=call_x9):
+&lt;persisted-output&gt;
+Output too large (152KB).
+Full output saved to:
+  ~/.claude/…/tool-results/call_x9.txt
+Preview (first 2.0KB):
+  2025-01-08 ERROR …
+&lt;/persisted-output&gt;</pre>
+            </div>
+          </div>
+
+          <p>关键：<b>信息没丢，只是换了位置</b>。模型知道全文在哪，需要细节时用 Read 自取。这比"截断丢弃"强得多——截断是不可逆损失，落盘是可回溯的。</p>
+          <p class="src">源码 <code>src/utils/toolResultStorage.ts → maybePersistLargeToolResult</code></p>
+        </div>
+      </div>
+
+      <div class="scene amber">
+        <div class="scene-head"><span class="scene-tag">场景 B</span><span class="scene-title">一轮并行 10 个工具，每个 30KB →
+            聚合预算</span></div>
+        <div class="scene-body">
+          <p class="scene-q">单条都没超 50K，但模型一轮发了 10 个并行搜索——合计 300KB。单条拦截管不住这种"蚂蚁搬家"。</p>
+          <p>于是还有一层<b>聚合预算</b>：同一个 wire 级 user 消息里（Anthropic 协议中一轮并行结果会合并进一条消息），所有 tool_result 合计超
+            <code>200K 字符</code>，就从最大的开始逐个落盘换预览，直到达标。消息之间互不影响——这轮超了这轮管，上一轮 150K 不动。
+          </p>
+
+          <div class="note warn">
+            <div class="nt">为什么决策要"冻结"</div>
+            <p>这层有个反直觉设计：每个 tool_use_id 的命运<b>见一次就定型</b>。已经换成预览的，每轮重放同一个预览串（逐字节一致）；当初没换的，以后上下文再挤也不换它。原因是 prompt
+              cache——服务端按前缀缓存，同一前缀每轮重发，只要有一段内容变了，后面全部缓存失效。所以"这轮替换成 A、下轮想换成 B"的自由只能放弃。决策记录还会写进 transcript，resume 后原样重建。
+            </p>
+            <p class="src">源码 <code>enforceToolResultBudget</code> · 分组时还精确模拟了 wire 合并：同 message.id 的 streaming
+              拆分片段归一组，否则在"看不见的合并处"漏管。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="nt">顺带一个防呆</div>
+        <p>空的工具结果会被填成 <code>"(xxx completed with no output)"</code>。因为空结果会让某些模型误触发 <code>\n\nHuman:</code>
+          停止序列、一句话不说就结束回合（线上事故 inc-4586）。</p>
+      </div>
+    </section>
+
+    <!-- ============ 3. 场景二：清旧结果 ============ -->
+    <section id="clear">
+      <div class="chap">第 3 章 · 第二道关</div>
+      <h2>场景：你去吃了个饭，一小时后回来</h2>
+
+      <div class="scene amber">
+        <div class="scene-head"><span class="scene-tag">场景 C</span><span class="scene-title">闲置超 60 分钟 →
+            旧工具结果原地清空</span></div>
+        <div class="scene-body">
+          <p class="scene-q">上午模型读了 20 个文件找 bug，你去开会一小时。回来时上下文里还挂着一堆一小时前的文件内容——反正服务端 prompt cache（1 小时
+            TTL）肯定过期了，整个前缀横竖要重写，不如趁这机会瘦身。</p>
+          <p>触发时（<code>now − 最近 assistant 时间戳 &gt; 60min</code>），把<b>除最近 5 条外</b>所有可压缩工具的结果体原地清掉：</p>
+
+          <div class="ba">
+            <div class="side before">
+              <div class="ba-label">清空前</div>
+              <pre>tool_result (id=call_31):
+src/auth.ts:1-200 完整内容…
+（两小时前读的，40 个结果类似）</pre>
+            </div>
+            <div class="side after">
+              <div class="ba-label">清空后 · 结构纹丝不动</div>
+              <pre>tool_result (id=call_31):
+[Old tool result content cleared]
+
+<span class="cm"># id、is_error、配对关系全保留</span></pre>
+            </div>
+          </div>
+
+          <p>注意它只换 content 字符串——块还在、id 还在、和 tool_use 的配对关系纹丝不动。<b>可清空的工具有白名单</b>：Read、Bash
+            系、Grep、Glob、WebSearch、WebFetch、Edit、Write。为什么挑这些？它们的结果可再取——文件还在盘上、命令还能重跑。</p>
+          <p class="src">源码 <code>src/services/compact/microCompact.ts → maybeTimeBasedMicrocompact</code> · 默认配置 60min
+            / 保留最近 5 条，GrowthBook flag 控制（默认关闭）。</p>
+        </div>
+      </div>
+
+      <div class="scene blue">
+        <div class="scene-head"><span class="scene-tag">进阶版</span><span
+            class="scene-title">服务端直接删缓存里的旧结果（ant-only）</span></div>
+        <div class="scene-body">
+          <p>本地清空会破坏缓存前缀。内部版还有两条更精细的路径：</p>
+          <ul>
+            <li><b>cached microcompact</b>：不改本地消息，在 API 请求里带 <code>cache_edits</code> 指令，让服务端把缓存中的旧 tool_result
+              标记删除——缓存命中和瘦身兼得。</li>
+            <li><b>API 原生 context_management</b>：请求体里声明策略——"input_tokens 超 180K 时，服务端自动清掉够降到 40K 的旧
+              tool_result"；thinking 块单独一条策略（默认全留，闲置超 1h 只留最后一轮）。</li>
+          </ul>
+          <p class="src">源码 <code>cachedMicrocompact.ts</code> / <code>apiMicrocompact.ts</code> · 均为 ant
+            内部特性，开源构建中被裁剪，但思路可借鉴。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 4. 场景三：撞线 ============ -->
+    <section id="threshold">
+      <div class="chap">第 4 章 · 第三道关（核心）</div>
+      <h2>场景：曲线涨到 167K，代码不问意见直接动手</h2>
+      <p class="lede">这是你问的"托底指标"。先看公式，再看它为什么信得过。</p>
+
+      <h3>4.1 阈值公式：两行减法，每段都有出处</h3>
+      <p>公式本身只有两步。先列出它，再代入数字算一遍，最后讲每一段缓冲在为谁付费。</p>
+
+      <pre><span class="cm">// src/services/compact/autoCompact.ts:33-49, 72-91 —— 没有玄学，全是减法</span>
+<span class="kw">有效窗口</span> = getContextWindowForModel(model)          <span class="cm">// 200K，[1m] 模型为 1M</span>
+        − min(getMaxOutputTokensForModel(model), <span class="numc">20_000</span>)  <span class="cm">// 输出预留</span>
+
+<span class="kw">触发线</span> = 有效窗口 − <span class="numc">13_000</span>   <span class="cm">// AUTOCOMPACT_BUFFER_TOKENS</span>
+<span class="kw">警告线</span> = 触发线 − <span class="numc">20_000</span>   <span class="cm">// WARNING / ERROR 共用这条</span>
+<span class="kw">阻断线</span> = 有效窗口 − <span class="numc">3_000</span>   <span class="cm">// MANUAL_COMPACT_BUFFER_TOKENS</span></pre>
+
+      <h4>先算一遍：200K 窗口、max_output 为 32K 的模型</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>步骤</th>
+              <th>算式</th>
+              <th>结果</th>
+              <th>这笔钱给谁花</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>物理窗口</td>
+              <td><code>getContextWindowForModel</code></td>
+              <td>200,000</td>
+              <td>API 接受的总量上限</td>
+            </tr>
+            <tr>
+              <td>− 输出预留</td>
+              <td><code>min(32,000, 20,000)</code></td>
+              <td>−20,000</td>
+              <td>压缩时那次摘要调用的产出</td>
+            </tr>
+            <tr>
+              <td><b>= 有效窗口</b></td>
+              <td>200,000 − 20,000</td>
+              <td><b>180,000</b></td>
+              <td>历史部分允许涨到的高度</td>
+            </tr>
+            <tr>
+              <td>− 触发缓冲</td>
+              <td><code>AUTOCOMPACT_BUFFER_TOKENS</code></td>
+              <td>−13,000</td>
+              <td>压线过检那一轮的 overshoot</td>
+            </tr>
+            <tr>
+              <td><b>= auto-compact 触发线</b></td>
+              <td>180,000 − 13,000</td>
+              <td><b>167,000</b></td>
+              <td>到线即压，不问模型意见</td>
+            </tr>
+            <tr>
+              <td>− 警告偏移</td>
+              <td><code>WARNING_THRESHOLD_BUFFER_TOKENS</code></td>
+              <td>−20,000</td>
+              <td>给用户的提前量</td>
+            </tr>
+            <tr>
+              <td><b>= 警告线</b></td>
+              <td>167,000 − 20,000</td>
+              <td><b>147,000</b></td>
+              <td><code>Context low · Run /compact</code></td>
+            </tr>
+            <tr>
+              <td>− 阻断偏移</td>
+              <td><code>MANUAL_COMPACT_BUFFER_TOKENS</code></td>
+              <td>−3,000</td>
+              <td>手动 /compact 的发送空间</td>
+            </tr>
+            <tr>
+              <td><b>= 阻断线</b></td>
+              <td>180,000 − 3,000</td>
+              <td><b>177,000</b></td>
+              <td>到线拒发普通请求</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>再看一眼：200K 是怎么被分掉的</h4>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 252" width="100%" style="min-width:760px" role="img" aria-label="200K 窗口的预算拆分">
+          <!-- x = 60 + tokens/200K * 800 -->
+          <rect x="60" y="56" width="588" height="34" rx="4" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.2" />
+          <text x="354" y="77" text-anchor="middle" font-size="12.5" fill="#0E7368" font-weight="650">
+            正常使用区 · 0–147K</text>
+          <rect x="648" y="56" width="80" height="34" fill="#FBF1E4" stroke="#A85507" stroke-width="1.2" />
+          <rect x="728" y="56" width="52" height="34" fill="#E4EAF9" stroke="#3D5A9E" stroke-width="1.2" />
+          <rect x="780" y="56" width="80" height="34" rx="4" fill="#F3EEFB" stroke="#6D4FA1" stroke-width="1.2" />
+          <g font-family="var(--mono)" font-size="10.5" fill="#5E5748" text-anchor="middle">
+            <text x="60" y="108">0</text>
+            <text x="648" y="108">147K</text>
+            <text x="728" y="108">167K</text>
+            <text x="780" y="108">180K</text>
+            <text x="860" y="108">200K</text>
+          </g>
+          <g font-size="11" fill="#5E5748" text-anchor="middle">
+            <text x="688" y="48">警告区 20K</text>
+            <text x="754" y="48">触发垫 13K</text>
+            <text x="820" y="48">输出预留 20K</text>
+          </g>
+          <!-- legend -->
+          <g font-size="12.5" fill="#26241F">
+            <rect x="60" y="128" width="11" height="11" rx="2" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="78" y="138">
+              <tspan font-weight="650">正常使用区 0–147K</tspan>
+              <tspan fill="#5E5748">　随便涨；只有日常维护（§2–3 章）在这里削峰</tspan>
+            </text>
+            <rect x="60" y="154" width="11" height="11" rx="2" fill="#FBF1E4" stroke="#A85507" />
+            <text x="78" y="164">
+              <tspan font-weight="650">警告区 147K–167K</tspan>
+              <tspan fill="#5E5748">　UI 提示 Context low，用户还有先手的机会</tspan>
+            </text>
+            <rect x="60" y="180" width="11" height="11" rx="2" fill="#E4EAF9" stroke="#3D5A9E" />
+            <text x="78" y="190">
+              <tspan font-weight="650">触发垫 167K–180K</tspan>
+              <tspan fill="#5E5748">　兜住"过检后一轮冲过头"的增量和估算误差</tspan>
+            </text>
+            <rect x="60" y="206" width="11" height="11" rx="2" fill="#F3EEFB" stroke="#6D4FA1" />
+            <text x="78" y="216">
+              <tspan font-weight="650">输出预留 180K–200K</tspan>
+              <tspan fill="#5E5748">　正常请求不进入；留给模型当轮输出和摘要输出</tspan>
+            </text>
+          </g>
+        </svg>
+      </div>
+
+      <h4>每一段缓冲为什么是这个数</h4>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>输出预留 20K——为什么第一道减的是输出</b>
+            <div class="sd">因为测量口径把输入和输出记在同一份账里。<code>getTokenCountFromUsage</code> 把
+              input + cache + output 加在一起（<code>utils/tokens.ts</code>），所以"窗口预算"装的其实是"历史 +
+              模型要吐的响应"两样东西。有效窗口先划出输出的位置，剩下的才是历史允许涨到的高度。
+              <br>为什么是 20K：代码注释写明出处——线上摘要输出的 p99.99 是 17,387 tok，向上取整。为什么是
+              <code>min()</code>：模型的 max_output 被压到 8K 时（<code>tengu_otk_slot_v1</code> 开关），预留跟着缩成 8K，触发线相应从 167K 抬到
+              179K。模型吐不出 20K，就不该替它留 20K。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>触发缓冲 13K——兜住"压线过检"的那一轮</b>
+            <div class="sd">代码没写这个数字的出处，下面是按检查点位置的推断。检查是离散的、按轮做的，上下文却是按"一整轮"为单位涨的。166.9K
+              通过检查后发出的请求，回来时可能带着一整轮新内容：模型输出加一批工具结果。13K 吸收这个
+              overshoot，让触发压缩的下一轮摘要调用仍落在有效窗口内。它也顺带兜住尾部 chars/4 粗估的误差和摘要请求 prompt 自身的几千 token。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>警告偏移 20K——给人看的，不是给代码看的</b>
+            <div class="sd">剩约 10% 窗口时 UI 显示 <code>Context low · Run /compact</code>。此刻手动压缩还来得及挑选要保留的内容，所以提前量给到 20K 而不是
+              3K。UI 的
+              <code>percentLeft</code> 按"距下一次动作"计算：auto 开时相对触发线，auto 关时相对有效窗口。warning 和 error 两个标志共用 −20K，是同一位置的两个提示级别。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>阻断偏移 3K——给手动 /compact 留的发送空间</b>
+            <div class="sd">query.ts:592 的注释写明用途："reserves space so users can still run /compact
+              manually"。压缩请求也是一次 API 调用，余量耗到 0 时连自救都发不出去，所以提前 3K 拒发普通请求。注释原文标明它只在主动压缩不接管时生效——auto 关闭，或者 auto
+              开着但压缩已熔断。到线后系统合成一个
+              prompt-too-long 错误直接退出。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="nt">为什么全是绝对值，不是百分比</div>
+        <p>每段缓冲对应一笔具体的账：一篇摘要输出、一轮 overshoot、一次手动压缩的发送成本。这些账的大小跟窗口大小无关，所以不按窗口缩放。推论：1M 窗口的模型用同一套公式，触发线在
+          967K，占窗口 96.7%——窗口越大，代码越敢压到更晚才动手。</p>
+      </div>
+
+      <p class="src">测试和逃生用的旋钮：<code>CLAUDE_CODE_AUTO_COMPACT_WINDOW</code>
+        从输入侧压低窗口上限；<code>CLAUDE_AUTOCOMPACT_PCT_OVERRIDE</code>
+        按有效窗口的百分比覆盖触发线；<code>DISABLE_AUTO_COMPACT</code> 关掉自动压缩但保留手动 /compact。</p>
+
+      <p>所以 200K 窗口 + 默认 max_output 的模型：<b>有效窗口 180K，警告线 147K，强制压缩线 167K（≈83.5%）</b>；触发线到物理上限之间其实隔着 33K，够一次压缩动作从容完成。</p>
+
+      <h3>4.2 测量靠什么：不是数字符，是 API 自己报的账</h3>
+      <p>每次 API 响应都带回精确的 <code>usage</code>（input_tokens + cache 读写 + output_tokens，即整个窗口的真实占用）。Claude Code 把它存在
+        assistant 消息上，下次测量时：</p>
+
+      <div class="thread">
+        <div class="msg faded">
+          <div class="who">…</div>
+          <div class="bd">更早的消息（已在锚点内）</div>
+        </div>
+        <div class="msg a">
+          <div class="who">assistant</div>
+          <div class="bd"><code>usage: input 148K + cache_read + output</code> ← <b>锚点：真实精确值</b></div>
+        </div>
+        <div class="msg t">
+          <div class="who">tool ×3</div>
+          <div class="bd">三条工具结果（锚点之后的新货）</div>
+        </div>
+        <div class="msg u">
+          <div class="who">user</div>
+          <div class="bd">你的新消息</div>
+        </div>
+        <div class="msg s">
+          <div class="who"></div>
+          <div class="bd">→ 当前估值 = <b>锚点 usage + 尾部字符粗估（len/4）</b>，准且零成本</div>
+        </div>
+      </div>
+
+      <p>有个坑它专门处理了：并行工具调用会把一次响应拆成<b>多条同 message.id 的 assistant 记录</b>，中间穿插 tool_result。如果锚点只取最后一条，会漏估前面穿插的结果——所以实现会沿同 id
+        向前走到第一个兄弟节点再开估。</p>
+
+      <h3>4.3 判定链上还有哪些保险</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>递归护栏</b>
+            <div class="sd">压缩 agent / session-memory agent 自己继承全量历史，它们内部再触发压缩会死锁——<code>querySource</code> 白名单直接挡掉。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>多层开关</b>
+            <div class="sd"><code>DISABLE_COMPACT</code>、<code>DISABLE_AUTO_COMPACT</code>、用户设置、reactive-only
+              实验、context-collapse 接管——每一层都能喊停。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>失败熔断</b>
+            <div class="sd">连续失败 3 次就放弃本会话的自动压缩。注释里的真实数据：曾有 1,279 个会话各连续失败 50+ 次（最高 3,272 次），每天白烧约 25 万次 API 调用，熔断是血的教训。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note danger">
+        <div class="nt">为什么不让模型自己决定——源码实证</div>
+        <p>这个构建里<b>模型根本没有 compact 工具可调</b>（教学版 s08 里的"compact
+          工具"是简化）。原因你很清楚：上下文越满幻觉越重，一个快被自己上下文喂傻的模型指望它想起"我该压缩了"，不如指望代码里的一个 <code>&gt;=</code>。模型层的唯一自救是 flag-gated 的
+          SnipTool（内部特性）。<b>压缩决策权 100% 在 harness</b>，这正是"工程托底"的含义。</p>
+      </div>
+    </section>
+
+    <!-- ============ 5. 摘要怎么生成 ============ -->
+    <section id="summary">
+      <div class="chap">第 5 章 · 压缩全过程</div>
+      <h2>场景：撞线那一刻，后台发生了什么</h2>
+      <p class="lede">从"判定该压了"到"模型拿到新上下文"，中间是一整条流水线。跟你想象的可能不一样——它甚至<strong>能不调就不调 LLM</strong>。</p>
+
+      <h3>5.1 先走捷径：有现成笔记就不写摘要</h3>
+      <p>flag 开启时，后台早有一个 session-memory fork 在<strong>持续</strong>把对话要点写进 notes 文件（增量维护，游标记到
+        <code>lastSummarizedMessageId</code>）。需要压缩时直接把这份笔记当摘要，保留"游标之后 + 向前扩展到 ≥10K tokens 且 ≥5 条文本消息、≤40K
+        封顶"的尾部原文——<b>零额外 LLM 调用</b>。notes 是空模板才回落到传统摘要。
+      </p>
+
+      <h3>5.2 正经摘要：一次"很会省钱"的 LLM 调用</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>拼请求</b>
+            <div class="sd">全量历史（压缩边界后的投影）+ 末尾追加一条 user 消息："请给这段对话写详细摘要"，prompt 结构见 5.3。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>首选：fork agent 共享缓存</b>
+            <div class="sd">用和主线程<b>完全相同的 cache-key 参数</b>（system、tools、消息前缀）起个 fork——命中已有 prompt cache，几乎不产生
+              cache_creation。不共享时实测 98% cache miss。单回合、禁止一切工具调用。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>兜底：独立流式调用</b>
+            <div class="sd">fork 拿不到文本就走独立请求：system prompt 换成摘要专用、thinking 关掉、max_output 限 20K、工具只挂 Read。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>摘要请求自己也可能超限</b>
+            <div class="sd">快爆的历史再发一次当然可能 413。解法：按"一次 API 往返一组"从头丢弃——能从报错里解析出 <code>N tokens &gt; M maximum</code>
+              就按差额丢，否则丢 20%；最多重试 3 次；砍完若以 assistant 开头就补一条合成 user 占位。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">5</div>
+          <div class="st"><b>组装新消息集（当轮生效）</b>
+            <div class="sd">边界标记 → 摘要消息 → 保留的尾部消息 → 回补附件 → hook 结果。不删旧历史，只是加了条"分界线"，本轮直接拿新集合去调模型。</div>
+          </div>
+        </div>
+      </div>
+
+      <h3>5.3 摘要 prompt 解剖：损失最小化的秘密在结构</h3>
+      <div class="thread">
+        <div class="msg s">
+          <div class="who">头部</div>
+          <div class="bd">
+            <code>CRITICAL: Respond with TEXT ONLY. Do NOT call any tools… will be REJECTED and will waste your only turn.</code><br><span
+              class="dim">放最前不是修辞：fork 继承全套工具（缓存键要求），Sonnet 4.6 有 2.79% 概率无视提醒去调工具——单回合下调工具 = 这次压缩白做。头部 + 尾部提醒 +
+              canUseTool 强制拒绝，三重冗余。</span>
+          </div>
+        </div>
+        <div class="msg s">
+          <div class="who">草稿垫</div>
+          <div class="bd">
+            <code>把分析包在 &lt;analysis&gt; 里：按时间顺序过一遍对话，识别意图、方法、决策、文件名、完整代码片段、函数签名、错误与修复、用户纠正过什么…</code><br><span
+              class="dim">本质是 CoT 召回器：强制先全文通读再动笔。写完 <code>formatCompactSummary</code> 把 analysis
+              整块剥掉——草稿不进上下文，白赚质量。</span>
+          </div>
+        </div>
+        <div class="msg s">
+          <div class="who">正文</div>
+          <div class="bd"><code>&lt;summary&gt;</code> 九段固定 schema ↓</div>
+        </div>
+        <div class="msg s">
+          <div class="who">尾部</div>
+          <div class="bd"><code>REMINDER: Do NOT call any tools…</code> + 可选的用户自定义侧重（<code>/compact 重点保留测试输出</code>）
+          </div>
+        </div>
+      </div>
+
+      <h4>九段 schema——每段堵一类已知丢失点</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>段落</th>
+              <th>它在防什么</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td><b>Primary Request and Intent</b> 用户全部显式请求</td>
+              <td>压缩后忘了最初要干嘛（目标漂移）</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td><b>Key Technical Concepts</b></td>
+              <td>领域词汇丢失，后续选型/用词跑偏</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td><b>Files and Code Sections</b> 文件名 + <b>完整代码片段</b> + 为什么读它</td>
+              <td>最疼的实物损失：文件内容没了被迫重读或凭印象重写</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td><b>Errors and fixes</b> 错误与修法 + <b>用户纠正</b></td>
+              <td>把用户刚否掉的方案又做一遍</td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td><b>Problem Solving</b> 已解决 + 进行中</td>
+              <td>推理结论蒸发、重走弯路</td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td><b>All user messages</b> 列出全部非工具结果的用户消息</td>
+              <td>用户中途改需求被"平均化"抹掉——用户消息是意图最高保真源</td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td><b>Pending Tasks</b></td>
+              <td>任务清单蒸发</td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td><b>Current Work</b> 压缩瞬间在做什么</td>
+              <td>断点丢失、不知从哪续</td>
+            </tr>
+            <tr>
+              <td>9</td>
+              <td><b>Optional Next Step</b> + <b>逐字引用</b>最近对话</td>
+              <td>verbatim quote 防摘要生成一个"听着合理但偏离原意"的下一步</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="src">源码 <code>src/services/compact/prompt.ts</code> · 另有 partial compact 两个变体（'from' 保前缀缓存 / 'up_to'
+        摘要前置缓存失效）。</p>
+
+      <h3>5.4 摘要消息回到上下文时长这样</h3>
+      <pre>This session is being continued from a previous conversation that ran
+out of context. The summary below covers the earlier portion…
+
+Summary:
+&lt;九段内容&gt;
+
+If you need specific details from before compaction (like exact code
+snippets…), read the full transcript at: <span class="hl">~/.claude/…/session.jsonl</span>   <span class="cm">← 无损回溯出口</span>
+
+<span class="hl">Continue the conversation from where it left off without asking the user
+any further questions. Resume directly — do not acknowledge the summary…</span>
+<span class="cm">                                        ↑ 仅 auto-compact 加这段，防止浪费一轮寒暄</span></pre>
+
+      <h3>5.5 摘要之外：把"工作记忆"重新挂上</h3>
+      <p>摘要记的是"发生过什么"，记不住"手里有什么"。所以压缩后还要重挂一批附件：</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>重挂什么</th>
+              <th>细节</th>
+              <th>为什么需要</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>最近读过的 <b>5 个文件</b></td>
+              <td>重新 Read 拿新内容，每个 ≤5K tok、总 ≤50K；保留尾部已有的不重挂</td>
+              <td>摘要只说"读过 auth.ts"，但模型改代码要看到内容</td>
+            </tr>
+            <tr>
+              <td>plan 文件 + plan-mode 指令</td>
+              <td>全文重挂</td>
+              <td>否则压缩后模型忘了自己还在 plan 模式/计划是什么</td>
+            </tr>
+            <tr>
+              <td>调用过的 skills</td>
+              <td>按调用时间倒序，每个 ≤5K、总 ≤25K，截断保头部</td>
+              <td>skill 是外部注入的知识，摘要写不进去</td>
+            </tr>
+            <tr>
+              <td>后台 agent 状态卡</td>
+              <td>running / 已完成未取结果的</td>
+              <td>防止压缩后重复 spawn</td>
+            </tr>
+            <tr>
+              <td>deferred tools / agent / MCP 增量 + SessionStart('compact') hooks</td>
+              <td>按空历史基线重算</td>
+              <td>保证压缩后第一轮工具上下文完整（CLAUDE.md 等重挂入口）</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 6. 压缩后视图 ============ -->
+    <section id="after">
+      <div class="chap">第 6 章 · 压缩之后</div>
+      <h2>模型看到的上下文长什么样</h2>
+      <p class="lede">压缩后发给 API 的消息序列，大概是这个样子：</p>
+
+      <div class="thread">
+        <div class="msg s">
+          <div class="who">system</div>
+          <div class="bd">原 system prompt（不变，保住缓存前缀）</div>
+        </div>
+        <div class="msg sum">
+          <div class="who">user</div>
+          <div class="bd"><b>摘要消息</b>：九段总结 + transcript 路径 + "直接续上别寒暄"（auto 时）</div>
+        </div>
+        <div class="msg u">
+          <div class="who">user</div>
+          <div class="bd">保留尾部：最近的对话原文</div>
+        </div>
+        <div class="msg a">
+          <div class="who">assistant</div>
+          <div class="bd">最近的回复原文（含 tool_use）</div>
+        </div>
+        <div class="msg t">
+          <div class="who">tool</div>
+          <div class="bd">最近工具结果原文</div>
+        </div>
+        <div class="msg new">
+          <div class="who">attach</div>
+          <div class="bd">回补：最近文件内容 / plan / skills / 后台 agent 状态 / 增量指令</div>
+        </div>
+        <div class="msg new">
+          <div class="who">hook</div>
+          <div class="bd">SessionStart('compact') hooks 输出（如 CLAUDE.md 重注入）</div>
+        </div>
+      </div>
+
+      <div class="note teal">
+        <div class="nt">压缩 ≠ 删除：boundary 语义</div>
+        <p>transcript 里的旧消息<b>一条不删</b>。只是在数组里插一条 <code>compact_boundary</code> 标记（带 trigger、压缩前 token 数、衔接元数据
+          <code>logicalParentUuid</code>/<code>preservedSegment</code>）。每轮开头
+          <code>getMessagesAfterCompactBoundary()</code> 取"最后一个 boundary 之后"的切片给模型；UI
+          滚动仍看全量。多次压缩天然兼容——永远以最后一条边界为准。resume 时 loader 按元数据把保留段重新接回消息链。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ 7. 协议安全 ============ -->
+    <section id="pairing">
+      <div class="chap">第 7 章 · 一条不能越过的红线</div>
+      <h2>为什么不能随便"从中间砍"</h2>
+      <p class="lede">Anthropic 协议规定：<code>tool_use</code>（assistant 消息里）和 <code>tool_result</code>（user 消息里）按
+        <code>tool_use_id</code> 一一成对。切错了地方，API 直接 400 拒收。
+      </p>
+
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">错误切法 · 从 tool_use 和它的结果之间劈开</div>
+          <pre>…(摘要掉)… | asst: tool_use id=X
+user: tool_result for X   ← <span class="del">孤儿：前面没有 id=X 的调用</span>
+<span class="del">→ API 400: unexpected tool_use_id</span></pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">正确切法 · 只在"新 assistant 响应"之前下刀</div>
+          <pre>asst(id=A): tool_use X     ┐
+user:        tool_result X  ├ <span class="hl">同一次 API 往返，同进同退</span
+>asst(id=B): 新回合          ← <span class="hl">安全切点在这里</span></pre>
+        </div>
+      </div>
+
+      <p>Claude Code 的切分单位就是 <code>groupMessagesByApiRound</code>：以"出现新 message.id 的 assistant 消息"为组界——API 协议保证每个
+        tool_use 在下一轮 assistant 之前必有结果，所以<b>组界天然就是协议安全切点</b>（连流式拆分的同 id 片段也归同组）。</p>
+
+      <h3>但仍要兜底：API 边界前的修复器</h3>
+      <p>压缩只是可能切坏历史的原因之一——中断续传、旧数据 bug 都会留下畸形对子。所以发请求前还有 <code>ensureToolResultPairing</code> 统一修复：</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>畸形</th>
+              <th>修复方式</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>tool_use 缺结果（中断/截断）</td>
+              <td>注入合成错误结果 <code>[Tool result missing due to internal error]</code>（is_error）</td>
+            </tr>
+            <tr>
+              <td>孤儿 tool_result（无对应调用）</td>
+              <td>剥除该块；首条消息因此变空就填占位，保住 user-first 结构</td>
+            </tr>
+            <tr>
+              <td>tool_use_id / tool_result_id 重复</td>
+              <td>跨消息去重</td>
+            </tr>
+            <tr>
+              <td>服务端工具的 use 无 result（流中断）</td>
+              <td>剥 use 块；assistant 变空填 <code>[Tool use interrupted]</code></td>
+            </tr>
+            <tr>
+              <td>HFI 训练数据采集场景（strict 模式）</td>
+              <td><b>不修直接抛</b>——合成占位会污染训练轨迹</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <div class="nt">同一思想在 RuneHarness 的 OpenAI 形态下</div>
+        <p>你的配对是 <code>assistant.tool_calls[].id ↔ role=tool 的 tool_call_id</code>，且一条 assistant 可挂 N 个 call、后随 N 条 tool
+          消息。原子组 = <b>"带 tool_calls 的 assistant + 连续 tool 消息段"</b>整体。裁剪只在组间下刀；microcompact 式清空只改 tool 消息
+          content；兜底修复同样适用（缺结果的 call 补合成 tool 消息、孤儿 tool 消息剥除）。</p>
+      </div>
+    </section>
+
+    <!-- ============ 8. 兜底 ============ -->
+    <section id="reactive">
+      <div class="chap">第 8 章 · 最后一道保险</div>
+      <h2>场景：估算失手，API 真的返回 413 了</h2>
+      <p class="lede">前面全是启发式估算（字符/4 不可能完全准）。当 API 亲自说"too long"，还有一条 reactive 链路把这次会话救回来。</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>流内暂扣（withhold）</b>
+            <div class="sd">流式响应里识别出 prompt-too-long / 媒体过大错误 → 不抛给用户、不进消息流，先攒着。开关在进入流前快照一次——避免 30 秒流式中途实验开关翻转导致"扣了不修"。
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>先兑现便宜的手段</b>
+            <div class="sd">context-collapse（内部系统）有暂存的折叠先 drain——比全量摘要便宜且保细粒度。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>reactive compact</b>
+            <div class="sd">做一次全量摘要 → 组新消息集 → <code>continue</code> 重发本轮。<b>每 query
+                只许一次</b>（hasAttemptedReactiveCompact）：媒体错误若在被保留尾部会重复触发，靠这个闸门防死循环。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>救不回来就如实报错</b>
+            <div class="sd">yield 错误 + 只跑 StopFailure hooks。普通 stop hook 不跑——模型没产出有效响应，hook 注入只会"错误→注入更多 token→再错"地打转。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p>同样值得注意的两个手动入口：<code>/compact [可选指令]</code>（先走 session-memory 捷径 → 跑一遍 microcompact 缩小待摘要体积 → 全量摘要，用户指令注入
+        prompt）；<b>esc-esc 圈选消息做部分压缩</b>（两个方向可选：摘要"所选之前"保住前缀缓存，或摘要"所选之后"保住最新对话）。</p>
+    </section>
+
+    <!-- ============ 9. RuneHarness ============ -->
+    <section id="runeharness">
+      <div class="chap">第 9 章 · 落地</div>
+      <h2>搬到 RuneHarness：一张移植清单</h2>
+      <p class="lede">按"单位工作量收益"排序，标注哪些是直搬、哪些要按 OpenAI 形态改造。</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>优先级</th>
+              <th>做什么</th>
+              <th>怎么搬</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>P0</b></td>
+              <td><b>确定性阈值 + API 口径估算</b></td>
+              <td>config 加 <code>context_window</code> / <code>max_output</code>；阈值 =
+                <code>window − min(maxOut, 20K) − buffer</code>。估算锚点用响应
+                <code>usage.prompt_tokens + completion_tokens</code>；尾部粗估<b>算 ToolCalls(name+arguments) 不算
+                  Thinking</b>（你的 thinking 不回传 API，这点比 CC 干净）。中文为主 char/token 取 ~2 而非 4。
+              </td>
+            </tr>
+            <tr>
+              <td><b>P0</b></td>
+              <td><b>循环内挂压缩管线</b></td>
+              <td><code>Agent.Run</code> 的 for 里：PreChat 注入之后、<code>llm.Chat</code> 之前。不进现有 hook 体系（hook
+                是观察/注入契约）。子代理自动继承。</td>
+            </tr>
+            <tr>
+              <td><b>P1</b></td>
+              <td><b>microcompact 清旧结果</b></td>
+              <td>除最近 N 条外，tool 消息 content 超阈值 → <code>[Old tool result content cleared]</code>。只改 content 不动配对，实现最小。
+              </td>
+            </tr>
+            <tr>
+              <td><b>P1</b></td>
+              <td><b>配对保护 + 发送前修复</b></td>
+              <td>原子组 = assistant(tool_calls) + 连续 tool 消息。加 <code>ensureToolCallPairing</code>：缺结果补合成 tool 消息，孤儿剥除。你已有
+                InterruptedError 补占位的雏形。</td>
+            </tr>
+            <tr>
+              <td><b>P2</b></td>
+              <td><b>LLM 摘要 + boundary</b></td>
+              <td>9 段 prompt 近乎照抄；摘要消息写 session id 当回溯出口（你有 SQLite raw transcript，比 transcript 文件更强）。boundary 存 DB +
+                投影读取。<b>摘要请求自身要有 PTL 截断重试</b>。</td>
+            </tr>
+            <tr>
+              <td><b>P2</b></td>
+              <td><b>聚合结果预算</b></td>
+              <td>单条 8KB 截断已有；补"一批 tool_calls 的合计"维度，超限落盘换 <code>&lt;persisted-output&gt;</code> 预览。</td>
+            </tr>
+            <tr>
+              <td><b>P3</b></td>
+              <td><b>reactive 兜底</b></td>
+              <td>依赖 <code>internal/llm</code> 错误归一化：各家 context_length_exceeded/413/"prompt is too long: N&gt;M" →
+                <code>PromptTooLongError{gap}</code>。每 query 重试 1 次 + 熔断 3 次。
+              </td>
+            </tr>
+            <tr>
+              <td><b>P4</b></td>
+              <td><b>附件回补 / 增量笔记</b></td>
+              <td>可缓。最小替代：摘要后保留末尾 K 条原文（SM-compact 的保尾思想）。长期看"平时记笔记"是唯一能把摘要成本降到零的路。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note ok">
+        <div class="nt">你比 CC 简单的地方</div>
+        <p>① OpenAI 形态下 tool 消息本来就是独立的，不用模拟 wire 合并；② Thinking 不回传，估算口径天然干净；③ OpenAI 兼容端点没有承诺 prompt cache 语义——CC
+          那套"逐字节稳定前缀"的精细状态机（冻结替换、wx 幂等、fork 共享）可降级为"尽量幂等"，不必照搬。</p>
+      </div>
+    </section>
+
+    <!-- ============ 10. 附录 ============ -->
+    <section id="appendix">
+      <div class="chap">附录 · 速查</div>
+      <h2>常量与文件索引</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>数字</th>
+              <th>含义</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>20,000</code> tok</td>
+              <td>摘要输出预留（p99.99 = 17,387）与 COMPACT_MAX_OUTPUT_TOKENS</td>
+            </tr>
+            <tr>
+              <td><code>13,000</code> / <code>20,000</code> / <code>3,000</code> tok</td>
+              <td>auto 安全垫 / 警告线偏移 / blocking 偏移</td>
+            </tr>
+            <tr>
+              <td><code>3</code> 次</td>
+              <td>auto-compact 连续失败熔断</td>
+            </tr>
+            <tr>
+              <td><code>50K</code> chars · <code>400KB</code> · <code>200K</code> chars</td>
+              <td>单条结果 persist 阈值 · 全局硬顶 · 单 wire 消息聚合预算</td>
+            </tr>
+            <tr>
+              <td><code>2,000</code> B</td>
+              <td>persisted-output 预览长度</td>
+            </tr>
+            <tr>
+              <td><code>60</code> min / <code>5</code> 条</td>
+              <td>time-based microcompact 触发间隙 / 保留最近条数</td>
+            </tr>
+            <tr>
+              <td><code>180K → 40K</code> tok</td>
+              <td>API 端 context_management 触发线与清理目标</td>
+            </tr>
+            <tr>
+              <td><code>3</code> 次</td>
+              <td>摘要请求自身 413 的重试上限（按 tokenGap 或 20% 砍组）</td>
+            </tr>
+            <tr>
+              <td><code>5</code> 文件 · <code>5K</code>/个 · <code>50K</code> 总</td>
+              <td>压缩后文件回补预算（skills：5K/个、25K 总）</td>
+            </tr>
+            <tr>
+              <td><code>10K/5 条/40K</code> tok</td>
+              <td>session-memory 路径保留尾部：≥10K tok 且 ≥5 文本消息、≤40K 封顶</td>
+            </tr>
+            <tr>
+              <td><code>2K</code>/节 · <code>12K</code> 总</td>
+              <td>session-memory notes 文件自身预算</td>
+            </tr>
+            <tr>
+              <td><code>4</code> B/tok（JSON 2）</td>
+              <td>粗估比率；image/document 固定估 2,000 tok</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>文件（claude-code-source-code）</th>
+              <th>干什么</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>src/query.ts</code></td>
+              <td>主循环编排：投影 → 预算 → snip → micro → collapse → auto → blocking → 流 → reactive</td>
+            </tr>
+            <tr>
+              <td><code>services/compact/autoCompact.ts</code></td>
+              <td>阈值公式、警告/阻断计算、熔断</td>
+            </tr>
+            <tr>
+              <td><code>services/compact/compact.ts</code></td>
+              <td>摘要主流程、PTL 重试、附件回补、partial、结果组装</td>
+            </tr>
+            <tr>
+              <td><code>services/compact/prompt.ts</code></td>
+              <td>9 段 prompt、analysis 剥离、摘要消息组装</td>
+            </tr>
+            <tr>
+              <td><code>services/compact/microCompact.ts</code></td>
+              <td>time-based 清空、cached-MC 桥接、可清空白名单</td>
+            </tr>
+            <tr>
+              <td><code>services/compact/apiMicrocompact.ts</code></td>
+              <td>API 原生 context_management（结果/thinking 清理）</td>
+            </tr>
+            <tr>
+              <td><code>services/compact/sessionMemoryCompact.ts</code></td>
+              <td>增量笔记压缩、保尾窗口、配对校正</td>
+            </tr>
+            <tr>
+              <td><code>services/compact/grouping.ts</code></td>
+              <td>按 assistant message.id 切"一次 API 往返"组</td>
+            </tr>
+            <tr>
+              <td><code>utils/toolResultStorage.ts</code></td>
+              <td>单条 persist、聚合预算、冻结状态机</td>
+            </tr>
+            <tr>
+              <td><code>utils/tokens.ts</code> + <code>services/tokenEstimation.ts</code></td>
+              <td>usage 锚点测量 + 尾部粗估</td>
+            </tr>
+            <tr>
+              <td><code>utils/messages.ts</code></td>
+              <td>boundary 标记/投影、ensureToolResultPairing、wire 合并</td>
+            </tr>
+            <tr>
+              <td><code>services/api/errors.ts</code></td>
+              <td>PTL 识别与 "N tokens &gt; M" 差额解析</td>
+            </tr>
+            <tr>
+              <td><code>commands/compact/compact.ts</code></td>
+              <td>/compact 手动入口</td>
+            </tr>
+            <tr>
+              <td><code>services/SessionMemory/prompts.ts</code></td>
+              <td>notes 模板（9 节）与预算自约束</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      Claude Code 会话压缩机制 · 场景化源码拆解 · RuneHarness docs/
+    </footer>
+
+  </div>
+</body>
+
+</html>
