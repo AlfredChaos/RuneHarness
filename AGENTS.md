@@ -75,6 +75,61 @@ go test . ./internal/...
 - 相关 env：RUNE_MEMORY（总开关）、RUNE_MEMORY_DB、RUNE_MEMORY_PROFILE、
   RUNE_MEMORY_DREAM、RUNE_MEMORY_MODEL（dream 提取可换轻量模型）。
 
+### 后台任务（internal/bgtask，对齐 learn.shareai.run s13 / CC LocalShellTask）
+
+- `run_command` 的 `run_in_background=true` 走 `Manager.Spawn`：进程组独立
+  （Setpgid，pgid==pid），stdout/stderr 合并写
+  `~/.rune/tasks/<sessionID>/<bgN>.output`，工具结果立即返回任务 id 与
+  输出路径——模型用 `read_file` 读输出（CC 已弃 TaskOutputTool 改此口径）。
+- 任务生存期只受 timeout（默认/上限 30min）、`task_kill`、进程退出约束；
+  调用方取消经 `context.WithoutCancel` 剥离，用户 Esc 杀不掉后台任务。
+  `cmd.Cancel` 级联 `SIGKILL` 整个进程组，不留孤儿；退出前 `Shutdown` 清场。
+- 完成/停滞事件进内存队列 `pending`：`Drain` 挂 PreChat hook 在运行中
+  注入 `<task_notification>` user 消息（KindInject）；TUI 空闲时收
+  `BgTaskMsg` 或正常收尾由 `maybeDrainBg` 注入并续跑一轮（中断/撞墙/
+  调用失败等错误收尾不自动续跑，通知留队列等下一轮）——CC command-queue
+  语义落到本项目的 hook + TUI 两通道。`Drain` 只在被消费时清空，通知必达；
+  TUI 注入落库失败经 `Requeue` 放回队首。bg 注入轮不走 UserPromptSubmit
+  （旁路信息不是新用户轮，不重置 todo 轮次、不触发记忆"首条"注入）。
+- `task_kill` 置 `notified` 抑制完成通知（kill 结果已由工具结果告知）；
+  停滞看门狗（5s 查输出文件、45s 不增长且尾行像交互提示）发无 `<status>`
+  的一次性提醒。队列是进程全局：跨 /resume 会话切换后通知仍送达当前会话。
+- `task_list`/`task_kill` 在 safe 名单（blast radius 限于本进程 spawn 的
+  任务）；`run_in_background` 与前台命令走同一 permission 三道闸；
+  TUI `/tasks` 列任务。session id 拼输出路径前过 [A-Za-z0-9_-] 白名单。
+- `cmd/e2e` 未装配 bg：`run_in_background` 在那里明确报错，按设计。
+- `permission.Config` 按值拷进 `Desk`：**全部 `SafeTools` append 必须发生在
+  `permission.New` 之前**，之后追加的名字对 desk 不可见（切片扩容重分配），
+  工具会被误判 Ask 每次弹确认。
+
+### 定时调度（internal/cron，对齐 learn.shareai.run s14 / CC ScheduledTasks）
+
+- 调度与执行解耦：`Scheduler` 只把到点任务进 pending 队列（1s tick，
+  cron 粒度是分钟）；交付在 TUI 侧——`OnFire`→`CronMsg`→空闲时
+  `drainQueued`→`maybeDrainCron` 注入 `<scheduled_task>` user 消息
+  （KindInject）跑一轮；忙碌时积压等 `turnDone`。错误收尾不自动续跑，
+  与 bg 通知同规则。cron 交付走 UserPromptSubmit 钩子链（新用户轮语义）；
+  拦截或落库失败经 `Requeue` 归还事件，prompt 文本进块前转义防破块。
+- 表达式是标准五段式 `M H DoM Mon DoW`（`*`、`*/N`、`N`、`N-M`、`N-M/S`、
+  列表；dow 7=周日；DOM/DOW 双受限走 OR）。每条任务带 `tz`（IANA，空=
+  本地），`Schedule.Next` 在任务时区内求值，搜索界 8 年（覆盖跨世纪
+  8 年闰周期间隔）；DST 空档用 stepTime 守卫防归一回退死循环。
+- 存储两档：`durable` 落 `~/.rune/cron_tasks.json`（按 tenant+workspace
+  过滤，tmp+rename 原子写，`cron_tasks.lock` flock 串行化跨进程读写）；
+  `session` 只在进程内存。任务上限 MaxJobs=50。`Store.List` 顺手做
+  mtime 变更检查（非属主的 /cron、cron_list 不拿陈旧镜像）；文件被删
+  时镜像清空，已删任务不继续点火。
+- 多实例双火防护：每 workspace 一把调度属主锁 `cron_sched_<hash>.lock`
+  （flock 非阻塞抢锁，持锁者才触发 durable 任务；进程死内核自动放锁，
+  非属主每 15s 重试接管）。session 任务进程私有不受锁约束。抢锁成功
+  先 ReloadIfChanged 刷新镜像再清扫——非属主期间的文件变更不漏判。
+- 一次性任务触发即焚（焚毁写失败则冻结排程——已交付不重复点火，
+  文件残留由下次接管清扫兜底）；周期任务 `LastFired` 落盘作锚，重启/
+  停机后首次 check 就地追赶一次（不补跑积压）。停机期间错过的一次性
+  任务在抢锁成功时汇总成一条 missed 通知（模型先问用户再执行），随即删除。
+- 模型工具：`cron_create`/`cron_list`/`cron_delete`（safe 名单内）；
+  TUI `/cron` 列任务。总开关 `RUNE_CRON`（默认开）。
+
 ### 输出约束
 
 在解释、步骤、文档、报告时，应用 ASD-STE100的约束语法来规范输出，至少达到ASD-STE100 80% 的程度。

@@ -87,3 +87,43 @@ func TestRunCommandTimeoutFallback(t *testing.T) {
 		}
 	}
 }
+
+// fakeSpawner 记录 Spawn 入参并返回固定任务句柄。
+type fakeSpawner struct {
+	in BGSpawn
+}
+
+func (f *fakeSpawner) Spawn(_ context.Context, in BGSpawn) (BGTask, error) {
+	f.in = in
+	return BGTask{ID: "bg1", OutputPath: "/tmp/x/bg1.output"}, nil
+}
+
+// run_in_background 改走 BG 通道：不等待命令，返回任务 id 与输出路径。
+func TestRunCommandBackground(t *testing.T) {
+	sp := &fakeSpawner{}
+	out, err := RunCommand{BG: sp}.Run(scopedCtx(t.TempDir()),
+		json.RawMessage(`{"command":"go build ./...","run_in_background":true,"description":"build"}`))
+	if err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
+	if sp.in.Command != "go build ./..." || sp.in.Description != "build" {
+		t.Fatalf("spawn input = %+v", sp.in)
+	}
+	if sp.in.Timeout != bgCmdTimeout {
+		t.Fatalf("default bg timeout = %v, want %v", sp.in.Timeout, bgCmdTimeout)
+	}
+	for _, want := range []string{"bg1", "/tmp/x/bg1.output", "notified"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("out = %q, want %q", out, want)
+		}
+	}
+}
+
+// 未装配 BG 时 run_in_background 显式报错而不是静默前台跑。
+func TestRunCommandBackgroundUnconfigured(t *testing.T) {
+	_, err := RunCommand{}.Run(scopedCtx(t.TempDir()),
+		json.RawMessage(`{"command":"true","run_in_background":true}`))
+	if err == nil {
+		t.Fatal("want error when BG is nil")
+	}
+}

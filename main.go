@@ -16,9 +16,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/bgtask"
 	"runeharness/internal/breaker"
 	"runeharness/internal/compact"
 	"runeharness/internal/config"
+	"runeharness/internal/cron"
 	"runeharness/internal/llm"
 	"runeharness/internal/memory"
 	"runeharness/internal/permission"
@@ -104,6 +106,20 @@ func main() {
 	baseCtx := scope.WithScope(context.Background(),
 		scope.Scope{TenantID: localTenant, Workspace: wd})
 
+	// 后台任务管理器：run_command 的 run_in_background 通道 + task_list/
+	// task_kill 工具 + 完成通知队列。输出文件落在会话库旁的 tasks/<会话>/。
+	// 进程级单例：主代理与子代理共享注册表与通知队列（通知按到达序送达
+	// 当前会话，跨会话不属错误——任务是进程事实而非会话私有）。
+	bgm := bgtask.New(filepath.Join(filepath.Dir(dbPath), "tasks"))
+
+	// 定时任务存储：会话库旁的 cron_tasks.json（durable 档）+ 进程内存
+	// （session 档）。Open 不报错：文件缺失/损坏按空表处理，写路径的
+	// IO 失败在 mutate 时经工具结果回报给模型。
+	var cronStore *cron.Store
+	if cfg.Cron {
+		cronStore = cron.Open(filepath.Join(filepath.Dir(dbPath), "cron_tasks.json"))
+	}
+
 	// 记忆层：独立库文件，画像驱动。打开失败降级为无记忆运行（增强不是
 	// 硬依赖），只打 warning 不挡启动。
 	var mem *memory.Memory
@@ -172,14 +188,39 @@ func main() {
 		tools.CurrentTime{},
 		tools.ListDir{},
 		tools.ReadFile{Blobs: store},
-		tools.RunCommand{},
+		tools.RunCommand{BG: bgm},
 		todos,
 	}
 	toolSet := slices.Clone(baseTools)
+	// SafeTools 的全部 append 必须发生在 permission.New 之前：Config 按
+	// 值拷进 Desk，之后 append 因扩容重分配对新切片生效、desk 内旧副本
+	// 不变——工具会被误判 Ask 每次弹确认。
 	if cfg.SubAgent {
 		// task 本身不弹确认：spawn 子代理没有直接副作用，
 		// 子代理内部的每次工具调用仍逐个过权限闸。
 		permCfg.SafeTools = append(permCfg.SafeTools, subagent.ToolName)
+	}
+	// 后台任务管理工具：只作用于本会话进程自己 spawn 的任务（blast radius
+	// 是自家进程组），与 task 同理进 safe 名单不弹确认。
+	toolSet = append(toolSet, bgtask.ListTool{M: bgm}, bgtask.KillTool{M: bgm})
+	permCfg.SafeTools = append(permCfg.SafeTools, bgtask.ListToolName, bgtask.KillToolName)
+	// compact 是主代理专属工具：loop 按名特判，不进子代理的 baseTools。
+	toolSet = append(toolSet, compact.Tool{})
+	// cron 三工具只改任务文件与进程内存，本身低危——到点触发的轮次里
+	// 每次工具调用仍单独过权限闸。
+	if cronStore != nil {
+		toolSet = append(toolSet,
+			cron.CreateTool{S: cronStore}, cron.ListTool{S: cronStore}, cron.DeleteTool{S: cronStore})
+		permCfg.SafeTools = append(permCfg.SafeTools,
+			cron.CreateToolName, cron.ListToolName, cron.DeleteToolName)
+	}
+	// memory 工具写本地库，是低危操作——进 safe 名单不弹确认
+	// （画像关闭写工具时 Tool() 返回 nil，不注册）。
+	if mem != nil {
+		if t := mem.Tool(); t != nil {
+			toolSet = append(toolSet, t)
+			permCfg.SafeTools = append(permCfg.SafeTools, memory.ToolName)
+		}
 	}
 	desk := permission.New(permCfg)
 
@@ -199,16 +240,6 @@ func main() {
 		}
 		task.OnEvent = func(ev subagent.Event) { p.Send(tui.SubagentMsg{Event: ev}) }
 		toolSet = append(toolSet, task)
-	}
-	// compact 是主代理专属工具：loop 按名特判，不进子代理的 baseTools。
-	toolSet = append(toolSet, compact.Tool{})
-	// memory 工具写本地库，是低危操作——进 safe 名单不弹确认
-	// （画像关闭写工具时 Tool() 返回 nil，不注册）。
-	if mem != nil {
-		if t := mem.Tool(); t != nil {
-			toolSet = append(toolSet, t)
-			permCfg.SafeTools = append(permCfg.SafeTools, memory.ToolName)
-		}
 	}
 	registry := tools.NewRegistry(toolSet...)
 	for _, name := range permCfg.SafeTools {
@@ -287,15 +318,30 @@ func main() {
 	}
 	sessScope := scope.Scope{TenantID: localTenant, SessionID: sessID, Workspace: wd}
 
+	// 定时调度器：每 workspace 一把属主锁（会话库旁 cron_sched_<hash>.lock），
+	// 持锁进程才触发 durable 任务——同目录开第二个实例不会双火；
+	// session 任务进程私有，不受锁约束。触发事件经 OnFire 推进 UI，
+	// TUI 空闲时才 Drain 注入成新一轮，不打断进行中的轮次。
+	var cronSched *cron.Scheduler
+	if cronStore != nil {
+		cronSched = cron.NewScheduler(cronStore,
+			scope.WithScope(context.Background(), sessScope), cron.Config{
+				LockPath: filepath.Join(filepath.Dir(dbPath), cron.LockFileName(wd)),
+				OnFire:   func(ev cron.Event) { p.Send(tui.CronMsg{Event: ev}) },
+			})
+	}
+
 	p = tea.NewProgram(tui.New(a, tui.Info{
 		Model:   cfg.Model,
 		Cwd:     wd,
 		Branch:  gitBranch(),
 		Session: sessID[:8],
 		Tools:   len(toolSet),
-	}, initial, sessScope, store, skills, mem),
+	}, initial, sessScope, store, skills, mem, bgm, cronSched),
 		tea.WithAltScreen(),
 	)
+	// 后台任务终态/停滞事件推进 UI：空闲时 TUI 把积压通知续成新一轮。
+	bgm.OnEvent = func(ev bgtask.Event) { p.Send(tui.BgTaskMsg{Event: ev}) }
 	// 工具调用与流式输出事件通过 Program.Send 桥接进 UI 循环
 	a.OnToolCall = func(tc agent.ToolCall) {
 		p.Send(tui.ToolCallMsg{Call: tc})
@@ -324,7 +370,11 @@ func main() {
 	a.Hooks.OnPreToolUse(brk.Check)
 	a.Hooks.OnPostToolUse(brk.Observe)
 	a.Hooks.OnPreChat(brk.Nag)
-	// 压缩提醒 hook 排在首位：用量过提醒线时每个压缩周期注入一次，
+	// bg 通知经 PreChat 注入（运行中）：PreChat 每步只取首个非空，
+	// Drain 只在被消费时清空——排队中的通知永不丢，被更早的 hook
+	// 抢先时也只是晚一步送达。
+	a.Hooks.OnPreChat(func(context.Context, []agent.Message) string { return bgm.Drain() })
+	// 压缩提醒：用量过提醒线时每个压缩周期注入一次，
 	// 让模型择机压缩（plan §4.4）。
 	a.Hooks.OnPreChat(comp.ReminderHook())
 	// todo nag：连续 3 轮未写 todo 时注入提醒（全完成则静默）；
@@ -348,14 +398,30 @@ func main() {
 	if mem != nil && cfg.MemoryDream {
 		go mem.DreamTicker(dreamCtx)
 	}
+	// 调度 goroutine：ctx 取消即退出并放掉属主锁；锁只挡别的进程点火，
+	// 本进程退出后内核也会兜底放锁。
+	cronCtx, stopCron := context.WithCancel(context.Background())
+	if cronSched != nil {
+		go cronSched.Run(cronCtx)
+	}
+
+	// 退出清场：cron 放锁、bg 杀进程组（Setpgid 脱离了本进程信号域，
+	// 不杀会成为孤儿）、dream 收尾。os.Exit 不跑 defer，所以两条
+	// 退出路径都显式调它。
+	shutdown := func() {
+		stopCron()
+		bgm.Shutdown()
+		stopDream()
+		if mem != nil && cfg.MemoryDream {
+			// 退出收尾用新 ctx：dreamCtx 已被 stopDream 取消。
+			mem.DreamOnExit(scope.WithScope(context.Background(), sessScope))
+		}
+	}
 
 	if _, err := p.Run(); err != nil {
+		shutdown()
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
-	stopDream()
-	if mem != nil && cfg.MemoryDream {
-		// 退出收尾用新 ctx：dreamCtx 已被 stopDream 取消。
-		mem.DreamOnExit(scope.WithScope(context.Background(), sessScope))
-	}
+	shutdown()
 }

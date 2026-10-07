@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/bgtask"
+	"runeharness/internal/cron"
 	"runeharness/internal/subagent"
 
 	"github.com/charmbracelet/lipgloss"
@@ -38,7 +40,8 @@ func (m *Model) row(left string, leftW int, body string, w int, t time.Time) str
 	for _, ln := range strings.Split(body, "\n") {
 		for _, sub := range strings.Split(hardWrap(ln, w-pw), "\n") {
 			if !first {
-				b.WriteString("\n" + pad)
+				b.WriteString("\n")
+				b.WriteString(pad)
 			}
 			first = false
 			b.WriteString(sub)
@@ -124,6 +127,42 @@ func (m *Model) rowSub(ev subagent.Event) string {
 		}
 	}
 	return m.row(subStyle.Render("⤷")+" ", iconW, subStyle.Render(body), m.feedW(), time.Now())
+}
+
+// rowBg 渲染一条后台任务事件行：◐ 图标 + 终态/停滞摘要。
+func (m *Model) rowBg(ev bgtask.Event) string {
+	t := ev.Task
+	var body string
+	if ev.Stalled {
+		body = fmt.Sprintf("◐ %s stalled — interactive prompt? · %s",
+			t.ID, dimStyle.Render(truncateRunes(t.Description, 60)))
+	} else {
+		state := fmt.Sprintf("%s · %s", t.Status,
+			t.EndedAt.Sub(t.StartedAt).Round(time.Second))
+		if t.Status == bgtask.StatusCompleted || t.Status == bgtask.StatusFailed {
+			state = fmt.Sprintf("%s exit %d · %s", t.Status, t.ExitCode,
+				t.EndedAt.Sub(t.StartedAt).Round(time.Second))
+		}
+		body = fmt.Sprintf("◐ %s %s · %s", t.ID, state,
+			dimStyle.Render(truncateRunes(t.Description, 60)))
+	}
+	return m.row(subStyle.Render("⤴")+" ", iconW, body, m.feedW(), time.Now())
+}
+
+// rowCron 渲染一条定时任务事件行：⏰ 图标 + 触发摘要（漏跑汇总单独标注）。
+func (m *Model) rowCron(ev cron.Event) string {
+	var body string
+	if ev.Missed {
+		body = "⏰ missed one-shot schedule found — asking before running"
+	} else {
+		desc := cron.Humanize(ev.Task.Cron)
+		if ev.Task.TZ != "" {
+			desc += " " + ev.Task.TZ
+		}
+		body = fmt.Sprintf("⏰ %s fired · %s · %s", ev.Task.ID,
+			desc, dimStyle.Render(truncateRunes(firstLine(ev.Task.Prompt), 60)))
+	}
+	return m.row("", 0, hookStyle.Render(body), m.feedW(), time.Now())
 }
 
 // rowNote 渲染无标签的系统行（中断、步数续跑、空答复等），图标进正文。

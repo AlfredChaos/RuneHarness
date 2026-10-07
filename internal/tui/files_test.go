@@ -22,7 +22,7 @@ func newFileModel(t *testing.T) (*Model, string) {
 	m := New(agent.New(nil, tools.NewRegistry(), 1), Info{Model: "m"},
 		[]agent.Message{{Role: agent.RoleSystem, Content: "sys"}},
 		scope.Scope{TenantID: "t", Workspace: ws, SessionID: "s"},
-		nil, []skill.Meta{}, nil)
+		nil, []skill.Meta{}, nil, nil, nil)
 	return m, ws
 }
 

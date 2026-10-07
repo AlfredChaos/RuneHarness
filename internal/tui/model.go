@@ -16,7 +16,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/bgtask"
 	"runeharness/internal/compact"
+	"runeharness/internal/cron"
 	"runeharness/internal/memory"
 	"runeharness/internal/scope"
 	"runeharness/internal/session"
@@ -145,7 +147,9 @@ type Model struct {
 	// store 为 nil（测试）时跳过记录。
 	sc    scope.Scope
 	store session.Store
-	mem   *memory.Memory // nil 表示记忆层未启用（/dream 与 /memory 降级提示）
+	mem   *memory.Memory  // nil 表示记忆层未启用（/dream 与 /memory 降级提示）
+	bg    *bgtask.Manager // nil 表示无后台任务支持（测试）；/tasks 与通知注入降级
+	cron  *cron.Scheduler // nil 表示未启用定时调度；/cron 与触发交付降级
 
 	viewport   viewport.Model
 	input      textarea.Model
@@ -202,7 +206,7 @@ type Model struct {
 // resume=LoadHistory 回放的全量），sc/st 承载会话 scope 与落库通道。
 // skills 是启动扫描到的技能目录，供 "/" 下拉列出并发起技能调用。
 // mem 是记忆层编排器（nil 表示未启用），供 /dream 与 /memory 命令调用。
-func New(a *agent.Agent, info Info, init []agent.Message, sc scope.Scope, st session.Store, skills []skill.Meta, mem *memory.Memory) *Model {
+func New(a *agent.Agent, info Info, init []agent.Message, sc scope.Scope, st session.Store, skills []skill.Meta, mem *memory.Memory, bg *bgtask.Manager, cr *cron.Scheduler) *Model {
 	ta := textarea.New()
 	ta.Prompt = "❯ "
 	ta.Placeholder = "Message…"
@@ -221,6 +225,8 @@ func New(a *agent.Agent, info Info, init []agent.Message, sc scope.Scope, st ses
 		store:   st,
 		mem:     mem,
 		skills:  skills,
+		bg:      bg,
+		cron:    cr,
 		input:   ta,
 		mdStyle: detectMarkdownStyle(),
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle)),
@@ -333,7 +339,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendLine(m.rowNote("·", "empty final response"))
 			}
 		}
-		return m, nil
+		// 收尾补漏：最后一步之后才完成的 bg 通知（PreChat 没机会取）、
+		// 忙碌期间到点的 cron 任务，都在这里续成新一轮。
+		// 错误路径（中断/撞墙/调用失败）不 drain：
+		// 用户主动 stop 或会话已异常时不再自动起跑，通知留队列等
+		// 下一轮 PreChat 或下一个 BgTaskMsg/CronMsg。
+		if msg.err != nil {
+			return m, nil
+		}
+		return m, m.drainQueued()
+	case BgTaskMsg:
+		// 终态/停滞都先留一行痕迹；空闲时把积压通知 drain 成注入消息
+		// 自动续跑，忙碌时由运行中 loop 的 PreChat 挂点自取。
+		m.appendLine(m.rowBg(msg.Event))
+		return m, m.drainQueued()
+	case CronMsg:
+		// 到点触发先留一行痕迹；空闲即交付为新的一轮，忙碌则积压在
+		// scheduler 队列里等 turnDone 后由 drainQueued 排空。
+		m.appendLine(m.rowCron(msg.Event))
+		return m, m.drainQueued()
 	case MemoryMsg:
 		st := msg.Stats
 		m.appendLine(m.rowNote("✎", fmt.Sprintf("memory updated: %d ops, %d merged",
@@ -532,26 +556,11 @@ func (m *Model) sendUserText(display, content string) tea.Cmd {
 // 步数预算；history 已含部分进度，模型在既有上下文上继续。
 func (m *Model) resume(steps int) tea.Cmd {
 	m.autoResumed = true
-	notice := fmt.Sprintf("<notice>The tool-call budget of %d steps was just exhausted. "+
+	// 落库失败则放弃续跑：撞墙提示不进历史，用户仍可手动 continue。
+	cmd, _ := m.injectAndRun(fmt.Sprintf("<notice>The tool-call budget of %d steps was just exhausted. "+
 		"A fresh budget is granted now — continue the pending work, or replan with "+
-		"fewer, batched tool calls.</notice>", steps)
-	ctx, cancel := context.WithCancel(scope.WithScope(context.Background(), m.sc))
-	m.history = append(m.history, agent.Message{Role: agent.RoleUser, Kind: agent.KindInject, Content: notice})
-	m.appendLine(m.rowHook(notice))
-	if err := m.record(ctx, &m.history[len(m.history)-1]); err != nil {
-		cancel()
-		m.appendLine(m.rowNote("✘", "session append failed: "+err.Error()))
-		return nil
-	}
-	m.busy = true
-	m.busySince = time.Now()
-	m.activity = "waiting for model"
-	m.cancel = cancel
-	history := m.history
-	return tea.Batch(m.spinner.Tick, func() tea.Msg {
-		next, err := m.agent.Run(ctx, history)
-		return turnDoneMsg{history: next, err: err}
-	})
+		"fewer, batched tool calls.</notice>", steps))
+	return cmd
 }
 
 // record 把 TUI 侧追加进 history 的消息落库；store 为 nil 时不记录，
@@ -599,6 +608,10 @@ func (m *Model) runSlash(input string) tea.Cmd {
 		return m.runDream()
 	case "memory":
 		return m.runMemory()
+	case "tasks":
+		return m.runTasks()
+	case "cron":
+		return m.runCron()
 	default:
 		if s := m.findSkill(name); s != nil {
 			return m.sendUserText(input, skillPromptText(*s, arg))

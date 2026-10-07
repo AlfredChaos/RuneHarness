@@ -49,6 +49,10 @@ type Config struct {
 	// MemoryModel 是 dream 提取用的模型名（RUNE_MEMORY_MODEL）；
 	// 为空时复用主模型。
 	MemoryModel string
+
+	// Cron 是定时调度总开关（RUNE_CRON，默认开）。关闭后不建任务存储、
+	// 不注册 cron_* 工具、不跑调度 goroutine。
+	Cron bool
 }
 
 const (
@@ -117,6 +121,7 @@ func Load() (Config, error) {
 		MemoryProfile: os.Getenv("RUNE_MEMORY_PROFILE"),
 		MemoryDream:   os.Getenv("RUNE_MEMORY_DREAM") == "" || envTrue("RUNE_MEMORY_DREAM"),
 		MemoryModel:   os.Getenv("RUNE_MEMORY_MODEL"),
+		Cron:          os.Getenv("RUNE_CRON") == "" || envTrue("RUNE_CRON"),
 	}
 	var err error
 	if cfg.ContextTokens, err = contextWindow(os.Getenv("RUNE_CONTEXT_TOKENS"), cfg.Model); err != nil {

@@ -23,7 +23,7 @@ func newSuggModel(st session.Store, skills []skill.Meta) *Model {
 	return New(agent.New(nil, tools.NewRegistry(), 1), Info{Model: "m"},
 		[]agent.Message{{Role: agent.RoleSystem, Content: "sys"}},
 		scope.Scope{TenantID: "t", Workspace: "/w", SessionID: "cur-session"},
-		st, skills, nil)
+		st, skills, nil, nil, nil)
 }
 
 // typeKeys 逐字符把文本敲进输入框（走真实 onKey 路径）。
@@ -63,11 +63,12 @@ func TestCommandSuggestions(t *testing.T) {
 	}
 
 	all := got("/")
-	if len(all) != 6+2 {
-		t.Fatalf("/ = %v, want 6 commands + 2 skills", all)
+	if len(all) != 8+2 {
+		t.Fatalf("/ = %v, want 8 commands + 2 skills", all)
 	}
 	if all[0] != "/exit" || all[1] != "/resume" || all[2] != "/todo" ||
-		all[3] != "/compact" || all[4] != "/dream" || all[5] != "/memory" {
+		all[3] != "/compact" || all[4] != "/dream" || all[5] != "/memory" ||
+		all[6] != "/tasks" || all[7] != "/cron" {
 		t.Fatalf("commands should come first in registry order, got %v", all)
 	}
 

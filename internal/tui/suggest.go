@@ -54,6 +54,8 @@ var slashCommands = []slashCmd{
 	{name: "compact", desc: "compact the conversation context [instructions]"},
 	{name: "dream", desc: "consolidate unprocessed turns into memory"},
 	{name: "memory", desc: "show the memory index"},
+	{name: "tasks", desc: "list background tasks"},
+	{name: "cron", desc: "list scheduled tasks"},
 }
 
 // suggestion 是下拉框中的一行。
