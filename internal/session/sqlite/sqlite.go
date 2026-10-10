@@ -22,7 +22,7 @@ import (
 )
 
 // schemaVersion 是当前 schema 版本；结构演进时在 migrate 追加分支并 +1。
-const schemaVersion = 2
+const schemaVersion = 3
 
 // maxForkDepth 限制 fork 链与祖先 blob 查找的层数，防止脏数据成环。
 const maxForkDepth = 8
@@ -152,6 +152,44 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if v < 3 {
+		// v3：网关落地（docs/runeharness-db.html §5）。sessions.subject_id 供
+		// 记忆层 subject 空间寻址；messages.channel 记消息来源渠道；
+		// chat_bindings / session_leases 为网关与多副本预留的映射与租约表。
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, q := range []string{
+			`ALTER TABLE sessions ADD COLUMN subject_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE messages ADD COLUMN channel TEXT NOT NULL DEFAULT ''`,
+			`CREATE TABLE IF NOT EXISTS chat_bindings (
+				tenant_id  TEXT NOT NULL,
+				channel    TEXT NOT NULL,
+				chat_id    TEXT NOT NULL,
+				session_id TEXT NOT NULL REFERENCES sessions(id),
+				subject_id TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL,
+				last_active INTEGER NOT NULL,
+				PRIMARY KEY (tenant_id, channel, chat_id)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_chat_bindings_session
+				ON chat_bindings(session_id)`,
+			`CREATE TABLE IF NOT EXISTS session_leases (
+				session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+				owner      TEXT NOT NULL,
+				expires_at INTEGER NOT NULL
+			)`,
+		} {
+			if _, err := tx.Exec(q); err != nil {
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 	// pragma 不支持占位符，版本号是常量
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return err
@@ -191,11 +229,15 @@ func (s *Store) CreateSession(ctx context.Context, meta session.Meta) (session.S
 	}
 	now := time.Now().UnixMilli()
 	sid := id.String()
+	subject := meta.SubjectID
+	if subject == "" {
+		subject = sc.SubjectID
+	}
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO sessions
-		(id, tenant_id, parent_id, kind, title, model, workspace, depth, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		(id, tenant_id, parent_id, kind, title, model, workspace, depth, subject_id, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		sid, sc.TenantID, meta.ParentID, string(kind), meta.Title, meta.Model, ws,
-		meta.Depth, now, now); err != nil {
+		meta.Depth, subject, now, now); err != nil {
 		return session.Session{}, err
 	}
 	return session.Session{
@@ -235,10 +277,10 @@ func (s *Store) Append(ctx context.Context, msg agent.Message) (int64, error) {
 	}
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO messages
-		(session_id, role, content, thinking, tool_calls, tool_call_id, is_error, created_at, kind, usage_json)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		(session_id, role, content, thinking, tool_calls, tool_call_id, is_error, created_at, kind, usage_json, channel)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.SessionID, string(msg.Role), msg.Content, msg.Thinking, string(toolCalls),
-		msg.ToolCallID, isErr, now, kindToDB(msg.Kind), string(usage))
+		msg.ToolCallID, isErr, now, kindToDB(msg.Kind), string(usage), msg.Channel)
 	if err != nil {
 		return 0, err
 	}
@@ -364,7 +406,7 @@ func (s *Store) LoadRawHistory(ctx context.Context, sessionID string) ([]agent.M
 // rawRows 读会话 id ≤ upto 的全部行；调用方已做租户校验。
 func (s *Store) rawRows(ctx context.Context, sessionID string, upto int64) ([]agent.Message, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, role, content, thinking, tool_calls,
-		tool_call_id, is_error, usage_json FROM messages WHERE session_id = ? AND id <= ? ORDER BY id`,
+		tool_call_id, is_error, usage_json, channel, created_at FROM messages WHERE session_id = ? AND id <= ? ORDER BY id`,
 		sessionID, upto)
 	if err != nil {
 		return nil, err
@@ -377,7 +419,7 @@ func (s *Store) rawRows(ctx context.Context, sessionID string, upto int64) ([]ag
 		var kind, role, toolCalls, usage string
 		var isErr int
 		if err := rows.Scan(&m.ID, &kind, &role, &m.Content, &m.Thinking, &toolCalls,
-			&m.ToolCallID, &isErr, &usage); err != nil {
+			&m.ToolCallID, &isErr, &usage, &m.Channel, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		m.Kind = kindFromDB(kind)
@@ -523,7 +565,7 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT id, tenant_id, parent_id, kind, title, model, workspace, depth,
+	q := `SELECT id, tenant_id, parent_id, kind, title, model, workspace, depth, subject_id,
 		created_at, updated_at FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC`
 	args := []any{sc.TenantID}
 	if limit > 0 {
@@ -542,7 +584,7 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 		var kind string
 		var created, updated int64
 		if err := rows.Scan(&ssn.ID, &ssn.TenantID, &ssn.ParentID, &kind, &ssn.Title,
-			&ssn.Model, &ssn.Workspace, &ssn.Depth, &created, &updated); err != nil {
+			&ssn.Model, &ssn.Workspace, &ssn.Depth, &ssn.SubjectID, &created, &updated); err != nil {
 			return nil, err
 		}
 		ssn.Kind = session.Kind(kind)
@@ -555,3 +597,65 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 
 // Close 关闭底层连接。
 func (s *Store) Close() error { return s.db.Close() }
+
+// GetBinding 返回 (tenant,channel,chat_id) 映射的 session id；未绑定时
+// 返回空串。租户隔离沿用 scope——查询条件带上 ctx 的 TenantID。
+func (s *Store) GetBinding(ctx context.Context, tenant, channel, chatID string) (string, error) {
+	if sc, err := scope.FromContext(ctx); err == nil && sc.TenantID != "" {
+		tenant = sc.TenantID // ctx 优先，隔离边界不来自参数
+	}
+	var sid string
+	err := s.db.QueryRowContext(ctx, `SELECT session_id FROM chat_bindings
+		WHERE tenant_id = ? AND channel = ? AND chat_id = ?`,
+		tenant, channel, chatID).Scan(&sid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return sid, err
+}
+
+// UpsertBinding 建立/刷新 (tenant,channel,chat_id) -> session_id 映射；
+// 幂等（同 key 重复 upsert 只刷新 last_active 与 subject_id）。
+func (s *Store) UpsertBinding(ctx context.Context, tenant, channel, chatID, sessionID, subjectID string) (string, error) {
+	if sc, err := scope.FromContext(ctx); err == nil && sc.TenantID != "" {
+		tenant = sc.TenantID
+	}
+	now := time.Now().UnixMilli()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chat_bindings
+		(tenant_id, channel, chat_id, session_id, subject_id, created_at, last_active)
+		VALUES (?,?,?,?,?,?,?)
+		ON CONFLICT(tenant_id, channel, chat_id) DO UPDATE SET
+			session_id = excluded.session_id,
+			subject_id = excluded.subject_id,
+			last_active = excluded.last_active`,
+		tenant, channel, chatID, sessionID, subjectID, now, now)
+	if err != nil {
+		return "", err
+	}
+	return sessionID, nil
+}
+
+// ListByTenant 返回该租户在本渠道的 chat_bindings 清单（/v1/chats 列表用）。
+// 只读查询，不做租约校验——绑定归属由 Gateway 层 token 保证。
+func (s *Store) ListByTenant(ctx context.Context, tenant, channel string) ([]map[string]any, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT chat_id, session_id, subject_id, created_at, last_active
+		FROM chat_bindings WHERE tenant_id = ? AND channel = ? ORDER BY last_active DESC`,
+		tenant, channel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var chatID, sessionID, subjectID string
+		var created, active int64
+		if err := rows.Scan(&chatID, &sessionID, &subjectID, &created, &active); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"chat_id": chatID, "session_id": sessionID,
+			"subject_id": subjectID, "created_at": created, "last_active": active,
+		})
+	}
+	return out, rows.Err()
+}

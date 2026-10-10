@@ -133,5 +133,61 @@ func Fold(rows []agent.Message) ([]agent.Message, error) {
 			view[i].Usage = nil
 		}
 	}
-	return view, nil
+	return repairDanglingCalls(view), nil
+}
+
+// repairDanglingCalls 保证视图满足"每个 tool_call 都有结果"的协议形态。
+// 全配对时原样返回（不改序、不改哈希）；有缺位才按调用序重排并补占位——
+// 进程崩溃（kill -9、pod 驱逐）会把 assistant 的 tool_calls 留在库里而
+// 结果行没写到，下一轮请求把悬空调用发给 OpenAI 会被协议拒掉。
+// 运行期中断由 loop 补占位（agent.go），崩溃路径只能在这里兜底：
+// 读侧合成，零写入，老会话自动覆盖。
+func repairDanglingCalls(view []agent.Message) []agent.Message {
+	byCall := map[string]agent.Message{}
+	missing := map[string]bool{}
+	for _, m := range view {
+		if m.Role == agent.RoleTool {
+			byCall[m.ToolCallID] = m
+		}
+	}
+	for _, m := range view {
+		if m.Role != agent.RoleAssistant {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			if _, ok := byCall[tc.ID]; !ok {
+				missing[tc.ID] = true
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return view // 全配对：零改动，哈希与内存视图一致
+	}
+	var out []agent.Message
+	claimed := map[string]bool{}
+	for _, m := range view {
+		// tool 结果行不单独输出——被所属 assistant 组按序重排；
+		// 未被认领的孤儿行（坏数据）保持原位，不丢。
+		if m.Role == agent.RoleTool && claimed[m.ToolCallID] {
+			continue
+		}
+		out = append(out, m)
+		if m.Role != agent.RoleAssistant || len(m.ToolCalls) == 0 {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			claimed[tc.ID] = true
+			if r, ok := byCall[tc.ID]; ok {
+				out = append(out, r)
+				continue
+			}
+			out = append(out, agent.Message{
+				Role:       agent.RoleTool,
+				ToolCallID: tc.ID,
+				Content:    "error: execution interrupted",
+				IsError:    true,
+			})
+		}
+	}
+	return out
 }

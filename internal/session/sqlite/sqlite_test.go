@@ -65,6 +65,10 @@ func TestAppendLoadRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}
+	// CreatedAt 是落库时刻的物化列——断言比对时抹掉，不参与语义相等。
+	for i := range got {
+		got[i].CreatedAt = 0
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}

@@ -136,3 +136,14 @@ func (m *Memory) IndexText(ctx context.Context) (string, error) {
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
+
+// ListHeaders 返回当前 scope 空间的记忆索引（name/type/descr/updated_at）。
+// 供 gateway 的设置页列表用；ctx 需带 scope（tenant+subject 决定空间）。
+func (m *Memory) ListHeaders(ctx context.Context) ([]Header, error) {
+	return m.store.List(ctx)
+}
+
+// Get 取一条记忆的全文（含 body）；name 即 Header.Name。
+func (m *Memory) Get(ctx context.Context, name string) (Row, error) {
+	return m.store.Get(ctx, name)
+}

@@ -30,11 +30,12 @@ const (
 	KindBoundary  Kind = "compact_boundary" // 控制行：压缩边界，Content 为 meta JSON
 	KindViewClear Kind = "view_clear"       // 控制行：卸载决策，Content 为 meta JSON
 	KindFork      Kind = "fork"             // 控制行：子会话继承标记，Content 为 meta JSON
+	KindTurnEnd   Kind = "turn_end"         // 控制行：轮次终态（crashed 补记等），Content 为 meta JSON
 )
 
 // IsControl 报告该类型是否为控制行（不进发送形态）。
 func (k Kind) IsControl() bool {
-	return k == KindBoundary || k == KindViewClear || k == KindFork
+	return k == KindBoundary || k == KindViewClear || k == KindFork || k == KindTurnEnd
 }
 
 // Usage 是一次 LLM 请求的真实 token 用量，挂在该请求产出的 assistant
@@ -61,6 +62,8 @@ type Message struct {
 	ToolCallID string
 	IsError    bool
 	Usage      *Usage
+	Channel    string // 消息来源渠道（"cli"/"bear"/"qq"…）；空=本地。仅供路由与展示，不回传 API。
+	CreatedAt  int64  // 落库时刻（unix 毫秒），由 Store 写；0 = 未落库。
 }
 
 // FinishReason 是模型给出的本轮结束原因（对应 API 的 finish_reason 字段）。

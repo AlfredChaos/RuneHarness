@@ -26,7 +26,8 @@ type Meta struct {
 	Model     string
 	Workspace string
 	Kind      Kind
-	Depth     int // 0 = 主代理
+	Depth     int    // 0 = 主代理
+	SubjectID string // 记忆层 subject 空间归属；空则从 ctx scope 继承
 }
 
 // Session 是一条会话记录。
@@ -41,6 +42,7 @@ type Session struct {
 	Depth     int
 	CreatedAt time.Time
 	UpdatedAt time.Time // 每次 Append 刷新
+	SubjectID string    // 记忆层 subject 归属（v3 起）
 }
 
 // Store 是会话存储的调用面。所有方法从 ctx 读 scope：
