@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 数据层 — 库设计文档</title>
+  <style>
+    :root {
+      --bg: #FBFAF7; --paper: #FFFFFF; --ink: #26241F; --ink-2: #5B564E; --ink-3: #9A948A;
+      --line: #E9E6DE; --line-2: #DFDAD0;
+      --teal: #0E7368; --teal-bg: #EDF7F5; --amber: #A85507; --amber-bg: #FCF4E8;
+      --rose: #B4123A; --rose-bg: #FCF0F3; --blue: #2657C4; --blue-bg: #EFF3FC;
+      --violet: #6528C9; --violet-bg: #F4EFFC; --green: #177245; --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box }
+    body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.85; -webkit-font-smoothing: antialiased }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 0 28px 140px }
+    header { padding: 80px 0 44px; border-bottom: 1px solid var(--line) }
+    .eyebrow { font-family: var(--mono); font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--teal); margin-bottom: 16px; display: flex; align-items: center; gap: 12px }
+    .eyebrow::before { content: ""; width: 28px; height: 1.5px; background: var(--teal) }
+    h1 { font-size: 36px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; margin-bottom: 16px }
+    .subtitle { color: var(--ink-2); font-size: 17px; max-width: 680px }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px }
+    .meta span { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); background: var(--paper); border: 1px solid var(--line); padding: 4px 11px; border-radius: 99px }
+    .guide { padding: 36px 0 8px }
+    .guide .inner { background: var(--teal-bg); border: 1px solid #CFE8E4; border-radius: var(--radius); padding: 22px 26px; font-size: 14.5px }
+    .guide b { color: var(--teal) }
+    .guide ol { margin: 10px 0 0 20px; color: var(--ink-2) }
+    .guide li { margin-bottom: 4px }
+    section { padding: 44px 0 8px }
+    .chap { font-family: var(--mono); font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px }
+    h2 { font-size: 26px; font-weight: 700; letter-spacing: -.01em; line-height: 1.35; margin-bottom: 14px }
+    h3 { font-size: 18px; font-weight: 650; margin: 34px 0 10px; color: var(--ink) }
+    p { margin: 12px 0; color: var(--ink-2) }
+    p b, li b { color: var(--ink); font-weight: 650 }
+    .lede { font-size: 17px; color: var(--ink); line-height: 1.8 }
+    ul, ol { margin: 12px 0 12px 22px; color: var(--ink-2) }
+    li { margin-bottom: 7px }
+    code { font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); color: #7A4F1D }
+    pre { background: #26241F; color: #E8E4DA; border-radius: var(--radius); padding: 20px 24px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.75; margin: 16px 0 22px }
+    pre code { background: transparent; border: none; padding: 0; color: inherit; font-size: 13px }
+    pre .cm { color: #8A8578 } pre .hl { color: #7FD1B9 } pre .kw { color: #9BB8F0 } pre .str { color: #E0B873 } pre .num { color: #D9A0C0 }
+    .bigconclusion { background: linear-gradient(135deg, #EDF7F5, #EFF3FC); border: 1px solid #CFE0E8; border-radius: var(--radius); padding: 28px 32px; margin: 24px 0; font-size: 17px; line-height: 1.8 }
+    .svg-wrap { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; overflow-x: auto; box-shadow: var(--shadow); margin: 18px 0 8px }
+    .svg-cap { font-size: 12.5px; color: var(--ink-3); text-align: center; margin-top: 12px; font-family: var(--mono) }
+    .note { border-left: 3px solid var(--blue); background: var(--blue-bg); border-radius: 0 var(--radius) var(--radius) 0; padding: 16px 20px; margin: 18px 0; font-size: 15px }
+    .note.warn { border-color: var(--amber); background: var(--amber-bg) }
+    .note.danger { border-color: var(--rose); background: var(--rose-bg) }
+    .note.ok { border-color: var(--green); background: var(--green-bg) }
+    .note.teal { border-color: var(--teal); background: var(--teal-bg) }
+    .note .nt { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px }
+    .note.warn .nt { color: var(--amber) } .note.danger .nt { color: var(--rose) }
+    .note.ok .nt { color: var(--green) } .note.teal .nt { color: var(--teal) }
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt { color: var(--blue) }
+    .note p { margin-bottom: 8px } .note p:last-child { margin-bottom: 0 }
+    .tbl-wrap { overflow-x: auto; margin: 16px 0 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow) }
+    table { width: 100%; border-collapse: collapse; font-size: 14px }
+    th { text-align: left; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); background: #F6F5F0; padding: 11px 16px; border-bottom: 1px solid var(--line); white-space: nowrap }
+    td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top }
+    tr:last-child td { border-bottom: none }
+    td code { font-size: 12px }
+    td .dim { color: var(--ink-3); font-size: 13px }
+    tr.done td:first-child { border-left: 3px solid var(--green) }
+    tr.planned td:first-child { border-left: 3px solid var(--violet) }
+    .steps { margin: 20px 0 }
+    .step { display: flex; gap: 16px; padding: 16px 0; border-bottom: 1px dashed var(--line) }
+    .step:last-child { border-bottom: none }
+    .step .n { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 28px; height: 28px; border-radius: 50%; background: var(--paper); border: 1.5px solid var(--teal); color: var(--teal); flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-top: 3px }
+    .step .st { font-size: 15px }
+    .step .sd { font-size: 14px; color: var(--ink-2); margin-top: 3px }
+    .scene { border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow); margin: 18px 0; overflow: hidden }
+    .scene-head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; background: #F6F5F0; border-bottom: 1px solid var(--line) }
+    .scene-tag { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; padding: 3px 9px; border-radius: 99px; background: var(--blue-bg); color: var(--blue) }
+    .scene-tag.warn { background: var(--amber-bg); color: var(--amber) }
+    .scene-tag.danger { background: var(--rose-bg); color: var(--rose) }
+    .scene-tag.ok { background: var(--green-bg); color: var(--green) }
+    .scene-title { font-size: 14px; font-weight: 650; color: var(--ink) }
+    .scene-body { padding: 16px 20px; font-size: 14.5px; color: var(--ink-2) }
+    .scene-body p { margin: 8px 0 }
+    .scene-q { font-weight: 650; color: var(--ink) }
+    .src { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3) }
+    .src code { font-size: 11px; background: transparent; border: none; padding: 0; color: var(--teal) }
+    .badge { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .08em; padding: 2px 7px; border-radius: 4px }
+    .badge.done { background: var(--green-bg); color: var(--green) }
+    .badge.planned { background: var(--violet-bg); color: var(--violet) }
+    footer { border-top: 1px solid var(--line); margin-top: 80px; padding-top: 28px; color: var(--ink-3); font-size: 13px }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">数据层 · RuneHarness Storage</div>
+      <h1>数据库设计</h1>
+      <p class="subtitle">覆盖三块持久化面：会话库（sqlite，已实现 schema v2）、记忆库（sqlite，v1）、
+        以及散落的文件型状态（cron_tasks.json / tasks/ / soul / skill 目录）。
+        文末给出网关落地需要新增的 v3 schema。</p>
+      <div class="meta">
+        <span>版本 v1.0</span>
+        <span>基线：schema v2 已落地 · memory v1 已落地 · 网关 v3 规划</span>
+        <span>主库：~/.rune/sessions.db · 记忆库：~/.rune/memory.db</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读</b>
+        <ol>
+          <li>查字段 → 第 2、3 章的表结构。</li>
+          <li>理解为什么这么设计 → 第 1 章的四个原则。</li>
+          <li>做网关 → 第 5 章 v3 增量。</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- ============ 1. 原则 ============ -->
+    <section id="principles">
+      <div class="chap">第 1 章 · 设计原则</div>
+      <h2>四条贯穿所有表的红线</h2>
+      <div class="steps">
+        <div class="step"><div class="n">1</div>
+          <div class="st"><b>append-only，不改写历史</b>
+            <div class="sd">消息行只 INSERT 不 UPDATE。压缩、卸载、中断留下的都是新行；
+              "现在发给 API 的形态"由读侧 <code>Fold</code> 组装，不是物理行本身。</div></div>
+        </div>
+        <div class="step"><div class="n">2</div>
+          <div class="st"><b>租户隔离在函数侧强制</b>
+            <div class="sd">所有读写在事务内校验 <code>scope.TenantID</code>——
+              参数里没有 tenant 字段，模型不可能越租户写。</div></div>
+        </div>
+        <div class="step"><div class="n">3</div>
+          <div class="st"><b>schema 用 PRAGMA user_version 演进</b>
+            <div class="sd">不引入迁移框架；版本号单调递增，<code>Open</code> 时自动跑到最新。
+              破坏性变更（删列、改语义）不在此列，需另开文档。</div></div>
+        </div>
+        <div class="step"><div class="n">4</div>
+          <div class="st"><b>文件型状态只在两类场合</b>
+            <div class="sd">要么是不属于任何会话的进程级配置（cron_tasks.json、SOUL.md、skills/），
+              要么是体积大到不该进库的产物（tasks/ 输出文件）。会话内事实一律进 sqlite。</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 2. 会话库 ============ -->
+    <section id="sessions-db">
+      <div class="chap">第 2 章 · 会话库 <code>sessions.db</code>（schema v2，已落地）</div>
+      <h2>一个库装五张表：会话、消息、blob、状态、请求留痕</h2>
+
+      <h3>2.1 <code>sessions</code> — 会话元数据</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>id</code></td><td>TEXT PK</td><td>UUIDv7（时间有序）</td></tr>
+            <tr><td><code>tenant_id</code></td><td>TEXT</td><td>租户隔离边界；本地恒 <code>"local"</code></td></tr>
+            <tr><td><code>parent_id</code></td><td>TEXT</td><td>子代理会话指回父会话；主会话为空</td></tr>
+            <tr><td><code>kind</code></td><td>TEXT</td><td><code>main</code> / <code>subagent</code></td></tr>
+            <tr><td><code>title</code></td><td>TEXT</td><td>首条 user 消息回填，截 40 rune</td></tr>
+            <tr><td><code>model</code></td><td>TEXT</td><td>建会话时快照的模型名</td></tr>
+            <tr><td><code>workspace</code></td><td>TEXT</td><td>会话绑定的根目录</td></tr>
+            <tr><td><code>depth</code></td><td>INTEGER</td><td>0=主代理，子代理递增</td></tr>
+            <tr><td><code>created_at / updated_at</code></td><td>INTEGER</td><td>unix；Append 时刷新 updated_at</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><span class="badge planned">v3 规划</span> 增列 <code>subject_id TEXT</code>——
+        记忆层按 subject 空间寻址用（<code>memory/dream.go:144</code> 已留 TODO）。
+        另增索引 <code>idx_sessions_subject</code>。</p>
+
+      <h3>2.2 <code>messages</code> — append-only 消息行</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>id</code></td><td>INTEGER PK AUTOINCREMENT</td><td>全局时序，也是行 id</td></tr>
+            <tr><td><code>session_id</code></td><td>TEXT FK→sessions</td><td>所属会话</td></tr>
+            <tr><td><code>kind</code></td><td>TEXT</td><td><code>msg</code> / <code>inject</code> / <code>compact_summary</code> / <code>compact_boundary</code> / <code>view_clear</code> / <code>fork</code></td></tr>
+            <tr><td><code>role</code></td><td>TEXT</td><td><code>system</code> / <code>user</code> / <code>assistant</code> / <code>tool</code></td></tr>
+            <tr><td><code>content</code></td><td>TEXT</td><td>正文或控制行 meta JSON</td></tr>
+            <tr><td><code>thinking</code></td><td>TEXT</td><td>推理模型思考链（仅展示，不回传 API）</td></tr>
+            <tr><td><code>tool_calls</code></td><td>TEXT</td><td>assistant 行的调用 JSON 数组</td></tr>
+            <tr><td><code>tool_call_id</code></td><td>TEXT</td><td>tool 行回指的 call id</td></tr>
+            <tr><td><code>is_error</code></td><td>INTEGER</td><td>该结果是否为失败（含被阻止/中断占位）</td></tr>
+            <tr><td><code>usage_json</code></td><td>TEXT</td><td>该请求的真实 token 用量（token 估算锚点）</td></tr>
+            <tr><td><code>created_at</code></td><td>INTEGER</td><td>unix</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><b>控制行</b>（<code>kind</code> 非 <code>msg</code>）不进发送形态，只记录决策：
+        <code>compact_boundary</code> 记一次压缩的切点与摘要指针、<code>view_clear</code>
+        记一批卸载替换、<code>fork</code> 记子会话继承水印。<code>Fold</code> 读侧组装时消费它们。</p>
+      <p><span class="badge planned">v3 规划</span> 新增 <code>kind='turn_end'</code> 控制行：
+        记录轮次终态（status + 起止行 id 水印），账本补记用；以及
+        <code>channel TEXT</code> 列——多渠道会话（QQ+APP 共享 unified session）时
+        标记消息来源渠道，回复按渠道路由。</p>
+
+      <h3>2.3 <code>blobs</code> — 卸载出的原文</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>id</code></td><td>INTEGER PK</td><td>—</td></tr>
+            <tr><td><code>session_id</code></td><td>TEXT FK</td><td>归属会话；祖先链可查</td></tr>
+            <tr><td><code>ref</code></td><td>TEXT</td><td><code>blob://</code> 引用的 ref</td></tr>
+            <tr><td><code>content</code></td><td>TEXT</td><td>被削减的原始工具结果全文</td></tr>
+            <tr><td><code>byte_size</code></td><td>INTEGER</td><td>字节数</td></tr>
+            <tr><td colspan="3" class="dim">UNIQUE(session_id, ref)；LoadBlob 沿 parent_id 向上查祖先会话</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>2.4 <code>session_state</code> — 每会话小状态</h3>
+      <p>单行 JSON，放"非投影"的运行态：压缩熔断计数、钳过的窗口上限等。
+        <b>参与发送形态组装的决策不走这里</b>——那类状态是控制行。</p>
+
+      <h3>2.5 <code>requests</code> — 请求留痕</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>upto_msg_id / upto_blob_id</code></td><td>INTEGER</td><td>写入时刻的水位（连控制行一起覆盖）</td></tr>
+            <tr><td><code>view_hash</code></td><td>TEXT</td><td>发送形态的 sha256，重放校验用</td></tr>
+            <tr><td><code>payload_json</code></td><td>TEXT</td><td>失败时的完整发送形态（现场证据）</td></tr>
+            <tr><td><code>error</code></td><td>TEXT</td><td>失败原文（成功为空）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>用途：任何一次 Chat 都能用 <code>LoadView(upto_msg_id)</code> 确定性重放，
+        与 <code>view_hash</code> 比对可发现视图组装逻辑漂移。</p>
+    </section>
+
+    <!-- ============ 3. 记忆库 ============ -->
+    <section id="memory-db">
+      <div class="chap">第 3 章 · 记忆库 <code>memory.db</code>（schema v1，已落地）</div>
+      <h2>独立库文件，画像决定空间维度</h2>
+      <p class="lede">记忆层与会话库分文件——schema 各自演进、记忆可独立备份带走。
+        库由 <code>internal/memory/sqlite.go</code> 管理，接口对调用方隐藏 tenant/space。</p>
+
+      <h3>3.1 <code>memories</code> — 当前视图</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>tenant_id</code> · <code>space</code> · <code>name</code></td><td>TEXT PK</td>
+                <td>三元主键：租户 · 画像空间（subject/workspace/project）· 条目名</td></tr>
+            <tr><td><code>type</code> · <code>descr</code> · <code>body</code></td><td>TEXT</td>
+                <td>类型辞典字段 + 简述 + 正文</td></tr>
+            <tr><td><code>entities</code> · <code>related</code></td><td>TEXT JSON</td>
+                <td>实体列表与关联条目名</td></tr>
+            <tr><td><code>source_sess</code></td><td>TEXT</td><td>来源会话 id（溯源用）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.2 <code>memory_log</code> — 变更流水</h3>
+      <p>全量留痕：upsert / supersede / delete / merge-into 都记一行，含
+        <code>old_body / new_body / reason / sess</code>。审计与回溯用，不参与读路径。</p>
+
+      <h3>3.3 <code>memory_meta</code> — 游标与锁</h3>
+      <p>kv 表：<code>dream_cursor</code>（消化水位）、<code>dream_lock</code>（互斥）、
+        熔断计数。key 值由画像决定，不暴露给调用方。</p>
+    </section>
+
+    <!-- ============ 4. 文件型状态 ============ -->
+    <section id="files">
+      <div class="chap">第 4 章 · 文件型状态（不进库）</div>
+      <h2>三类文件，三种归属</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>路径</th><th>形态</th><th>归属</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>~/.rune/cron_tasks.json</code></td><td>JSON 数组</td>
+                <td>durable cron 任务</td>
+                <td>tmp+rename 原子写；flock 串行化跨进程读写</td></tr>
+            <tr><td><code>~/.rune/cron_sched_*.lock</code></td><td>flock</td>
+                <td>workspace 调度属主锁</td>
+                <td>每 workspace 一把；持锁者才点火 durable 任务</td></tr>
+            <tr><td><code>~/.rune/tasks/&lt;sess&gt;/bgN.output</code></td><td>文本文件</td>
+                <td>后台任务输出</td>
+                <td>stdout+stderr 合并落盘；模型用 read_file 读</td></tr>
+            <tr><td><code>~/.rune/SOUL.md</code></td><td>Markdown</td>
+                <td>人格契约（规划）</td>
+                <td>见 architecture 第 6 章</td></tr>
+            <tr><td><code>~/.agents/skills/*/SKILL.md</code></td><td>Markdown</td>
+                <td>技能清单</td>
+                <td>启动扫描进 prompt 目录，正文按需读</td></tr>
+            <tr><td><code>~/.rune/rune.log</code></td><td>文本</td>
+                <td>运行日志</td>
+                <td>TUI 占终端，日志写文件不写 stderr</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><b>为什么这些是文件而不是表</b>：cron_tasks.json 是"跨进程共享的任务定义"，
+        文件 + flock 比 sqlite 多写者简单；tasks/ 输出是"可能上 MB 的原始字节"，
+        进库会让 WAL 膨胀；SOUL.md 与 SKILL.md 是"人直接编辑的制品"，
+        文件形态让编辑、git 管理、diff 都自然。</p>
+    </section>
+
+    <!-- ============ 5. v3 ============ -->
+    <section id="v3">
+      <div class="chap">第 5 章 · v3 增量（网关落地需要）</div>
+      <h2>为 bot 形态补的三张表</h2>
+      <p class="lede">网关需要的不是新库，是现有会话库加三块能力：
+        外部对话映射、轮次终态、多副本占位。全部走 <code>user_version</code> 迁移，向后兼容。</p>
+
+      <h3>5.1 <code>chat_bindings</code> — 外部对话 → 会话（新增）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>tenant_id</code> · <code>channel</code> · <code>chat_id</code></td><td>TEXT PK</td>
+                <td>三元主键：谁、在哪个渠道、哪个外部对话</td></tr>
+            <tr><td><code>session_id</code></td><td>TEXT FK</td><td>映射到的内部会话</td></tr>
+            <tr><td><code>subject_id</code></td><td>TEXT</td><td>对话另一端的主体（bot 场景下的"用户"）</td></tr>
+            <tr><td><code>created_at</code> · <code>last_active</code></td><td>INTEGER</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><b>为什么独立成表而不是 sessions 加列</b>：同一个 chat_id 可以在多个渠道
+        （QQ / APP / 未来的 web）——绑定关系是"渠道 × 对话"不是"会话的属性"。
+        会话归一（unified session）时多行 binding 指向同一 session_id。</p>
+
+      <h3>5.2 <code>turns</code> — 轮次终态（新增，可选）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>id</code></td><td>TEXT PK</td><td><code>turn_id</code>（事件帧里那个）</td></tr>
+            <tr><td><code>session_id</code></td><td>TEXT FK</td><td>—</td></tr>
+            <tr><td><code>status</code></td><td>TEXT</td><td>completed / interrupted / error / crashed / maxsteps</td></tr>
+            <tr><td><code>from_msg_id</code> · <code>to_msg_id</code></td><td>INTEGER</td><td>本轮覆盖的行 id 区间</td></tr>
+            <tr><td><code>reason</code></td><td>TEXT</td><td>失败/中断原因</td></tr>
+            <tr><td><code>created_at</code> · <code>ended_at</code></td><td>INTEGER</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><b>可选的理由</b>：轮次终态也能用 <code>kind='turn_end'</code> 控制行落
+        <code>messages</code>——append-only 一致性更好，但查询"该会话最后一轮状态"
+        要扫行。网关需要频繁回答"上一轮算完没完"，独立 <code>turns</code> 表是这个查询的索引。
+        两者可以并存：控制行是事实源，turns 是查询加速。</p>
+
+      <h3>5.3 <code>session_leases</code> — 多副本占位（新增，v3 起建）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>session_id</code></td><td>TEXT PK</td><td>—</td></tr>
+            <tr><td><code>owner</code></td><td>TEXT</td><td>持锁实例 id（hostname:pid）</td></tr>
+            <tr><td><code>expires_at</code></td><td>INTEGER</td><td>租约到期；续约每 30s 一次</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>v1 单副本可以不启用；表先建出来是为了让 schema v3 一次性把网关需求收齐，
+        免得 v4 再迁移。多副本部署时持锁实例才有权给该会话跑轮次——与 cron 的
+        属主锁同一思路，但锁对象是 sqlite 行而不是文件。</p>
+
+      <h3>5.4 v3 迁移汇总</h3>
+      <pre><span class="cm">-- schemaVersion 2 → 3</span>
+<span class="kw">ALTER TABLE</span> sessions <span class="kw">ADD COLUMN</span> subject_id TEXT <span class="kw">NOT NULL DEFAULT</span> <span class="str">''</span>;
+<span class="kw">ALTER TABLE</span> messages <span class="kw">ADD COLUMN</span> channel TEXT <span class="kw">NOT NULL DEFAULT</span> <span class="str">''</span>;
+<span class="kw">CREATE TABLE</span> chat_bindings (…);
+<span class="kw">CREATE TABLE</span> turns (…);
+<span class="kw">CREATE TABLE</span> session_leases (…);
+<span class="cm">-- 消息 kind 词表扩充：'turn_end' 作为控制行合法值</span></pre>
+    </section>
+
+    <!-- ============ 6. 数据流 ============ -->
+    <section id="flow">
+      <div class="chap">第 6 章 · 数据流全景</div>
+      <h2>一次"用户发消息"写了几张表</h2>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 300" width="100%" style="min-width:760px" role="img" aria-label="写入路径">
+          <defs>
+            <marker id="dah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+          </defs>
+          <g font-size="12" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+            <rect x="40" y="120" width="140" height="60" rx="8" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="110" y="146" text-anchor="middle" font-weight="650">Enqueue(text)</text>
+            <text x="110" y="164" text-anchor="middle" font-size="11" fill="#5E5748">runner / TUI</text>
+
+            <rect x="280" y="30" width="300" height="52" rx="8" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="430" y="52" text-anchor="middle" font-weight="650" fill="#0E7368">messages（主写）</text>
+            <text x="430" y="70" text-anchor="middle" font-size="10.5" fill="#5E5748">user · assistant · tool · inject · 控制行</text>
+
+            <rect x="280" y="110" width="300" height="52" rx="8" fill="#FCF4E8" stroke="#A85507" />
+            <text x="430" y="132" text-anchor="middle" font-weight="650" fill="#A85507">requests（每次 Chat 一条）</text>
+            <text x="430" y="150" text-anchor="middle" font-size="10.5" fill="#5E5748">水位 + view_hash + 失败现场</text>
+
+            <rect x="280" y="190" width="300" height="52" rx="8" fill="#F4EFFC" stroke="#6528C9" />
+            <text x="430" y="212" text-anchor="middle" font-weight="650" fill="#6528C9">blobs / session_state</text>
+            <text x="430" y="230" text-anchor="middle" font-size="10.5" fill="#5E5748">压缩卸载与熔断计数</text>
+
+            <rect x="680" y="110" width="200" height="60" rx="8" fill="#EEF7F0" stroke="#177245" />
+            <text x="780" y="136" text-anchor="middle" font-weight="650" fill="#177245">memory.db（旁路）</text>
+            <text x="780" y="154" text-anchor="middle" font-size="10.5" fill="#5E5748">dream 消化 / memory 工具</text>
+
+            <line x1="182" y1="140" x2="276" y2="60" stroke="#5B564E" stroke-width="1.3" marker-end="url(#dah)" />
+            <line x1="182" y1="150" x2="276" y2="140" stroke="#5B564E" stroke-width="1.3" marker-end="url(#dah)" />
+            <line x1="182" y1="160" x2="276" y2="216" stroke="#5B564E" stroke-width="1.3" marker-end="url(#dah)" />
+            <path d="M580 140 C 640 110, 640 140, 676 140" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3" fill="none" marker-end="url(#dah)" />
+            <text x="628" y="118" font-size="10" fill="#9A948A">UserPromptSubmit 首条</text>
+          </g>
+        </svg>
+        <div class="svg-cap">写入面：messages 是主线，requests/blobs/state 是支线，memory 是异步旁路</div>
+      </div>
+      <p>读取面只有一个入口：<code>Fold</code>。它把物理行组装成发送形态，
+        消费 <code>compact_boundary / view_clear / fork</code> 三类控制行，
+        修补悬空 tool_call（v3 起），不回写任何表。</p>
+    </section>
+
+    <!-- ============ 7. 附录 ============ -->
+    <section id="appendix">
+      <div class="chap">附录 · 未实现与边界</div>
+      <h2>规划项清单</h2>
+      <ul>
+        <li><b>v3 全部新表/新列</b>：<code>chat_bindings</code>、<code>turns</code>、
+          <code>session_leases</code>、<code>sessions.subject_id</code>、<code>messages.channel</code>、
+          <code>kind='turn_end'</code>。落地随 <code>cmd/runebot</code> 一起做，不提前迁移。</li>
+        <li><b>Fold 悬空修补</b>：读侧合成占位 tool 结果——设计已在 gateway-plan §5.2，
+          实现挂 v3。</li>
+        <li><b>多副本</b>：session_leases 先建表不启用；sqlite 单写者限制下，
+          多副本意味着共享存储换 PG 或同机多进程——那是另一个文档的事。</li>
+        <li><b>不在库里的</b>：EventLedger 的瞬态事件（delta 等）不落库，只走内存环；
+          turn_end 落 <code>turns</code> 或控制行——二选一留到实现期定。</li>
+      </ul>
+    </section>
+
+    <footer>
+      RuneHarness · docs/runeharness-db.html · v1.0 草案 · 2026-10-07
+    </footer>
+  </div>
+
+</body>
+
+</html>

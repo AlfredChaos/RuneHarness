@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 系统架构 — 总览</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap { max-width: 860px; margin: 0 auto; padding: 0 28px 140px }
+
+    header { padding: 80px 0 44px; border-bottom: 1px solid var(--line) }
+
+    .eyebrow {
+      font-family: var(--mono); font-size: 11.5px; letter-spacing: .2em;
+      text-transform: uppercase; color: var(--teal); margin-bottom: 16px;
+      display: flex; align-items: center; gap: 12px
+    }
+    .eyebrow::before { content: ""; width: 28px; height: 1.5px; background: var(--teal) }
+
+    h1 { font-size: 36px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; margin-bottom: 16px }
+    .subtitle { color: var(--ink-2); font-size: 17px; max-width: 660px }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px }
+    .meta span {
+      font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+      background: var(--paper); border: 1px solid var(--line);
+      padding: 4px 11px; border-radius: 99px
+    }
+
+    .guide { padding: 36px 0 8px }
+    .guide .inner {
+      background: var(--teal-bg); border: 1px solid #CFE8E4;
+      border-radius: var(--radius); padding: 22px 26px; font-size: 14.5px
+    }
+    .guide b { color: var(--teal) }
+    .guide ol { margin: 10px 0 0 20px; color: var(--ink-2) }
+    .guide li { margin-bottom: 4px }
+
+    section { padding: 44px 0 8px }
+    .chap {
+      font-family: var(--mono); font-size: 11.5px; letter-spacing: .16em;
+      text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px
+    }
+    h2 { font-size: 26px; font-weight: 700; letter-spacing: -.01em; line-height: 1.35; margin-bottom: 14px }
+    h3 { font-size: 18px; font-weight: 650; margin: 34px 0 10px; color: var(--ink) }
+    h4 { font-size: 15.5px; font-weight: 650; margin: 22px 0 8px; color: var(--ink) }
+
+    p { margin: 12px 0; color: var(--ink-2) }
+    p b, li b { color: var(--ink); font-weight: 650 }
+    .lede { font-size: 17px; color: var(--ink); line-height: 1.8 }
+
+    ul, ol { margin: 12px 0 12px 22px; color: var(--ink-2) }
+    li { margin-bottom: 7px }
+
+    code {
+      font-family: var(--mono); font-size: 13px; background: var(--code-bg);
+      padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); color: #7A4F1D
+    }
+
+    pre {
+      background: #26241F; color: #E8E4DA; border-radius: var(--radius);
+      padding: 20px 24px; overflow-x: auto; font-family: var(--mono);
+      font-size: 13px; line-height: 1.75; margin: 16px 0 22px
+    }
+    pre code { background: transparent; border: none; padding: 0; color: inherit; font-size: 13px }
+    pre .cm { color: #8A8578 }
+    pre .hl { color: #7FD1B9 }
+    pre .kw { color: #9BB8F0 }
+    pre .str { color: #E0B873 }
+    pre .num { color: #D9A0C0 }
+
+    .bigconclusion {
+      background: linear-gradient(135deg, #EDF7F5, #EFF3FC);
+      border: 1px solid #CFE0E8; border-radius: var(--radius);
+      padding: 28px 32px; margin: 24px 0; font-size: 17px; line-height: 1.8
+    }
+
+    .svg-wrap {
+      background: var(--paper); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 26px; overflow-x: auto;
+      box-shadow: var(--shadow); margin: 18px 0 8px
+    }
+    .svg-cap { font-size: 12.5px; color: var(--ink-3); text-align: center; margin-top: 12px; font-family: var(--mono) }
+
+    .scene {
+      border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--paper); box-shadow: var(--shadow); margin: 18px 0; overflow: hidden
+    }
+    .scene-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 20px; background: #F6F5F0; border-bottom: 1px solid var(--line)
+    }
+    .scene-tag {
+      font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+      letter-spacing: .1em; padding: 3px 9px; border-radius: 99px;
+      background: var(--blue-bg); color: var(--blue)
+    }
+    .scene-tag.warn { background: var(--amber-bg); color: var(--amber) }
+    .scene-tag.danger { background: var(--rose-bg); color: var(--rose) }
+    .scene-tag.ok { background: var(--green-bg); color: var(--green) }
+    .scene-tag.violet { background: var(--violet-bg); color: var(--violet) }
+    .scene-title { font-size: 14px; font-weight: 650; color: var(--ink) }
+    .scene-body { padding: 16px 20px; font-size: 14.5px; color: var(--ink-2) }
+    .scene-body p { margin: 8px 0 }
+    .scene-q { font-weight: 650; color: var(--ink) }
+
+    .msg {
+      display: flex; gap: 12px; padding: 12px 18px;
+      border-bottom: 1px solid var(--line); font-size: 13.5px
+    }
+    .msg:last-child { border-bottom: none }
+    .msg .who {
+      font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+      width: 64px; flex-shrink: 0; padding-top: 3px; letter-spacing: .04em
+    }
+    .msg.u .who { color: var(--blue) }
+    .msg.a .who { color: var(--violet) }
+    .msg.t .who { color: var(--amber) }
+    .msg.e .who { color: var(--teal) }
+    .msg.s .who { color: var(--ink-3) }
+    .msg .bd { color: var(--ink-2); min-width: 0 }
+    .msg .bd code { font-size: 11.5px }
+    .msg.faded { opacity: .45 }
+    .msg.new { background: var(--green-bg) }
+    .msg.new .who { color: var(--green) }
+    .msg.sum { background: var(--teal-bg) }
+    .msg.sum .who { color: var(--teal) }
+    .msg.boundary {
+      background: #F6F5F1; font-family: var(--mono); font-size: 11.5px;
+      color: var(--ink-3); justify-content: center; letter-spacing: .06em
+    }
+    .thread {
+      margin: 16px 0 22px; border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--paper); overflow: hidden; box-shadow: var(--shadow)
+    }
+
+    .note {
+      border-left: 3px solid var(--blue); background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px; margin: 18px 0; font-size: 15px
+    }
+    .note.warn { border-color: var(--amber); background: var(--amber-bg) }
+    .note.danger { border-color: var(--rose); background: var(--rose-bg) }
+    .note.ok { border-color: var(--green); background: var(--green-bg) }
+    .note.teal { border-color: var(--teal); background: var(--teal-bg) }
+    .note .nt {
+      font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+      letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px
+    }
+    .note.warn .nt { color: var(--amber) }
+    .note.danger .nt { color: var(--rose) }
+    .note.ok .nt { color: var(--green) }
+    .note.teal .nt { color: var(--teal) }
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt { color: var(--blue) }
+    .note p { margin-bottom: 8px }
+    .note p:last-child { margin-bottom: 0 }
+
+    .tbl-wrap {
+      overflow-x: auto; margin: 16px 0 24px; border: 1px solid var(--line);
+      border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow)
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 14px }
+    th {
+      text-align: left; font-family: var(--mono); font-size: 11px; font-weight: 600;
+      letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+      background: #F6F5F0; padding: 11px 16px; border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+    td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top }
+    tr:last-child td { border-bottom: none }
+    td code { font-size: 12px }
+    td .dim { color: var(--ink-3); font-size: 13px }
+
+    .steps { margin: 20px 0 }
+    .step { display: flex; gap: 16px; padding: 16px 0; border-bottom: 1px dashed var(--line) }
+    .step:last-child { border-bottom: none }
+    .step .n {
+      font-family: var(--mono); font-size: 12px; font-weight: 700;
+      width: 28px; height: 28px; border-radius: 50%; background: var(--paper);
+      border: 1.5px solid var(--teal); color: var(--teal); flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; margin-top: 3px
+    }
+    .step .st { font-size: 15px }
+    .step .st b { font-weight: 650 }
+    .step .sd { font-size: 14px; color: var(--ink-2); margin-top: 3px }
+
+    .ba { display: flex; gap: 16px; margin: 18px 0 }
+    .ba .side {
+      flex: 1; border: 1px solid var(--line); border-radius: var(--radius);
+      overflow: hidden; background: var(--paper); box-shadow: var(--shadow); min-width: 0
+    }
+    .ba .side+.side { border-color: #BFDCD6 }
+    .ba .ba-label {
+      font-family: var(--mono); font-size: 11px; font-weight: 700;
+      letter-spacing: .1em; text-transform: uppercase;
+      padding: 10px 16px; border-bottom: 1px solid var(--line)
+    }
+    .ba .before .ba-label { color: var(--amber); background: var(--amber-bg) }
+    .ba .after .ba-label { color: var(--teal); background: var(--teal-bg) }
+    .ba pre { margin: 0; border-radius: 0; background: transparent; color: var(--ink-2); font-size: 12.5px; padding: 16px 18px }
+    .ba pre .cm { color: var(--ink-3) }
+    .ba pre .hl { color: var(--teal); font-weight: 600 }
+    .ba pre .del { color: var(--rose) }
+    @media (max-width: 720px) { .ba { flex-direction: column } }
+
+    /* 分层模型专用 */
+    .layers { margin: 18px 0 }
+    .layer {
+      border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--paper); margin-bottom: 10px; overflow: hidden;
+      box-shadow: var(--shadow)
+    }
+    .layer-head {
+      display: flex; align-items: baseline; gap: 14px;
+      padding: 14px 20px 10px; border-bottom: 1px dashed var(--line)
+    }
+    .layer-name {
+      font-family: var(--mono); font-size: 12px; font-weight: 700;
+      letter-spacing: .1em; color: var(--teal); white-space: nowrap
+    }
+    .layer-desc { font-size: 14px; color: var(--ink-2) }
+    .layer-body { padding: 12px 20px 16px; display: flex; flex-wrap: wrap; gap: 8px }
+    .layer-body .mod {
+      font-family: var(--mono); font-size: 12px;
+      border: 1px solid var(--line-2); border-radius: 6px;
+      padding: 4px 10px; color: var(--ink); background: #FBFAF7
+    }
+    .layer-body .mod.new { border-color: #BFDCD6; background: var(--teal-bg); color: var(--teal) }
+    .layer-body .mod.ext { border-style: dashed; color: var(--ink-3) }
+
+    .src { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3) }
+    .src code { font-size: 11px; background: transparent; border: none; padding: 0; color: var(--teal) }
+
+    footer {
+      border-top: 1px solid var(--line); margin-top: 80px;
+      padding-top: 28px; color: var(--ink-3); font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">架构文档 · RuneHarness Architecture</div>
+      <h1>RuneHarness 系统架构总览</h1>
+      <p class="subtitle">一个 append-only 账本驱动的 agent 内核，加上一层可插拔的装配层与前端轨。
+        本文覆盖：分层模型、功能模块、核心流程（时序与状态迁移）、事件目录、
+        以及 SOUL.md 身份槽位——它与既有的压缩、记忆、后台任务、调度四份设计文档配套。</p>
+      <div class="meta">
+        <span>版本 v1.0</span>
+        <span>范围：现状 + 网关规划（docs/runeharness-gateway-plan.html）</span>
+        <span>基线：go 1.2x · OpenAI 兼容端点 · SQLite · Bubble Tea</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读</b>
+        <ol>
+          <li>建立整体认知 → 第 1、2 章（分层 + 模块）。</li>
+          <li>改某条流程 → 第 3 章时序图 + 第 5 章状态机。</li>
+          <li>接前端 / 排障 → 第 4 章事件目录。</li>
+          <li>理解人格设计 → 第 6 章 SOUL.md。</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- ============ 1. 分层 ============ -->
+    <section id="layers">
+      <div class="chap">第 1 章 · 分层模型</div>
+      <h2>五层，每层只对下一层说一种话</h2>
+      <p class="lede">系统分五层。层与层之间只靠 Go 接口和 ctx 传递的
+        <code>scope.Scope</code> 说话——没有跨层共享的可变状态，没有绕过接口的直连。
+        下面的图里，箭头方向是"依赖谁"，不是"谁调用谁"。</p>
+
+      <div class="layers">
+        <div class="layer">
+          <div class="layer-head">
+            <span class="layer-name">接入层</span>
+            <span class="layer-desc">把外部输入翻译成"提交一条消息到某会话"</span>
+          </div>
+          <div class="layer-body">
+            <span class="mod">internal/tui</span>
+            <span class="mod new">cmd/runebot · WS/SSE rail（规划）</span>
+            <span class="mod ext">未来：Telegram / Slack / webhooks</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer-head">
+            <span class="layer-name">编排层</span>
+            <span class="layer-desc">会话路由、轮次调度、事件分发</span>
+          </div>
+          <div class="layer-body">
+            <span class="mod new">SessionRunner（规划）</span>
+            <span class="mod new">EventLedger（规划）</span>
+            <span class="mod">internal/subagent</span>
+            <span class="mod">internal/bgtask</span>
+            <span class="mod">internal/cron</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer-head">
+            <span class="layer-name">内核层</span>
+            <span class="layer-desc">agent loop 与 hook 体系——系统不可缺少的部分</span>
+          </div>
+          <div class="layer-body">
+            <span class="mod">internal/agent</span>
+            <span class="mod">internal/compact</span>
+            <span class="mod">internal/breaker</span>
+            <span class="mod">internal/permission</span>
+            <span class="mod">internal/todo</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer-head">
+            <span class="layer-name">能力层</span>
+            <span class="layer-desc">模型可调用的工具与外部适配</span>
+          </div>
+          <div class="layer-body">
+            <span class="mod">internal/tools</span>
+            <span class="mod">internal/llm</span>
+            <span class="mod">internal/skill</span>
+            <span class="mod">internal/prompt</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer-head">
+            <span class="layer-name">持久层</span>
+            <span class="layer-desc">append-only 账本与衍生状态</span>
+          </div>
+          <div class="layer-body">
+            <span class="mod">internal/session + sqlite</span>
+            <span class="mod">internal/memory</span>
+            <span class="mod">internal/scope</span>
+            <span class="mod">internal/config</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <div class="nt">依赖方向约束</div>
+        <p>下层不应引用上层。<code>agent</code> 不认识存储与 UI，
+          <code>tools</code> 不认识 agent——跨层需要协作时走接口
+          （<code>Recorder</code>/<code>Compactor</code>/<code>BGSpawner</code>）
+          或 hook 回调，由装配方在 <code>main.go</code> 接好。</p>
+      </div>
+
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">为什么是"装配层"而不是"框架层"</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">Hermes 有 gateway/agent/tools 三层；为什么 RuneHarness 把编排层独立出来？</p>
+          <p>因为"会话归谁、轮次怎么串行、事件发给谁"这件事在 CLI 里是隐含的
+            （一进程一会话，UI 直接驱动 Run），在 bot 里是显式的
+            （N 个 chat → N 个槽位 → 串行轮次）。把编排层显式化以后，
+            TUI 和 gateway 都只是"编排层的一个消费方"——coding agent 是
+            bot 的一个 profile 这句话才成立。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 2. 模块 ============ -->
+    <section id="modules">
+      <div class="chap">第 2 章 · 功能模块</div>
+      <h2>每个模块的职责一句话，依赖关系看图</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>模块</th><th>职责</th><th>关键类型 / 接口</th><th>依赖</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>agent</code></td><td>驱动"调模型→执行工具→回填"循环；5 种 hook 事件的注册与触发</td>
+                <td><code>Agent.Run</code> / <code>Hooks</code> / <code>Message</code> / <code>Kind</code></td>
+                <td><code>tools</code></td></tr>
+            <tr><td><code>session</code></td><td>append-only 消息行存储；Fold 组装发送形态；blob / 请求留痕 / 会话状态</td>
+                <td><code>Store</code> / <code>Fold</code> / <code>BoundaryMeta</code></td>
+                <td><code>agent</code> · <code>scope</code></td></tr>
+            <tr><td><code>compact</code></td><td>三线阈值 + 卸载 + 摘要 + 熔断，三个入口共用一个 Compactor</td>
+                <td><code>Compactor</code> / <code>Config</code></td>
+                <td><code>agent</code> · <code>session</code></td></tr>
+            <tr><td><code>memory</code></td><td>画像驱动的记忆层；首条 user 注入索引 + dream 消化</td>
+                <td><code>Memory</code> / <code>Profile</code> / <code>InjectOnce</code></td>
+                <td><code>agent</code> · <code>session</code> · <code>llm</code></td></tr>
+            <tr><td><code>permission</code></td><td>三道闸：硬拒名单 / 白名单 / 用户确认</td>
+                <td><code>Desk</code> / <code>Config</code></td>
+                <td><code>agent</code></td></tr>
+            <tr><td><code>breaker</code></td><td>拦截退化调用：连败熔断 / 重复结果熔断 / nag 提醒</td>
+                <td><code>Breaker</code>（Check/Observe/Nag）</td>
+                <td><code>agent</code></td></tr>
+            <tr><td><code>tools</code></td><td>工具注册表与四个本地工具（time / list / read / shell）</td>
+                <td><code>Tool</code> / <code>Registry</code> / <code>Spec</code></td>
+                <td><code>scope</code></td></tr>
+            <tr><td><code>subagent</code></td><td><code>task</code> 工具 spawn 子代理，共享权限闸与压缩器</td>
+                <td><code>Tool</code> / <code>Event</code></td>
+                <td><code>agent</code> · <code>compact</code> · <code>session</code></td></tr>
+            <tr><td><code>bgtask</code></td><td>后台进程 spawn + 完成/停滞通知队列 + <code>task_list/kill</code> 工具</td>
+                <td><code>Manager</code> / <code>Drain</code></td>
+                <td><code>scope</code> · <code>tools</code></td></tr>
+            <tr><td><code>cron</code></td><td>五段式调度 + 属主锁 + 到点事件队列 + 三个模型工具</td>
+                <td><code>Scheduler</code> / <code>Store</code> / <code>Event</code></td>
+                <td><code>scope</code> · <code>tools</code></td></tr>
+            <tr><td><code>todo</code></td><td>进程内 TODO 列表 + 写入重挂 + nag 提醒</td>
+                <td><code>Manager</code>（Tool + PreChat）</td>
+                <td><code>agent</code> · <code>tools</code></td></tr>
+            <tr><td><code>llm</code></td><td>OpenAI 兼容适配器：流式、tool_calls、thinking、错误分类</td>
+                <td><code>Client.Chat</code></td>
+                <td><code>agent</code> · <code>tools</code></td></tr>
+            <tr><td><code>prompt</code></td><td>system prompt 组装：identity → tools → skills → workspace</td>
+                <td><code>Env</code> / <code>Build</code> / <code>Identity</code></td>
+                <td><code>tools</code></td></tr>
+            <tr><td><code>skill</code></td><td>启动扫描 <code>~/.agents/skills</code>，目录进 prompt，正文按需</td>
+                <td><code>Meta</code> / <code>Scan</code> / <code>Catalog</code></td>
+                <td>—</td></tr>
+            <tr><td><code>scope</code></td><td>ctx 信任根：TenantID / SessionID / Workspace / SubjectID</td>
+                <td><code>Scope</code> / <code>WithScope</code> / <code>FromContext</code></td>
+                <td>—</td></tr>
+            <tr><td><code>tui</code></td><td>Bubble Tea 前端：对话流 + 权限弹窗 + 斜杠命令 + @ 文件提及</td>
+                <td><code>Model</code> / <code>xxxMsg</code> 一族</td>
+                <td>几乎全部</td></tr>
+            <tr><td><code>config</code></td><td><code>.env</code> + env 变量 → <code>Config</code></td>
+                <td><code>Load</code> / <code>modelWindows</code></td>
+                <td>—</td></tr>
+            <tr><td class="dim">新增（规划）</td><td class="dim">EventLedger / SessionRunner / rail / harness 装配</td>
+                <td class="dim"><code>runner.Slot</code> / <code>ledger.Event</code></td>
+                <td class="dim">编排层</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 3. 核心流程 ============ -->
+    <section id="flows">
+      <div class="chap">第 3 章 · 核心业务逻辑</div>
+      <h2>两条主流程：同步轮次与异步通知</h2>
+      <p class="lede">系统只跑两种事：用户提交消息触发一轮 agent loop，或后台件（bg/cron/dream）
+        到点把一条通知注入某会话。其他一切都是这两条主线的变奏。</p>
+
+      <h3>3.1 同步轮次：用户消息 → agent.Run</h3>
+      <p>一条用户消息从提交到回复的完整路径。<b>每一步都有落库动作</b>——历史是逐行追加的，
+        不存在"内存里的会话"。</p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 560" width="100%" style="min-width:760px" role="img" aria-label="轮次时序图">
+          <defs>
+            <marker id="fah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+            <marker id="fah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#0E7368" />
+            </marker>
+          </defs>
+          <g font-size="12" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+            <!-- lifelines -->
+            <line x1="90" y1="40" x2="90" y2="530" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="270" y1="40" x2="270" y2="530" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="470" y1="40" x2="470" y2="530" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="650" y1="40" x2="650" y2="530" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="830" y1="40" x2="830" y2="530" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <text x="90" y="28" text-anchor="middle" font-weight="700" font-size="12.5">前端</text>
+            <text x="270" y="28" text-anchor="middle" font-weight="700" font-size="12.5">Runner / loop</text>
+            <text x="470" y="28" text-anchor="middle" font-weight="700" font-size="12.5">Hooks</text>
+            <text x="650" y="28" text-anchor="middle" font-weight="700" font-size="12.5">Tools</text>
+            <text x="830" y="28" text-anchor="middle" font-weight="700" font-size="12.5">Store / LLM</text>
+
+            <!-- submit -->
+            <rect x="60" y="52" width="60" height="26" rx="4" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="90" y="70" text-anchor="middle" font-size="11" fill="#2657C4">submit</text>
+            <line x1="92" y1="76" x2="266" y2="92" stroke="#5B564E" stroke-width="1.3" marker-end="url(#fah)" />
+            <text x="178" y="86" font-size="11" fill="#5E5748">Enqueue(text)</text>
+
+            <!-- userpromptsubmit -->
+            <line x1="272" y1="100" x2="466" y2="116" stroke="#5B564E" stroke-width="1.3" marker-end="url(#fah)" />
+            <text x="368" y="110" font-size="11" fill="#5E5748">TriggerUserPromptSubmit</text>
+            <line x1="466" y1="124" x2="272" y2="140" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3" marker-end="url(#fah)" />
+            <text x="368" y="136" font-size="10.5" fill="#9A948A">replace / block / inject（记忆首条等）</text>
+            <line x1="272" y1="150" x2="826" y2="166" stroke="#5B564E" stroke-width="1.3" marker-end="url(#fah)" />
+            <text x="548" y="160" font-size="11" fill="#5E5748">Append(user 消息)</text>
+
+            <!-- loop head -->
+            <rect x="255" y="180" width="460" height="26" rx="4" fill="#F6F5F0" stroke="#9A948A" />
+            <text x="485" y="198" text-anchor="middle" font-size="11.5" fill="#26241F" font-weight="650">每个 step 重复：PreChat → Maintain → Chat → 工具批</text>
+
+            <!-- prechat + maintain -->
+            <line x1="272" y1="222" x2="466" y2="238" stroke="#5B564E" stroke-width="1.2" marker-end="url(#fah)" />
+            <text x="368" y="232" font-size="10.5" fill="#5E5748">TriggerPreChat → 注入 nag/提醒</text>
+            <line x1="272" y1="248" x2="826" y2="264" stroke="#0E7368" stroke-width="1.2" marker-end="url(#fah2)" />
+            <text x="548" y="258" font-size="10.5" fill="#0E7368">Compactor.Maintain（卸载/摘要，写 blob+控制行）</text>
+
+            <!-- chat -->
+            <line x1="272" y1="282" x2="826" y2="298" stroke="#5B564E" stroke-width="1.4" marker-end="url(#fah)" />
+            <text x="548" y="292" font-size="11.5" fill="#5E5748" font-weight="650">llm.Chat（流式）</text>
+            <line x1="826" y1="306" x2="272" y2="322" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3" marker-end="url(#fah)" />
+            <text x="548" y="318" font-size="10.5" fill="#9A948A">OnPartial → PartialMsg（流式上行）</text>
+            <line x1="272" y1="330" x2="826" y2="346" stroke="#5B564E" stroke-width="1.3" marker-end="url(#fah)" />
+            <text x="548" y="340" font-size="11" fill="#5E5748">Append(assistant 消息，可能带 tool_calls)</text>
+
+            <!-- tool batch -->
+            <rect x="255" y="358" width="460" height="26" rx="4" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="485" y="376" text-anchor="middle" font-size="11.5" fill="#0E7368" font-weight="650">遍历 msg.ToolCalls：PreToolUse → Call → PostToolUse</text>
+            <line x1="272" y1="398" x2="466" y2="414" stroke="#5B564E" stroke-width="1.2" marker-end="url(#fah)" />
+            <text x="368" y="408" font-size="10.5" fill="#5E5748">PreToolUse（权限 → breaker）</text>
+            <line x1="272" y1="424" x2="646" y2="440" stroke="#5B564E" stroke-width="1.3" marker-end="url(#fah)" />
+            <text x="458" y="434" font-size="11" fill="#5E5748">Registry.Call（含 panic recover）</text>
+            <line x1="272" y1="450" x2="466" y2="466" stroke="#5B564E" stroke-width="1.2" marker-end="url(#fah)" />
+            <text x="368" y="460" font-size="10.5" fill="#5E5748">PostToolUse（breaker 观察）</text>
+            <line x1="272" y1="476" x2="826" y2="492" stroke="#5B564E" stroke-width="1.3" marker-end="url(#fah)" />
+            <text x="548" y="486" font-size="11" fill="#5E5748">Append(tool 结果) ×N（逐一落库）</text>
+
+            <!-- stop or loop -->
+            <rect x="255" y="500" width="460" height="24" rx="4" fill="#FCF4E8" stroke="#A85507" />
+            <text x="485" y="517" text-anchor="middle" font-size="11" fill="#A85507">finish_reason=stop → TriggerStop？返回 history</text>
+          </g>
+        </svg>
+        <div class="svg-cap">一条用户消息的完整时序：斜杠是"跨层消息"，虚线是回调</div>
+      </div>
+
+      <h3>3.2 异步交付：bg / cron 通知进入会话</h3>
+      <p>后台任务与定时任务产出的事件<b>不直接进对话</b>——它们先进队列，
+        等"该会话空闲"这个条件成立才注入成一条 user 消息跑一轮。</p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 380" width="100%" style="min-width:760px" role="img" aria-label="异步通知交付">
+          <defs>
+            <marker id="aah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+          </defs>
+          <g font-size="12" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+            <!-- sources -->
+            <rect x="40" y="40" width="180" height="64" rx="8" fill="#F3F1EB" stroke="#9A948A" />
+            <text x="130" y="66" text-anchor="middle" font-weight="650">bgtask.Manager</text>
+            <text x="130" y="84" text-anchor="middle" font-size="11" fill="#5E5748">任务终态 / 停滞</text>
+            <rect x="40" y="160" width="180" height="64" rx="8" fill="#F3F1EB" stroke="#9A948A" />
+            <text x="130" y="186" text-anchor="middle" font-weight="650">cron.Scheduler</text>
+            <text x="130" y="204" text-anchor="middle" font-size="11" fill="#5E5748">到点 / 漏跑汇总</text>
+            <rect x="40" y="280" width="180" height="64" rx="8" fill="#F3F1EB" stroke="#9A948A" />
+            <text x="130" y="306" text-anchor="middle" font-weight="650">memory.Dream</text>
+            <text x="130" y="324" text-anchor="middle" font-size="11" fill="#5E5748">消化完成提示</text>
+
+            <!-- queue -->
+            <rect x="330" y="100" width="200" height="180" rx="10" fill="#FCF4E8" stroke="#A85507" stroke-width="1.4" />
+            <text x="430" y="130" text-anchor="middle" font-weight="700" fill="#A85507">每会话 inbox</text>
+            <text x="430" y="150" text-anchor="middle" font-size="11" fill="#5E5748">（Drain：被消费才出队）</text>
+            <line x1="345" y1="170" x2="515" y2="170" stroke="#E9E6DE" />
+            <text x="430" y="190" text-anchor="middle" font-size="10.5" fill="#5E5748">bg 通知</text>
+            <text x="430" y="212" text-anchor="middle" font-size="10.5" fill="#5E5748">cron 事件</text>
+            <text x="430" y="234" text-anchor="middle" font-size="10.5" fill="#5E5748">memory 提示</text>
+            <text x="430" y="262" text-anchor="middle" font-size="10" fill="#9A948A">忙碌时积压 · 空闲时 drain</text>
+
+            <!-- runner -->
+            <rect x="640" y="120" width="240" height="140" rx="10" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="760" y="150" text-anchor="middle" font-weight="700" fill="#0E7368">SessionRunner / TUI</text>
+            <text x="760" y="172" text-anchor="middle" font-size="11" fill="#5E5748">空闲判定（busy==false）</text>
+            <text x="760" y="196" text-anchor="middle" font-size="11" fill="#5E5748">drainQueued：bg 优先，cron 其次</text>
+            <text x="760" y="220" text-anchor="middle" font-size="11" fill="#5E5748">注入 KindInject user 消息</text>
+            <text x="760" y="244" text-anchor="middle" font-size="11" fill="#5E5748">起跑新一轮 agent.Run</text>
+
+            <!-- arrows -->
+            <line x1="222" y1="80" x2="326" y2="130" stroke="#5B564E" stroke-width="1.3" marker-end="url(#aah)" />
+            <line x1="222" y1="196" x2="326" y2="190" stroke="#5B564E" stroke-width="1.3" marker-end="url(#aah)" />
+            <line x1="222" y1="312" x2="326" y2="250" stroke="#5B564E" stroke-width="1.3" marker-end="url(#aah)" />
+            <line x1="532" y1="190" x2="636" y2="190" stroke="#A85507" stroke-width="1.4" marker-end="url(#aah)" />
+            <text x="584" y="182" text-anchor="middle" font-size="11" fill="#A85507">Drain</text>
+          </g>
+        </svg>
+        <div class="svg-cap">三路异步源汇入每会话 inbox；只有"空闲"才消费——运行中轮次由 PreChat 自取</div>
+      </div>
+
+      <h3>3.3 压缩：不占主线的旁路</h3>
+      <p>压缩在两条路径上都存在：自动通道在每个 step 的 Chat 前检查阈值；
+        主动通道（<code>/compact</code>、模型 <code>compact</code> 工具）按需触发。
+        两者都落到同一个 <code>Compactor</code> 上，写回的都是 append-only 控制行——
+        所以压缩**不改变时序图的形状**，只是往 store 多写几行。</p>
+      <p class="src">详细设计见 <code>docs/runeharness-compaction-plan.html</code> §4。</p>
+    </section>
+
+    <!-- ============ 4. 事件目录 ============ -->
+    <section id="events">
+      <div class="chap">第 4 章 · 事件目录</div>
+      <h2>系统里流动的全部事实，分四类</h2>
+      <p class="lede">事件不是新概念——是"值得被别处知道的状态变化"的统称。
+        按流动方向分四类：上行（前端→内核）、下行（内核→前端）、横向（内核↔内核）、
+        出站（内核→外部）。</p>
+
+      <h3>4.1 上行事件（前端 → 内核）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>事件</th><th>来源</th><th>载荷</th><th>语义</th></tr></thead>
+          <tbody>
+            <tr><td><code>submit</code></td><td>TUI Enter / WS message / POST /messages</td>
+                <td>用户文本</td><td>触发一轮 Run</td></tr>
+            <tr><td><code>cancel</code></td><td>TUI Esc / WS cancel / POST actions</td>
+                <td>—</td><td>Interrupt 当前轮</td></tr>
+            <tr><td><code>answer</code></td><td>TUI 权限弹窗 / POST actions</td>
+                <td>ask_id + allow</td><td>应答权限询问</td></tr>
+            <tr><td><code>attach</code></td><td>WS attach / GET /events</td>
+                <td>chat_id + since</td><td>订阅会话事件流</td></tr>
+            <tr><td><code>slash</code></td><td>TUI /xxx</td>
+                <td>命令名 + 参数</td><td>本地查询或注入（不进模型）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>4.2 下行事件（内核 → 前端）= EventLedger 的七种</h3>
+      <p><code>delta / tool_call / tool_result / inject / ask / turn_end / reset</code>
+        ——完整定义与游标语义见 <code>runeharness-gateway-plan.html</code> §3.1。
+        TUI 侧对应 <code>PartialMsg / ToolCallMsg / ToolResultMsg / InjectMsg /
+        PermRequestMsg / turnDoneMsg</code>，命名不同语义相同。</p>
+
+      <h3>4.3 横向事件（内核内部，不进账本）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>事件</th><th>触发点</th><th>去向</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td><code>PreChat inject</code></td><td>每步 LLM 调用前</td>
+                <td>history</td><td>todo nag / 压缩提醒 / bg Drain / breaker nag</td></tr>
+            <tr><td><code>UserPromptSubmit</code></td><td>用户消息入队</td>
+                <td>history / block</td><td>todo 归零 + memory InjectOnce + replace/block</td></tr>
+            <tr><td><code>Stop force</code></td><td>loop 将退出</td>
+                <td>history</td><td>Stop hook 返回的续跑提示</td></tr>
+            <tr><td><code>PreToolUse block</code></td><td>每次工具调用前</td>
+                <td>tool result</td><td>权限闸 / breaker 返回的阻止原因</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>4.4 出站事件（内核 → 外部世界）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>事件</th><th>通道</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>LLM 请求留痕</td><td><code>store.LogRequest</code></td>
+                <td>每次 Chat 的水印 + ViewHash + 失败 payload</td></tr>
+            <tr><td>消息行 append</td><td><code>store.Append</code></td>
+                <td>user/assistant/tool/inject/summary/boundary/fork</td></tr>
+            <tr><td>blob 写入</td><td><code>store.AppendBlob</code></td>
+                <td>卸载时被削减的原文</td></tr>
+            <tr><td>后台任务输出</td><td>文件 <code>~/.rune/tasks/…</code></td>
+                <td>进程 stdout/stderr 落盘</td></tr>
+            <tr><td>cron 任务文件</td><td><code>~/.rune/cron_tasks.json</code></td>
+                <td>durable 档的持久化</td></tr>
+            <tr><td>记忆库</td><td><code>~/.rune/memory.db</code></td>
+                <td>memories + memory_log + meta</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 5. 状态机 ============ -->
+    <section id="states">
+      <div class="chap">第 5 章 · 状态迁移</div>
+      <h2>三个状态机：轮次、槽位、后台任务</h2>
+      <p class="lede">持久层没有状态机（append-only 即终态）。运行层有三个，
+        分别管"一轮到哪了"、"一个会话归谁管"、"一个后台任务活着没"。</p>
+
+      <h3>5.1 轮次状态机（每轮 Run 内部）</h3>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 260" width="100%" style="min-width:760px" role="img" aria-label="轮次状态机">
+          <defs>
+            <marker id="tah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+            <marker id="tah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#0E7368" />
+            </marker>
+            <marker id="tah3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#B4123A" />
+            </marker>
+          </defs>
+          <g font-size="12.5" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+            <rect x="40" y="100" width="110" height="52" rx="10" fill="#EFF3FC" stroke="#2657C4" stroke-width="1.4" />
+            <text x="95" y="122" text-anchor="middle" font-weight="650">CALLING</text>
+            <text x="95" y="140" text-anchor="middle" font-size="10.5" fill="#5E5748">等待 Chat</text>
+
+            <rect x="220" y="40" width="150" height="52" rx="10" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="295" y="62" text-anchor="middle" font-weight="650" fill="#0E7368">TOOLING</text>
+            <text x="295" y="80" text-anchor="middle" font-size="10.5" fill="#5E5748">执行 tool_calls</text>
+
+            <rect x="220" y="160" width="150" height="52" rx="10" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="295" y="182" text-anchor="middle" font-weight="650" fill="#0E7368">STREAMING</text>
+            <text x="295" y="200" text-anchor="middle" font-size="10.5" fill="#5E5748">OnPartial 上行</text>
+
+            <rect x="450" y="100" width="130" height="52" rx="10" fill="#FCF4E8" stroke="#A85507" stroke-width="1.4" />
+            <text x="515" y="122" text-anchor="middle" font-weight="650" fill="#A85507">STOPPING</text>
+            <text x="515" y="140" text-anchor="middle" font-size="10.5" fill="#5E5748">TriggerStop?</text>
+
+            <rect x="660" y="40" width="120" height="52" rx="10" fill="#EEF7F0" stroke="#177245" stroke-width="1.4" />
+            <text x="720" y="62" text-anchor="middle" font-weight="650" fill="#177245">DONE</text>
+            <text x="720" y="80" text-anchor="middle" font-size="10.5" fill="#5E5748">返回 history</text>
+
+            <rect x="660" y="160" width="120" height="52" rx="10" fill="#FCF0F3" stroke="#B4123A" stroke-width="1.4" />
+            <text x="720" y="182" text-anchor="middle" font-weight="650" fill="#B4123A">DEAD</text>
+            <text x="720" y="200" text-anchor="middle" font-size="10.5" fill="#5E5748">err / interrupt</text>
+
+            <!-- edges -->
+            <line x1="152" y1="126" x2="216" y2="126" stroke="#5B564E" stroke-width="1.3" marker-end="url(#tah)" />
+            <line x1="152" y1="106" x2="216" y2="66" stroke="#5B564E" stroke-width="1.3" marker-end="url(#tah)" />
+            <line x1="372" y1="66" x2="446" y2="116" stroke="#5B564E" stroke-width="1.3" marker-end="url(#tah)" />
+            <line x1="372" y1="186" x2="446" y2="136" stroke="#5B564E" stroke-width="1.3" marker-end="url(#tah)" />
+            <line x1="582" y1="112" x2="656" y2="66" stroke="#0E7368" stroke-width="1.4" marker-end="url(#tah2)" />
+            <line x1="582" y1="140" x2="656" y2="186" stroke="#B4123A" stroke-width="1.4" marker-end="url(#tah3)" />
+            <path d="M295 96 C 295 116, 230 120, 152 118" stroke="#5B564E" stroke-width="1.1" stroke-dasharray="4,3" fill="none" marker-end="url(#tah)" />
+            <path d="M515 156 C 515 200, 295 230, 295 216" stroke="#A85507" stroke-width="1.1" stroke-dasharray="4,3" fill="none" marker-end="url(#tah)" />
+            <text x="410" y="226" font-size="10" fill="#A85507">Stop hook 强制续跑 → 回 TOOLING/STREAMING 下一圈</text>
+          </g>
+        </svg>
+        <div class="svg-cap">轮次内部：CALLING 与 TOOLING/STREAMING 交替；DEAD 含 error/interrupt/maxsteps 三种死因</div>
+      </div>
+      <p>关键不变量：<b>每个 tool_call 都有结果</b>。中断时 loop 给未执行的调用补占位
+        （<code>agent.go:295-309</code>），崩溃时由 Fold 在视图侧合成占位——两条路径都保证
+        "读出来的形态"满足 OpenAI 协议要求。</p>
+
+      <h3>5.2 槽位状态机（SessionRunner，规划）</h3>
+      <p>完整图与迁移规则见 <code>runeharness-gateway-plan.html</code> §5。摘要：
+        <code>COLD → LOADING → IDLE ⇄ TURN → (evict)</code>；崩溃接管从 COLD 直接补记
+        <code>turn_end(crashed)</code> 回 IDLE。</p>
+
+      <h3>5.3 后台任务 / cron 生命周期</h3>
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">bgtask</div>
+          <pre>spawned → running → done / killed / timeout
+         ↘ stalled（看门狗提醒一次）</pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">cron</div>
+          <pre>scheduled → fired → rescheduled（周期）
+            → fired → burnt → deleted（一次性）
+            → missed → delivered-once → deleted（停机漏跑）</pre>
+        </div>
+      </div>
+
+      <h3>5.4 记忆 dream 心跳</h3>
+      <p>不属于槽位，是独立的旁路状态：<code>cooldown → due → dreaming → done/failed</code>。
+        触发三选一：定时器（每画像冷却分钟数）、手动 <code>/dream</code>、退出收尾。
+        失败计入 <code>memory_meta</code> 熔断计数。</p>
+    </section>
+
+    <!-- ============ 6. SOUL.md ============ -->
+    <section id="soul">
+      <div class="chap">第 6 章 · 身份槽位：SOUL.md</div>
+      <h2>人格是配置，不是代码——把 Hermes 的 SOUL.md 移植过来</h2>
+      <p class="lede">现状的"人格"只有一处：<code>prompt.Identity</code> 常量（一段写死的
+        coding agent 工程原则）。bot 形态需要把"我是谁、我说话什么调调、我边界在哪"
+        从代码里挪到一个用户可编辑的文件——这就是 SOUL.md 的角色。</p>
+
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag violet">场景</span>
+          <span class="scene-title">两个 agent 共用一套内核，但声音不一样</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">本地 CLI 的 coding agent 应该讲工程行话、先结论后证据；bigbigbear 的陪伴 bot
+            应该慢一点、软一点、记得你昨天说过什么。这两者的"不同"应该写在哪？</p>
+          <p>不能写进 <code>prompt.Identity</code>——那是代码，改人格要改二进制。
+            也不能写进 memory——那是"关于用户的事实"，不是"我是谁"。
+            SOUL.md 是第三层：<b>per-profile 的人格契约</b>，启动时读一次、
+            冻结进该进程所有会话的 system prompt。</p>
+        </div>
+      </div>
+
+      <h3>6.1 身份的三层分离</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>层</th><th>载体</th><th>回答的问题</th><th>改动频率</th><th>归属</th></tr></thead>
+          <tbody>
+            <tr><td>工程准则</td><td><code>prompt.Identity</code>（代码常量）</td>
+                <td>"我怎么干活"——先读后写、修根因、不下假设</td>
+                <td>随版本发</td><td>RuneHarness</td></tr>
+            <tr><td>人格</td><td><b><code>SOUL.md</code>（新增，可选文件）</b></td>
+                <td>"我是谁、怎么说话、边界在哪"</td>
+                <td>随部署 / 随 profile</td><td>部署方</td></tr>
+            <tr><td>项目规则</td><td><code>AGENTS.md</code>（未来按 workspace 注入）</td>
+                <td>"在这个仓库里要守什么规矩"</td>
+                <td>随仓库</td><td>代码库</td></tr>
+            <tr><td>用户事实</td><td><code>memory</code> 注入</td>
+                <td>"这个用户是谁、偏好什么、我们经历过什么"</td>
+                <td>随交互累积</td><td>记忆层</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>6.2 加载与冻结规则</h3>
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>启动时读一次，会话内冻结</b>
+            <div class="sd">新会话把 SOUL.md 内容拼进 <code>prompt.Env.Soul</code>，
+              <code>Build</code> 输出固定在 identity 段之后、tools 段之前——保持前缀缓存稳定。
+              已运行会话不换 SOUL.md（同 Hermes 的"tools 改动要 /reset"同一条理由）。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>查找顺序</b>
+            <div class="sd"><code>RUNE_SOUL</code> 显式路径 &gt; <code>~/.rune/profiles/&lt;profile&gt;/SOUL.md</code>
+              &gt; <code>~/.rune/SOUL.md</code>。文件不存在跳过，不算错误。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>agent 可以改，但应说一声</b>
+            <div class="sd">SOUL.md 是普通文件，模型经 <code>run_command</code> 就能改。
+              OpenClaw 的约定值得保留：改动后应告知用户——人格变更不该是静默的。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>大小与洁净约束</b>
+            <div class="sd">读取时过 <code>LooksLikeSecret</code> 同款扫描（不把 API key 写进 SOUL.md），
+              上限 8KB，读超时 5s——对齐 Hermes 的 context-file 读取闸。</div>
+          </div>
+        </div>
+      </div>
+
+      <h3>6.3 与 profile 的关系</h3>
+      <div class="ba">
+        <div class="side before">
+          <div class="ba-label">没有 SOUL.md 时</div>
+          <pre>Profile = {
+  Tools, PermCfg,
+  MemoryProfile,
+  SkillsDir,
+  WorkspacePolicy
+}
+<span class="cm"># 人格 = prompt.Identity 全局一份</span></pre>
+        </div>
+        <div class="side after">
+          <div class="ba-label">有了 SOUL.md 后</div>
+          <pre>Profile = {
+  Tools, PermCfg,
+  MemoryProfile,
+  SkillsDir,
+  WorkspacePolicy,
+  <span class="hl">SoulPath  # → ~/.rune/profiles/&lt;name&gt;/SOUL.md</span>
+}
+<span class="cm"># coding agent：工程准则 + 可选人格
+# companion bot：工程准则 + 陪伴人格
+# 同内核，不同灵魂</span></pre>
+        </div>
+      </div>
+
+      <h3>6.4 推荐的 SOUL.md 模板（对齐 OpenClaw 四段式）</h3>
+      <pre><span class="cm"># SOUL.md — Who You Are</span>
+
+## Core Truths          <span class="cm"># 本质：不是聊天机器人，是一个在做事的实体</span>
+## Personality &amp; Vibe   <span class="cm"># 说话方式、详略偏好、有没有脾气</span>
+## Boundaries           <span class="cm"># 不做什么：外部动作先问、隐私不出口、群聊不替用户发言</span>
+## Continuity           <span class="cm"># 记忆观：每次醒来重读这个文件；改了它要告诉用户</span></pre>
+
+      <div class="note ok">
+        <div class="nt">为什么这个设计值得抄</div>
+        <p>SOUL.md 解决的是"prompt 里哪一段归谁管"的问题。把人格从代码里拿出来，
+          coding agent 和陪伴 bot 共用同一个 <code>prompt.Build</code> 管线、
+          同一个冻结规则、同一个缓存前缀策略——profile 化的最后一块拼图。</p>
+      </div>
+    </section>
+
+    <!-- ============ 7. 附录 ============ -->
+    <section id="appendix">
+      <div class="chap">附录 · 文档间关系</div>
+      <h2>这份总览与既有文档的分工</h2>
+      <ul>
+        <li><code>runeharness-gateway-plan.html</code>：接入层与编排层的详细设计——
+          EventLedger / SessionRunner / WS+SSE 轨 / 中断矩阵。本文第 3、4、5 章是它的总览版。</li>
+        <li><code>runeharness-compaction-plan.html</code>：compact 的完整管线——阈值、卸载、摘要、熔断、
+          控制行 schema。本文只在时序图标出挂点。</li>
+        <li><code>runeharness-memory-plan.html</code> 与 <code>runeharness-memory-tradeoffs.html</code>：
+          记忆层的画像、读路径、写路径、dream 消化。本文只在模块表与时序图中引用它。</li>
+        <li><code>session-persistence-plan.html</code>：append-only 存储契约——本文"持久层"的全部依据。</li>
+      </ul>
+      <h2>待补</h2>
+      <ul>
+        <li><b>AGENTS.md 的注入路径</b>：第 6.1 节把它列为第三层，但现状代码未实现 workspace 级注入。
+          落地时需要决定"每次会话注入"还是"首次注入+memory 兜底"。</li>
+        <li><b>profile 机制本身</b>：目前只有概念，没有 <code>RUNE_PROFILE</code> 或 profile 目录结构。
+          SOUL.md 落地会倒逼它成型。</li>
+        <li><b>多写者冲突</b>：两个进程同时跑同一个 chat 的轮次在现状下未防御——
+          cron 的属主锁是现成的参考实现，gateway 多副本时按同样思路做会话级 lease。</li>
+      </ul>
+    </section>
+
+    <footer>
+      RuneHarness · docs/runeharness-architecture.html · v1.0 · 2026-10-07
+    </footer>
+  </div>
+
+</body>
+
+</html>

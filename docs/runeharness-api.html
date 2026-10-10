@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 外部 API — 接口契约</title>
+  <style>
+    :root {
+      --bg: #FBFAF7; --paper: #FFFFFF; --ink: #26241F; --ink-2: #5B564E; --ink-3: #9A948A;
+      --line: #E9E6DE; --line-2: #DFDAD0;
+      --teal: #0E7368; --teal-bg: #EDF7F5; --amber: #A85507; --amber-bg: #FCF4E8;
+      --rose: #B4123A; --rose-bg: #FCF0F3; --blue: #2657C4; --blue-bg: #EFF3FC;
+      --violet: #6528C9; --violet-bg: #F4EFFC; --green: #177245; --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box }
+    body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.85; -webkit-font-smoothing: antialiased }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 0 28px 140px }
+    header { padding: 80px 0 44px; border-bottom: 1px solid var(--line) }
+    .eyebrow { font-family: var(--mono); font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase; color: var(--teal); margin-bottom: 16px; display: flex; align-items: center; gap: 12px }
+    .eyebrow::before { content: ""; width: 28px; height: 1.5px; background: var(--teal) }
+    h1 { font-size: 36px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; margin-bottom: 16px }
+    .subtitle { color: var(--ink-2); font-size: 17px; max-width: 680px }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px }
+    .meta span { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); background: var(--paper); border: 1px solid var(--line); padding: 4px 11px; border-radius: 99px }
+
+    .guide { padding: 36px 0 8px }
+    .guide .inner { background: var(--teal-bg); border: 1px solid #CFE8E4; border-radius: var(--radius); padding: 22px 26px; font-size: 14.5px }
+    .guide b { color: var(--teal) }
+    .guide ol { margin: 10px 0 0 20px; color: var(--ink-2) }
+    .guide li { margin-bottom: 4px }
+
+    section { padding: 44px 0 8px }
+    .chap { font-family: var(--mono); font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px }
+    h2 { font-size: 26px; font-weight: 700; letter-spacing: -.01em; line-height: 1.35; margin-bottom: 14px }
+    h3 { font-size: 18px; font-weight: 650; margin: 34px 0 10px; color: var(--ink) }
+    h4 { font-size: 15px; font-weight: 650; margin: 20px 0 6px; color: var(--ink-2) }
+    p { margin: 12px 0; color: var(--ink-2) }
+    p b, li b { color: var(--ink); font-weight: 650 }
+    .lede { font-size: 17px; color: var(--ink); line-height: 1.8 }
+    ul, ol { margin: 12px 0 12px 22px; color: var(--ink-2) }
+    li { margin-bottom: 7px }
+    code { font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); color: #7A4F1D }
+    pre { background: #26241F; color: #E8E4DA; border-radius: var(--radius); padding: 20px 24px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.75; margin: 16px 0 22px }
+    pre code { background: transparent; border: none; padding: 0; color: inherit; font-size: 13px }
+    pre .cm { color: #8A8578 } pre .hl { color: #7FD1B9 } pre .kw { color: #9BB8F0 } pre .str { color: #E0B873 } pre .num { color: #D9A0C0 }
+
+    .bigconclusion { background: linear-gradient(135deg, #EDF7F5, #EFF3FC); border: 1px solid #CFE0E8; border-radius: var(--radius); padding: 28px 32px; margin: 24px 0; font-size: 17px; line-height: 1.8 }
+
+    .svg-wrap { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; overflow-x: auto; box-shadow: var(--shadow); margin: 18px 0 8px }
+    .svg-cap { font-size: 12.5px; color: var(--ink-3); text-align: center; margin-top: 12px; font-family: var(--mono) }
+
+    /* 端点卡 */
+    .ep {
+      border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper);
+      box-shadow: var(--shadow); margin: 16px 0; overflow: hidden
+    }
+    .ep-head { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: #F6F5F0 }
+    .ep-method {
+      font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      padding: 4px 10px; border-radius: 6px; flex-shrink: 0
+    }
+    .ep-method.get { background: var(--green-bg); color: var(--green) }
+    .ep-method.post { background: var(--blue-bg); color: var(--blue) }
+    .ep-method.ws { background: var(--violet-bg); color: var(--violet) }
+    .ep-method.sse { background: var(--teal-bg); color: var(--teal) }
+    .ep-path { font-family: var(--mono); font-size: 14px; font-weight: 650; color: var(--ink) }
+    .ep-body { padding: 14px 20px 16px; font-size: 14px; color: var(--ink-2) }
+    .ep-body p { margin: 8px 0 }
+    .ep-body .lbl { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; color: var(--ink-3); text-transform: uppercase; margin: 14px 0 4px }
+    .ep-body pre { margin: 6px 0 10px; font-size: 12.5px; padding: 14px 18px }
+    .ep-body table { font-size: 13px }
+    .ep-body td { padding: 8px 12px }
+    .ep-body th { padding: 8px 12px }
+
+    .note { border-left: 3px solid var(--blue); background: var(--blue-bg); border-radius: 0 var(--radius) var(--radius) 0; padding: 16px 20px; margin: 18px 0; font-size: 15px }
+    .note.warn { border-color: var(--amber); background: var(--amber-bg) }
+    .note.danger { border-color: var(--rose); background: var(--rose-bg) }
+    .note.ok { border-color: var(--green); background: var(--green-bg) }
+    .note.teal { border-color: var(--teal); background: var(--teal-bg) }
+    .note .nt { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px }
+    .note.warn .nt { color: var(--amber) } .note.danger .nt { color: var(--rose) }
+    .note.ok .nt { color: var(--green) } .note.teal .nt { color: var(--teal) }
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt { color: var(--blue) }
+    .note p { margin-bottom: 8px } .note p:last-child { margin-bottom: 0 }
+
+    .tbl-wrap { overflow-x: auto; margin: 16px 0 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow) }
+    table { width: 100%; border-collapse: collapse; font-size: 14px }
+    th { text-align: left; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); background: #F6F5F0; padding: 11px 16px; border-bottom: 1px solid var(--line); white-space: nowrap }
+    td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top }
+    tr:last-child td { border-bottom: none }
+    td code { font-size: 12px }
+    td .dim { color: var(--ink-3); font-size: 13px }
+
+    .steps { margin: 20px 0 }
+    .step { display: flex; gap: 16px; padding: 16px 0; border-bottom: 1px dashed var(--line) }
+    .step:last-child { border-bottom: none }
+    .step .n { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 28px; height: 28px; border-radius: 50%; background: var(--paper); border: 1.5px solid var(--teal); color: var(--teal); flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-top: 3px }
+    .step .st { font-size: 15px }
+    .step .sd { font-size: 14px; color: var(--ink-2); margin-top: 3px }
+
+    .scene { border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow); margin: 18px 0; overflow: hidden }
+    .scene-head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; background: #F6F5F0; border-bottom: 1px solid var(--line) }
+    .scene-tag { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; padding: 3px 9px; border-radius: 99px; background: var(--blue-bg); color: var(--blue) }
+    .scene-tag.warn { background: var(--amber-bg); color: var(--amber) }
+    .scene-tag.danger { background: var(--rose-bg); color: var(--rose) }
+    .scene-tag.ok { background: var(--green-bg); color: var(--green) }
+    .scene-title { font-size: 14px; font-weight: 650; color: var(--ink) }
+    .scene-body { padding: 16px 20px; font-size: 14.5px; color: var(--ink-2) }
+    .scene-body p { margin: 8px 0 }
+    .scene-q { font-weight: 650; color: var(--ink) }
+
+    .src { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3) }
+    .src code { font-size: 11px; background: transparent; border: none; padding: 0; color: var(--teal) }
+
+    footer { border-top: 1px solid var(--line); margin-top: 80px; padding-top: 28px; color: var(--ink-3); font-size: 13px }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">接口契约 · RuneHarness API</div>
+      <h1>外部接入 API 设计</h1>
+      <p class="subtitle">runebot 对外暴露的完整接口面：一条 WS 轨（兼容 bigbigbear 现有协议）、
+        一条 HTTP/SSE 轨（fetch + ReadableStream 消费）、一组只读查询端点。
+        契约先行——三条轨共享同一个 (chat_id, seq) 事件账本，客户端任选其一接入。</p>
+      <div class="meta">
+        <span>版本 v1.0 草案</span>
+        <span>状态：设计，未实现</span>
+        <span>依赖：docs/runeharness-gateway-plan.html（账本与槽位）</span>
+        <span>首个消费者：Bear APP（WS 轨）</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读</b>
+        <ol>
+          <li>接入方 → 第 1 章（概念）+ 第 2 章（鉴权）+ 所用轨的那一章。</li>
+          <li>实现方 → 第 6 章（事件 schema）+ 第 7 章（错误与边界）。</li>
+          <li>排障 → 第 8 章（部署与中间层要求）。</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- ============ 1. 概念 ============ -->
+    <section id="concepts">
+      <div class="chap">第 1 章 · 概念与不变量</div>
+      <h2>三个资源，一个不变量</h2>
+      <div class="bigconclusion">
+        <b>一句话：</b>客户端永远只在跟 <b>Chat</b> 打交道——提交 <b>Message</b>、
+        订阅 <b>Event</b> 流、对 <b>Ask</b> 作答。所有事件按 <code>seq</code> 单调递增，
+        断线后带 <code>since</code> 续传是唯一的恢复机制。
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>资源</th><th>标识</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><b>Chat</b></td><td><code>chat_id</code>（客户端给出，^[A-Za-z0-9_:-]{1,64}$）</td>
+                <td>一个外部对话。服务端把它映射到一条内部 session——这个映射对客户端不透明。</td></tr>
+            <tr><td><b>Message</b></td><td>无独立 id（属轮次的一部分）</td>
+                <td>一次用户输入。异步处理：<code>submit</code> 返回 ≠ 回复开始。</td></tr>
+            <tr><td><b>Event</b></td><td><code>seq</code>（每 chat 递增）</td>
+                <td>轮次的全部外部可见事实：delta、tool_call、tool_result、inject、ask、turn_end、reset。</td></tr>
+            <tr><td><b>Ask</b></td><td><code>ask_id</code></td>
+                <td>权限询问。60 秒无应答按 deny 处理。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>1.1 会话的语义边界</h3>
+      <p><code>chat_id</code> 是<b>客户端拥有</b>的标识——同一个客户端可以在同一 WS 连接上
+        attach 多个 chat，也可以用同一 chat_id 跨连接续传。服务端不创建 chat：
+        第一个 <code>attach</code> 或 <code>message</code> 到来时惰性建立映射。</p>
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag">场景</span>
+          <span class="scene-title">为什么 chat_id 由客户端给，不由服务端发</span>
+        </div>
+        <div class="scene-body">
+          <p>因为"哪个会话"是客户端的上下文：APP 的一个聊天页、QQ 的一个会话、
+            一个 cron 触发的定时对话，都是客户端自己知道边界的。
+            服务端发 id 会逼客户端先等握手再渲染——bigbigbear 的
+            <code>ready → attach</code> 两步协议就是这个顺序。</p>
+        </div>
+      </div>
+
+      <h3>1.2 两条轨的等价性</h3>
+      <p>WS 与 SSE/fetch 在语义上完全等价，只是帧格式不同：</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>操作</th><th>WS 轨</th><th>SSE/HTTP 轨</th></tr></thead>
+          <tbody>
+            <tr><td>提交消息</td><td><code>{"type":"message"}</code></td><td><code>POST /v1/chats/{id}/messages</code></td></tr>
+            <tr><td>订阅事件</td><td><code>{"type":"attach"}</code></td><td><code>GET /v1/chats/{id}/events</code></td></tr>
+            <tr><td>断线续传</td><td><code>attach</code> 带 <code>since</code></td><td><code>Last-Event-ID</code> 头</td></tr>
+            <tr><td>中断轮次</td><td><code>{"type":"cancel"}</code></td><td><code>POST /v1/chats/{id}/actions {"type":"cancel"}</code></td></tr>
+            <tr><td>应答权限</td><td><code>{"type":"answer"}</code></td><td><code>POST /v1/chats/{id}/actions {"type":"answer"}</code></td></tr>
+            <tr><td>历史读取</td><td>同连接 <code>{"type":"history"}</code> 或走 HTTP</td><td><code>GET /v1/chats/{id}/history</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>客户端选轨的标准不是功能，是连接形态：要一条全双工连接选 WS，
+        要"普通 HTTP 请求"的简单心智选 SSE。两条轨可以并存于同一个部署。</p>
+    </section>
+
+    <!-- ============ 2. 鉴权 ============ -->
+    <section id="auth">
+      <div class="chap">第 2 章 · 鉴权与租户</div>
+      <h2>Bearer token 一把梭，v1 不引入签发体系</h2>
+      <p class="lede">第一阶段沿用 bigbigbear 的静态 token 模型：部署方在服务端配置
+        一组 <code>token → {tenant, subject}</code> 的映射。每个 token 是一个身份，
+        不做用户表、不做过期轮换、不做 scope 细分。</p>
+
+      <pre><span class="cm"># runebot 配置（服务端持有）</span>
+<span class="kw">tokens</span>:
+  <span class="str">"tok_8f2a…"</span>: { tenant: <span class="str">"local"</span>, subject: <span class="str">"ray"</span> }
+  <span class="str">"tok_b71c…"</span>: { tenant: <span class="str">"local"</span>, subject: <span class="str">"bear-admin"</span> }</pre>
+
+      <ul>
+        <li><b>WS 轨</b>：<code>?token=&lt;tok&gt;</code> 查询参数（兼容 bigbigbear 现状）。握手时校验，
+          失败回 <code>401</code> 或 <code>403</code>，不升级。</li>
+        <li><b>HTTP 轨</b>：<code>Authorization: Bearer &lt;tok&gt;</code>。三个读端点之外全部要鉴权。</li>
+        <li><b>租户推导</b>：token → <code>scope.Scope{TenantID, SubjectID}</code> 由网关注入 ctx；
+          工具与模型参数永远接触不到 tenant。</li>
+      </ul>
+
+      <div class="note warn">
+        <div class="nt">单用户的边界</div>
+        <p>v1 假设"token 持有者即本人"。多用户接入（群聊、共享 bot）需要把
+          <code>subject</code> 细化为"token + 消息来源用户"的复合键，以及按 sender
+          隔离会话——这是 v2 的事，本版接口为此预留了 <code>sender_id</code> 字段位。</p>
+      </div>
+
+      <h3>2.1 速率与资源限制</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>限制</th><th>值</th><th>理由</th></tr></thead>
+          <tbody>
+            <tr><td>单 token 并发 WS 连接</td><td>8</td><td>防端口耗尽；正常客户端 1–2 条足够</td></tr>
+            <tr><td><code>message</code> 频率</td><td>每 chat 串行入队，无并发轮次</td><td>轮次本来就串行，第二条自动排队</td></tr>
+            <tr><td>单条消息大小</td><td>32 KB</td><td>对齐 read_file 单文件上限；超限 413</td></tr>
+            <tr><td>SSE/WS 空闲超时</td><td>无（服务端 ping 每 20 秒）</td><td>心跳是中间层要求，不是业务超时</td></tr>
+            <tr><td>ask 应答窗口</td><td>60 秒</td><td>超时按 deny，见中断矩阵 S3</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 3. WS 轨 ============ -->
+    <section id="ws-rail">
+      <div class="chap">第 3 章 · WS 轨（bigbigbear 兼容）</div>
+      <h2>协议面与 nanobot 逐字段对齐</h2>
+      <p class="lede">端点 <code>wss://bear.alfred-develop.online/?client_id=&lt;id&gt;&amp;token=&lt;tok&gt;</code>。
+        实现目标是：现有 Bear APP 不改一行代码即可连上 runebot。</p>
+
+      <h3>3.1 连接生命周期</h3>
+      <div class="steps">
+        <div class="step"><div class="n">1</div>
+          <div class="st"><b>握手</b><div class="sd">校验 token。失败：<code>401</code>（无效）/<code>403</code>（不在 allow_from）。</div></div>
+        </div>
+        <div class="step"><div class="n">2</div>
+          <div class="st"><b>服务端首发 <code>ready</code></b>
+            <div class="sd"><code>{"event":"ready","chat_id":"&lt;uuid&gt;","client_id":"…"}</code>——chat_id 是服务端默认生成的值，客户端可换成自己的。</div></div>
+        </div>
+        <div class="step"><div class="n">3</div>
+          <div class="st"><b>客户端 <code>attach</code> 订阅</b>
+            <div class="sd"><code>{"type":"attach","chat_id":"…","since":&lt;int&gt;}</code>（since 为新增可选字段）。回 <code>{"event":"attached","chat_id":"…"}</code>。</div></div>
+        </div>
+        <div class="step"><div class="n">4</div>
+          <div class="st"><b>正常收发</b><div class="sd">message → delta 流 → turn_end；期间可有 tool_call/ask。</div></div>
+        </div>
+        <div class="step"><div class="n">5</div>
+          <div class="st"><b>断开</b><div class="sd">服务端 ping 每 20s；客户端超时未 pong 则判定断开，重连后带 since attach 续传。</div></div>
+        </div>
+      </div>
+
+      <h3>3.2 命令帧（客户端 → 服务端）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>type</th><th>字段</th><th>语义</th><th>对应内部动作</th></tr></thead>
+          <tbody>
+            <tr><td><code>attach</code></td><td><code>chat_id</code> · <code>since?</code></td>
+                <td>订阅该 chat 的出站事件</td><td><code>Subscribe(chat, since)</code></td></tr>
+            <tr><td><code>detach</code></td><td><code>chat_id</code></td>
+                <td>取消订阅（不关连接）</td><td>从 subscribers 摘除</td></tr>
+            <tr><td><code>message</code></td><td><code>chat_id</code> · <code>content</code> · <code>client_msg_id?</code></td>
+                <td>提交一轮输入</td><td><code>Enqueue(chat, content)</code></td></tr>
+            <tr><td><code>cancel</code></td><td><code>chat_id</code></td>
+                <td>中断当前轮</td><td><code>Interrupt(chat)</code></td></tr>
+            <tr><td><code>answer</code></td><td><code>chat_id</code> · <code>ask_id</code> · <code>allow</code></td>
+                <td>应答权限询问</td><td>写 pendingAsk reply channel</td></tr>
+            <tr><td><code>ping</code></td><td>—</td>
+                <td>应用层心跳（可选）</td><td>回 <code>pong</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.3 事件帧（服务端 → 客户端）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>event</th><th>何时出现</th><th>关键字段</th></tr></thead>
+          <tbody>
+            <tr><td><code>ready</code></td><td>握手成功即推</td><td><code>chat_id</code> · <code>client_id</code></td></tr>
+            <tr><td><code>attached</code></td><td>attach 成功</td><td><code>chat_id</code> · <code>synced_seq</code></td></tr>
+            <tr><td><code>delta</code></td><td>流式正文</td><td><code>seq</code> · <code>chat_id</code> · <code>text</code>（增量）</td></tr>
+            <tr><td><code>reasoning_delta</code></td><td>推理模型思考链</td><td><code>seq</code> · <code>chat_id</code> · <code>text</code></td></tr>
+            <tr><td><code>tool_call</code></td><td>模型请求工具</td><td><code>seq</code> · <code>chat_id</code> · <code>name</code> · <code>args_preview</code></td></tr>
+            <tr><td><code>tool_result</code></td><td>工具返回</td><td><code>seq</code> · <code>chat_id</code> · <code>ok</code> · <code>dur_ms</code> · <code>summary</code></td></tr>
+            <tr><td><code>ask</code></td><td>权限询问</td><td><code>seq</code> · <code>chat_id</code> · <code>ask_id</code> · <code>tool</code> · <code>reason</code> · <code>ttl_ms</code></td></tr>
+            <tr><td><code>inject</code></td><td>hook 注入（nag/bg/cron 通知）</td><td><code>seq</code> · <code>chat_id</code> · <code>content</code> · <code>source</code></td></tr>
+            <tr><td><code>stream_end</code></td><td>一段输出结束（非轮次结束）</td><td><code>seq</code> · <code>chat_id</code> · <code>text?</code></td></tr>
+            <tr><td><code>turn_end</code></td><td>一轮真正结束</td><td><code>seq</code> · <code>chat_id</code> · <code>turn_id</code> · <code>status</code></td></tr>
+            <tr><td><code>reset</code></td><td>since 越界 / 服务端重启</td><td><code>seq</code> · <code>chat_id</code> · <code>reason</code></td></tr>
+            <tr><td><code>error</code></td><td>协议级错误</td><td><code>code</code> · <code>message</code> · <code>chat_id?</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><code>turn_end.status</code> 取值为 <code>completed | interrupted | error | crashed | maxsteps</code>。
+        <code>stream_end</code> 只标记"一段流结束"——一轮可以有多段（工具调用之间），
+        客户端应以 <code>turn_end</code> 为轮次边界，与现有 APP 行为一致。</p>
+
+      <div class="note">
+        <div class="nt">与 nanobot 的差异点</div>
+        <p>新增字段全部是 additive：<code>since</code>（attach 续传）、<code>seq</code>（所有事件帧）、
+          <code>ask</code>（权限询问，nanobot 没有）、<code>inject</code>（bg/cron 通知）。
+          未实现的旧字段（<code>retry_status</code>、<code>goal_status</code>）先不承诺，
+          等到有真实需求再补——协议面只加不减。</p>
+      </div>
+    </section>
+
+    <!-- ============ 4. SSE/HTTP 轨 ============ -->
+    <section id="sse-rail">
+      <div class="chap">第 4 章 · SSE / HTTP 轨</div>
+      <h2>普通 HTTP 语义，fetch + ReadableStream 消费</h2>
+      <p class="lede">面向"不想维护 WS 连接"的客户端：Web 前端、小程序、脚本。
+        全部端点走 <code>/v1</code> 前缀，鉴权用 <code>Authorization: Bearer</code>。</p>
+
+      <div class="ep">
+        <div class="ep-head">
+          <span class="ep-method post">POST</span>
+          <span class="ep-path">/v1/chats/{chat_id}/messages</span>
+        </div>
+        <div class="ep-body">
+          <p>提交一条用户消息，异步触发一轮轮次。</p>
+          <div class="lbl">请求体</div>
+          <pre>{"content": "帮我看看这个函数的边界条件", "client_msg_id": "c-001"}</pre>
+          <div class="lbl">响应 202</div>
+          <pre>{"chat_id": "main", "turn_id": "t_7f3a", "queued": false}</pre>
+          <p class="src"><code>queued:true</code> 表示该 chat 正有轮次在跑，本条排队。
+            <code>client_msg_id</code> 用于幂等去重（重发安全）。</p>
+          <div class="lbl">错误</div>
+          <pre>401 invalid_token · 413 content_too_large · 429 chat_flood</pre>
+        </div>
+      </div>
+
+      <div class="ep">
+        <div class="ep-head">
+          <span class="ep-method sse">SSE</span>
+          <span class="ep-path">/v1/chats/{chat_id}/events</span>
+        </div>
+        <div class="ep-body">
+          <p>订阅该 chat 的事件流。响应体是 <code>text/event-stream</code>，
+            与 WS 轨下发的是同一份账本事件。</p>
+          <div class="lbl">请求头</div>
+          <pre>Authorization: Bearer &lt;tok&gt;
+Last-Event-ID: 141          <span class="cm"># 可选；缺省从最新开始</span></pre>
+          <div class="lbl">响应</div>
+          <pre>HTTP/1.1 200
+Content-Type: text/event-stream
+Cache-Control: no-cache
+X-Accel-Buffering: no       <span class="cm"># 关 nginx 缓冲</span>
+
+: connected
+id: 142
+event: delta
+data: {"chat_id":"main","text":"好的，我来看看"}
+
+id: 143
+event: tool_call
+data: {"chat_id":"main","name":"read_file","args_preview":"…"}
+
+: ping                     <span class="cm"># 每 15–20s 一次注释帧心跳</span>
+
+id: 199
+event: turn_end
+data: {"chat_id":"main","turn_id":"t_7f3a","status":"completed"}</pre>
+          <div class="lbl">断线恢复</div>
+          <p>客户端断开后重发同一请求，带 <code>Last-Event-ID: &lt;seq&gt;</code>。
+            服务端从 <code>seq+1</code> 补发；游标已滚出窗口时先发一条 <code>reset</code> 事件再转实时。</p>
+        </div>
+      </div>
+
+      <div class="ep">
+        <div class="ep-head">
+          <span class="ep-method post">POST</span>
+          <span class="ep-path">/v1/chats/{chat_id}/actions</span>
+        </div>
+        <div class="ep-body">
+          <p>对当前轮次施加动作。SSE 是单向通道，上行控制全部走这里。</p>
+          <div class="lbl">两种动作</div>
+          <pre>{"type": "cancel"}                              <span class="cm"># 中断当前轮</span>
+{"type": "answer", "ask_id": "a_9x", "allow": true}  <span class="cm"># 权限应答</span></pre>
+          <div class="lbl">响应</div>
+          <pre>200 {"ok": true}
+409 {"error": {"code": "no_active_turn", "message": "…"}}
+410 {"error": {"code": "ask_expired",  "message": "…"}}</pre>
+        </div>
+      </div>
+
+      <div class="ep">
+        <div class="ep-head">
+          <span class="ep-method get">GET</span>
+          <span class="ep-path">/v1/chats/{chat_id}/history?limit=&amp;before=</span>
+        </div>
+        <div class="ep-body">
+          <p>读消息历史（等价现有 <code>/svc/history</code>）。返回按轮次聚合的消息行，
+            不含 delta 等瞬态事件。</p>
+          <div class="lbl">响应</div>
+          <pre>{"chat_id": "main",
+ "items": [{"i": 1042, "role": "user", "content": "…", "timestamp": 1760…},
+            {"i": 1043, "role": "assistant", "content": "…", "timestamp": 1760…}],
+ "has_more": true,
+ "next_before": 1042}</pre>
+        </div>
+      </div>
+
+      <div class="ep">
+        <div class="ep-head">
+          <span class="ep-method get">GET</span>
+          <span class="ep-path">/v1/chats</span>
+        </div>
+        <div class="ep-body">
+          <p>列当前 token 可见的 chat（按最近活跃排序）。用于"换设备继续聊"。</p>
+          <pre>{"chats": [{"chat_id": "main", "title": "…", "last_active": 1760…, "has_pending": false}]}</pre>
+        </div>
+      </div>
+
+      <h3>4.1 为什么"提交"和"流"是两条端点</h3>
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag warn">场景</span>
+          <span class="scene-title">能不能 POST /messages 直接返回流式响应？</span>
+        </div>
+        <div class="scene-body">
+          <p>可以，但不宜作为唯一形态。合一的形态下，客户端要先发请求才能拿到流，
+            这意味着<b>没订阅的客户端看不到回复</b>——后台通知、cron 触发的轮次就丢失了。
+            分开以后，<code>events</code> 是纯粹的订阅通道：任何时刻连上都能看到在跑的轮次，
+            这正是"账本与传输分离"的落地形态。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 5. 只读端点 ============ -->
+    <section id="ro">
+      <div class="chap">第 5 章 · 只读端点（替代现有 sidecar）</div>
+      <h2>历史与搜索并入 runebot，sidecar 退役</h2>
+      <p class="lede">bigbigbear 现有的 <code>/svc/history</code> 与 <code>/svc/search</code>
+        由独立 Go sidecar 读 transcript jsonl 提供。接入 RuneHarness 后，
+        数据源换成 sqlite 会话库，这两个端点直接收编进 runebot 的 HTTP 面。</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>端点</th><th>方法</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>/svc/history?limit=&amp;before=</code></td><td>GET</td>
+                <td>按绝对索引分页的消息历史（与现有 sidecar 返回形态兼容）</td></tr>
+            <tr><td><code>/svc/search?q=&amp;limit=</code></td><td>GET</td>
+                <td>user/assistant 子串搜索，±80 字摘要（改查 <code>messages.content</code>）</td></tr>
+            <tr><td><code>/svc/health</code></td><td>GET</td>
+                <td>免鉴权健康检查：库可写、LLM 端点可达（探测不消耗配额）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><b>迁移路径</b>：sidecar 继续挂 RO 挂载读 sqlite（它与 runebot 共享同一文件，
+        WAL 模式下多读安全）；或直接在 runebot 里实现这两个 handler。推荐后者——
+        少一个进程，少一份清单。</p>
+    </section>
+
+    <!-- ============ 6. 事件 schema ============ -->
+    <section id="schema">
+      <div class="chap">第 6 章 · 事件 Schema 规范</div>
+      <h2>所有轨共用的事件契约</h2>
+      <p class="lede">JSON schema 是协议的真身。WS 帧与 SSE <code>data:</code> 行里的
+        JSON 负载使用同一套定义——下面是权威结构。</p>
+
+      <pre><span class="cm">// 所有事件的公共信封</span>
+{
+  <span class="str">"seq"</span>:      <span class="num">142</span>,              <span class="cm">// 每 chat 单调递增（含瞬态）</span>
+  <span class="str">"chat_id"</span>:  <span class="str">"main"</span>,
+  <span class="str">"turn_id"</span>:  <span class="str">"t_7f3a"</span>,        <span class="cm">// 该事件归属的轮次；跨轮次事件为空</span>
+  <span class="str">"event"</span>:    <span class="str">"delta"</span>,         <span class="cm">// delta | reasoning_delta | tool_call | tool_result | inject | ask | stream_end | turn_end | reset | error</span>
+  <span class="str">"timestamp"</span>: <span class="num">1760</span>…,      <span class="cm">// unix 毫秒；事件发生时刻</span>
+  <span class="str">"data"</span>:     { … }              <span class="cm">// 事件专有载荷</span>
+}</pre>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>event</th><th>data 字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>delta</code></td><td><code>text</code></td><td>本次增量正文（服务端把累积快照 diff 成增量）</td></tr>
+            <tr><td><code>reasoning_delta</code></td><td><code>text</code></td><td>思考链增量</td></tr>
+            <tr><td><code>tool_call</code></td><td><code>name</code> · <code>args_preview</code> · <code>call_id</code></td><td>参数预览截断 200 字</td></tr>
+            <tr><td><code>tool_result</code></td><td><code>call_id</code> · <code>ok</code> · <code>dur_ms</code> · <code>summary</code> · <code>blocked?</code></td><td>summary 单行摘要</td></tr>
+            <tr><td><code>inject</code></td><td><code>content</code> · <code>source</code></td><td>source: nag / compact / bg / cron / memory</td></tr>
+            <tr><td><code>ask</code></td><td><code>ask_id</code> · <code>tool</code> · <code>reason</code> · <code>ttl_ms</code> · <code>depth</code></td><td>depth&gt;0 表示来自子代理</td></tr>
+            <tr><td><code>stream_end</code></td><td><code>text?</code></td><td>一段流结束；一轮可有多段</td></tr>
+            <tr><td><code>turn_end</code></td><td><code>status</code> · <code>reason?</code></td><td>轮次唯一终结信号</td></tr>
+            <tr><td><code>reset</code></td><td><code>reason</code> · <code>synced_seq</code></td><td>游标失效，客户端应全量刷新视图</td></tr>
+            <tr><td><code>error</code></td><td><code>code</code> · <code>message</code></td><td>协议错误（不入 turn）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <div class="nt">幂等与顺序</div>
+        <p><code>seq</code> 是唯一的排序与去重键。客户端应把 <code>(chat_id, seq)</code>
+          当主键处理；重复帧（重连补发重叠部分）按 seq 去重。
+          <code>client_msg_id</code> 只用于上行去重，不参与事件流。</p>
+      </div>
+    </section>
+
+    <!-- ============ 7. 错误 ============ -->
+    <section id="errors">
+      <div class="chap">第 7 章 · 错误与边界</div>
+      <h2>错误只有两种形态：HTTP 状态码和 error 事件</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>场景</th><th>WS</th><th>HTTP</th></tr></thead>
+          <tbody>
+            <tr><td>鉴权失败</td><td>握手 401/403</td><td>401</td></tr>
+            <tr><td>chat 不存在（且非 attach/message 首发）</td><td><code>error{code:"unknown_chat"}</code></td><td>404</td></tr>
+            <tr><td>消息过大 / 队列满</td><td><code>error{code:"too_large"|"queue_full"}</code></td><td>413 / 429</td></tr>
+            <tr><td>无活跃轮次时发 cancel</td><td><code>error{code:"no_active_turn"}</code></td><td>409</td></tr>
+            <tr><td>ask 已过期 / ask_id 错</td><td><code>error{code:"ask_expired"}</code></td><td>410</td></tr>
+            <tr><td>轮次内 LLM/工具失败</td><td colspan="2">不是协议错误——走 <code>turn_end{status:"error"}</code> + 错误详情进对话</td></tr>
+            <tr><td>服务端重启中</td><td>连接断开，重连后收 <code>reset</code></td><td>503 + <code>Retry-After</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>设计原则：<b>业务失败不是协议失败</b>。模型报错、工具被拒、轮次被中断，
+        都是对话内容的一部分，走事件流和 turn_end 状态；协议错误只覆盖
+        "这个请求本身无法受理"的情况。</p>
+    </section>
+
+    <!-- ============ 8. 部署 ============ -->
+    <section id="deploy">
+      <div class="chap">第 8 章 · 部署与中间层</div>
+      <h2>单端口 + 路径分流，k3s 现状兼容</h2>
+      <pre><span class="cm"># ingress 路由（host: bear.alfred-develop.online）</span>
+/          → runebot :8765   <span class="cm"># WS 升级（bigbigbear APP）</span>
+/v1/       → runebot :8765   <span class="cm"># HTTP + SSE</span>
+/svc/      → runebot :8765   <span class="cm"># 只读端点（替代 sidecar）</span></pre>
+      <ul>
+        <li><b>SSE 应关缓冲</b>：nginx-ingress 加 <code>proxy_buffering off</code>、
+          <code>proxy_http_version 1.1</code>、<code>proxy_read_timeout 1h</code>。</li>
+        <li><b>CF→origin</b>：TLS 沿用现状；WS 的 20s ping 防 CF 空闲掐线。</li>
+        <li><b>pod 即边界</b>：L2 profile 的 <code>run_command</code> 落在 per-session
+          workspace PVC；pod 文件系统是可写层，崩坏不影响宿主。</li>
+      </ul>
+
+      <div class="note teal">
+        <div class="nt">验收清单</div>
+        <p>① Bear APP 零改动连接，Phase 0/1 清单全过；② curl 起 SSE 流看到
+          delta→tool_call→turn_end 完整序列；③ <code>Last-Event-ID</code> 续传不丢不重；
+          ④ POST /actions cancel 后 <code>turn_end{status:"interrupted"}</code> 出现；
+          ⑤ ask 60s 无应答自动 deny，轮次继续。</p>
+      </div>
+    </section>
+
+    <footer>
+      RuneHarness · docs/runeharness-api.html · v1.0 草案 · 2026-10-07
+    </footer>
+  </div>
+</body>
+
+</html>
