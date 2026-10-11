@@ -3,12 +3,18 @@
 
 # Go build artifacts
 /personal
+/runebot
 /runeharness
 /e2e
 *.exe
 *.test
 *.out
 *.db
+
+# runtime artifacts
+runebot.log
+runebot.pid
+/tasks/
 
 # temporary files
 /tmp_probe
