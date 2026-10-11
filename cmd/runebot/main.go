@@ -237,7 +237,32 @@ func main() {
 				}
 			}
 			ah := &runner.AgentHarness{Agent: a, Store: store, BgMgr: bgm, CronSched: cronSched}
-			return ah.New(slotCtx, emit, ask)
+			tr, err := ah.New(slotCtx, emit, ask)
+			if err != nil {
+				return nil, err
+			}
+			// 常驻 system（身份/人设/技能/记忆说明）：进程内冻结，每轮 prepend、
+			// 不落库——对齐 CLI（main.go:274 组 sysMsg）；headless 轨此前缺失
+			// 该装配，SOUL/env 从未进入 LLM 请求。
+			sys := agent.Message{Role: agent.RoleSystem, Content: prompt.Build(env)}
+			return runner.TurnRunner(func(turnCtx context.Context, history []agent.Message) ([]agent.Message, error) {
+				// slot 会把上一轮返回的历史原样回传：剥掉旧的 sys 再挂，保证恰好一份。
+				if len(history) > 0 && history[0].Role == agent.RoleSystem {
+					history = history[1:]
+				}
+				// 用户消息过 UserPromptSubmit 钩子链（对齐 TUI model.go:524）：
+				// memory InjectOnce 借此注入；cron/bg 注入行是 KindInject，不会重复触发。
+				if n := len(history); n > 0 && history[n-1].Role == agent.RoleUser && history[n-1].Kind == agent.KindMessage {
+					replace, blocked := a.Hooks.TriggerUserPromptSubmit(turnCtx, history[n-1].Content)
+					if blocked != "" {
+						return nil, fmt.Errorf("prompt blocked: %s", blocked)
+					}
+					if replace != "" {
+						history[n-1].Content = replace
+					}
+				}
+				return tr(turnCtx, append([]agent.Message{sys}, history...))
+			}), nil
 		},
 	}, store, store)
 
