@@ -54,6 +54,10 @@ spec:
         # 文件不存在时进程行为与不带人设一致（internal/prompt.LoadSoul）。
         - name: RUNE_SOUL
           value: /data/SOUL.md
+        # 陪伴画像（internal/memory/profile.go）：persona/bond/expression/
+        # boundary 四类 AlwaysInject、subject 空间、dream 120min；不设走 generic 不适配。
+        - name: RUNE_MEMORY_PROFILE
+          value: companion
         envFrom:
         - secretRef:
             name: runebot-env
