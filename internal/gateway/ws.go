@@ -26,15 +26,16 @@ type wsConn struct {
 
 // 客户端上行帧（type 分发）。
 type wsIn struct {
-	Type    string `json:"type"`
-	ChatID  string `json:"chat_id"`
-	Content string `json:"content"`
-	Since   int64  `json:"since"`
-	AskID   string `json:"ask_id"`
-	Approved *bool `json:"approved"`
-	ReqID   string `json:"req_id"`
-	Before  int64  `json:"before"`
-	Limit   int    `json:"limit"`
+	Type        string         `json:"type"`
+	ChatID      string         `json:"chat_id"`
+	Content     string         `json:"content"`
+	Attachments []attachmentIn `json:"attachments,omitempty"` // 仅 message 帧：与 HTTP 轨同构
+	Since       int64          `json:"since"`
+	AskID       string         `json:"ask_id"`
+	Approved    *bool          `json:"approved"`
+	ReqID       string         `json:"req_id"`
+	Before      int64          `json:"before"`
+	Limit       int            `json:"limit"`
 }
 
 // handleWS 升级并进入读循环；首帧不必 ready——任一帧均可起手，
@@ -91,7 +92,11 @@ func (wc *wsConn) dispatch(ctx context.Context, s *Server, in wsIn) error {
 		if in.ChatID == "" || in.Content == "" {
 			return errors.New("message needs chat_id and content")
 		}
-		if err := s.Mgr.Submit(ctx, key, runner.TurnInput{Prompt: in.Content}); err != nil {
+		atts, err := parseAttachments(in.Attachments)
+		if err != nil {
+			return err // 校验失败走协议错误帧，连接不断
+		}
+		if err := s.Mgr.Submit(ctx, key, runner.TurnInput{Prompt: in.Content, Attachments: atts}); err != nil {
 			if errors.Is(err, runner.ErrQueueFull) {
 				wc.sendFrame(in.ChatID, map[string]any{
 					"type": "error", "code": 409, "message": "chat is busy",

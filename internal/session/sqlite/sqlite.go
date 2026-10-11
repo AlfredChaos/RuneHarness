@@ -22,7 +22,7 @@ import (
 )
 
 // schemaVersion 是当前 schema 版本；结构演进时在 migrate 追加分支并 +1。
-const schemaVersion = 3
+const schemaVersion = 4
 
 // maxForkDepth 限制 fork 链与祖先 blob 查找的层数，防止脏数据成环。
 const maxForkDepth = 8
@@ -190,6 +190,13 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if v < 4 {
+		// v4：消息附件（agent.Message.Parts）。沿用 tool_calls 的 JSON 列
+		// 先例：TEXT 列存 JSON 原文，无附件时为空串。老库 ALTER 补列即通。
+		if _, err := s.db.Exec(`ALTER TABLE messages ADD COLUMN parts TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	// pragma 不支持占位符，版本号是常量
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return err
@@ -254,10 +261,15 @@ func (s *Store) Append(ctx context.Context, msg agent.Message) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	var toolCalls, usage []byte
+	var toolCalls, usage, parts []byte
 	if len(msg.ToolCalls) > 0 {
 		if toolCalls, err = json.Marshal(msg.ToolCalls); err != nil {
 			return 0, fmt.Errorf("marshal tool_calls: %w", err)
+		}
+	}
+	if len(msg.Parts) > 0 {
+		if parts, err = json.Marshal(msg.Parts); err != nil {
+			return 0, fmt.Errorf("marshal parts: %w", err)
 		}
 	}
 	if msg.Usage != nil {
@@ -277,10 +289,10 @@ func (s *Store) Append(ctx context.Context, msg agent.Message) (int64, error) {
 	}
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO messages
-		(session_id, role, content, thinking, tool_calls, tool_call_id, is_error, created_at, kind, usage_json, channel)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		(session_id, role, content, thinking, tool_calls, tool_call_id, is_error, created_at, kind, usage_json, channel, parts)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.SessionID, string(msg.Role), msg.Content, msg.Thinking, string(toolCalls),
-		msg.ToolCallID, isErr, now, kindToDB(msg.Kind), string(usage), msg.Channel)
+		msg.ToolCallID, isErr, now, kindToDB(msg.Kind), string(usage), msg.Channel, string(parts))
 	if err != nil {
 		return 0, err
 	}
@@ -292,9 +304,17 @@ func (s *Store) Append(ctx context.Context, msg agent.Message) (int64, error) {
 		`UPDATE sessions SET updated_at = ? WHERE id = ?`, now, sc.SessionID); err != nil {
 		return 0, err
 	}
-	// 会话无 title 且本条是 user 消息：截断回填，--continue 列表可读
+	// 会话无 title 且本条是 user 消息：截断回填，--continue 列表可读。
+	// 纯附件消息（Content 空）回退为首个分片的文件名占位（§7c 决策）。
 	if msg.Role == agent.RoleUser && msg.Kind == agent.KindMessage {
 		title := truncateRunes(msg.Content, titleMaxRunes)
+		if title == "" && len(msg.Parts) > 0 {
+			name := msg.Parts[0].Filename
+			if name == "" {
+				name = msg.Parts[0].MediaType
+			}
+			title = truncateRunes("[image: "+name+"]", titleMaxRunes)
+		}
 		if _, err = tx.ExecContext(ctx,
 			`UPDATE sessions SET title = ? WHERE id = ? AND title = ''`,
 			title, sc.SessionID); err != nil {
@@ -406,7 +426,7 @@ func (s *Store) LoadRawHistory(ctx context.Context, sessionID string) ([]agent.M
 // rawRows 读会话 id ≤ upto 的全部行；调用方已做租户校验。
 func (s *Store) rawRows(ctx context.Context, sessionID string, upto int64) ([]agent.Message, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, role, content, thinking, tool_calls,
-		tool_call_id, is_error, usage_json, channel, created_at FROM messages WHERE session_id = ? AND id <= ? ORDER BY id`,
+		tool_call_id, is_error, usage_json, channel, created_at, parts FROM messages WHERE session_id = ? AND id <= ? ORDER BY id`,
 		sessionID, upto)
 	if err != nil {
 		return nil, err
@@ -416,10 +436,10 @@ func (s *Store) rawRows(ctx context.Context, sessionID string, upto int64) ([]ag
 	var hist []agent.Message
 	for rows.Next() {
 		var m agent.Message
-		var kind, role, toolCalls, usage string
+		var kind, role, toolCalls, usage, parts string
 		var isErr int
 		if err := rows.Scan(&m.ID, &kind, &role, &m.Content, &m.Thinking, &toolCalls,
-			&m.ToolCallID, &isErr, &usage, &m.Channel, &m.CreatedAt); err != nil {
+			&m.ToolCallID, &isErr, &usage, &m.Channel, &m.CreatedAt, &parts); err != nil {
 			return nil, err
 		}
 		m.Kind = kindFromDB(kind)
@@ -428,6 +448,11 @@ func (s *Store) rawRows(ctx context.Context, sessionID string, upto int64) ([]ag
 		if toolCalls != "" {
 			if err := json.Unmarshal([]byte(toolCalls), &m.ToolCalls); err != nil {
 				return nil, fmt.Errorf("unmarshal tool_calls: %w", err)
+			}
+		}
+		if parts != "" {
+			if err := json.Unmarshal([]byte(parts), &m.Parts); err != nil {
+				return nil, fmt.Errorf("unmarshal parts: %w", err)
 			}
 		}
 		if usage != "" {

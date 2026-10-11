@@ -19,6 +19,19 @@ type ToolCall struct {
 	Arguments json.RawMessage // 模型生成的 JSON 参数原文
 }
 
+// Part 是消息携带的一个附件内容分片，随消息落库并回传 API；纯文本仍在
+// Content。当前只产 image 一种（kind），其余取值预留。
+type Part struct {
+	Kind      string // "image"
+	MediaType string // "image/png"
+	Filename  string // 展示名，可为空
+	DataB64   string // base64 载荷，不带 data: 前缀
+	Detail    string // 可选 image detail，仅 auto/low/high（SDK marshal 校验）；空 = 不发送（见 llm.toParams 的枚举注释）
+}
+
+// Part.Kind 的取值。
+const PartImage = "image"
+
 // Kind 区分消息行的类型。零值是普通消息；控制行不进发送形态，只记录
 // 压缩决策，读侧组装视图时消费（见 session.Fold）。
 type Kind string
@@ -57,6 +70,7 @@ type Message struct {
 	Kind       Kind
 	Role       Role
 	Content    string
+	Parts      []Part // 附件内容分片（图片）；空 = 无附件，与旧消息行为一致
 	Thinking   string
 	ToolCalls  []ToolCall
 	ToolCallID string

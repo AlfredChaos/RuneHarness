@@ -205,8 +205,9 @@ func (l *Ledger) Close() {
 
 // TurnInput 是一次外部提交的轮次载荷。
 type TurnInput struct {
-	Prompt  string // 用户输入原文（已经过渠道层剥离，不再含 WS 信封）
-	Display string // 落库与回显的展示文本；空则同 Prompt
+	Prompt      string       // 用户输入原文（已经过渠道层剥离，不再含 WS 信封）
+	Display     string       // 落库与回显的展示文本；空则同 Prompt
+	Attachments []agent.Part // 附件分片；nil = 无附件（与旧行为一致）
 }
 
 // TurnOutcome 是轮次终局，由 turn_end 事件的 data 携带。

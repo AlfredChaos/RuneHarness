@@ -278,3 +278,60 @@ func TestResumeAcrossReopen(t *testing.T) {
 		t.Fatalf("resumed hist = %+v", hist)
 	}
 }
+
+// ListByTenant 的 count = 绑定会话内非控制消息条数（与 /history 口径一致），
+// 控制行不计、无消息的绑定为 0。
+func TestPartsRoundtrip(t *testing.T) {
+	s := open(t)
+	ssn := mustCreate(t, s, "t1", session.Meta{Kind: session.KindMain})
+	ctx := ctxFor("t1", ssn.ID)
+
+	want := []agent.Message{
+		{Role: agent.RoleUser, Content: "看这两张图",
+			Parts: []agent.Part{
+				{Kind: agent.PartImage, MediaType: "image/png", Filename: "shot.png", DataB64: "aGVsbG8="},
+				{Kind: agent.PartImage, MediaType: "image/jpeg", DataB64: "d29ybGQ=", Detail: "low"},
+			}},
+		{Role: agent.RoleUser, Content: "纯文本消息不受影响"},
+	}
+	for i, m := range want {
+		id, err := s.Append(ctx, m)
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		want[i].ID = id
+	}
+	got, err := s.LoadHistory(ctx, ssn.ID)
+	if err != nil {
+		t.Fatalf("LoadHistory: %v", err)
+	}
+	for i := range got {
+		got[i].CreatedAt = 0 // 物化列，不参与语义相等
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	// 字节级核对：序列化后的分片载荷与写入前完全一致
+	before, _ := json.Marshal(want[0].Parts)
+	after, _ := json.Marshal(got[0].Parts)
+	if string(before) != string(after) {
+		t.Fatalf("parts bytes differ: %s vs %s", before, after)
+	}
+
+	// 纯附件消息：title 回退为 [image: <文件名>]
+	ssn2 := mustCreate(t, s, "t1", session.Meta{Kind: session.KindMain})
+	if _, err := s.Append(ctxFor("t1", ssn2.ID), agent.Message{Role: agent.RoleUser,
+		Parts: []agent.Part{{Kind: agent.PartImage, MediaType: "image/png",
+			Filename: "photo.png", DataB64: "aGVsbG8="}}}); err != nil {
+		t.Fatalf("Append parts-only: %v", err)
+	}
+	list, err := s.ListSessions(ctxFor("t1", ""), 0)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	for _, x := range list {
+		if x.ID == ssn2.ID && x.Title != "[image: photo.png]" {
+			t.Fatalf("parts-only title = %q, want %q", x.Title, "[image: photo.png]")
+		}
+	}
+}

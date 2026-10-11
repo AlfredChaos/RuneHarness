@@ -250,3 +250,57 @@ func TestQueueFullRejected(t *testing.T) {
 	}
 	close(release)
 }
+
+// TestTurnInputAttachmentsPersist 验证 TurnInput.Attachments 原样落在
+// user 消息的 Parts 上（进 history 视图，随之落库）；nil 时零行为变化。
+func TestTurnInputAttachmentsPersist(t *testing.T) {
+	store := newFakeStore()
+	ran := make(chan []agent.Message, 1)
+	mgr := NewManager(Config{}, fakeHarness(
+		func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+			ran <- hist
+			return append(hist, agent.Message{Role: agent.RoleAssistant, Content: "ok"}), nil
+		}), store, nil)
+
+	atts := []agent.Part{{
+		Kind: agent.PartImage, MediaType: "image/png", Filename: "shot.png",
+		DataB64: "aGVsbG8=", Detail: "low",
+	}}
+	if err := mgr.Submit(context.Background(), key(), TurnInput{
+		Prompt: "看图", Attachments: atts,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var hist []agent.Message
+	select {
+	case hist = <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("turn never ran")
+	}
+
+	// 视图侧：runner 收到的 history 里 user 消息带 Parts。
+	var user agent.Message
+	for _, m := range hist {
+		if m.Role == agent.RoleUser {
+			user = m
+		}
+	}
+	if user.Content != "看图" {
+		t.Fatalf("user content = %q", user.Content)
+	}
+	if len(user.Parts) != 1 || user.Parts[0] != atts[0] {
+		t.Fatalf("user parts = %+v, want %+v", user.Parts, atts)
+	}
+
+	// 存储侧：落库的同一行带 Parts。
+	rows, err := store.LoadHistory(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range rows {
+		if m.Role == agent.RoleUser && len(m.Parts) == 1 && m.Parts[0] == atts[0] {
+			return
+		}
+	}
+	t.Fatalf("persisted rows lack parts: %+v", rows)
+}

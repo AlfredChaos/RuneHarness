@@ -399,6 +399,10 @@ func (m *Model) replayHistory(hist []agent.Message) {
 				if n > 0 {
 					text += faintStyle.Render(fmt.Sprintf("  [+%d attached]", n))
 				}
+				// 图片 Part 只留占位标记，绝不回放 base64
+				if names := partNames(msg.Parts); len(names) > 0 {
+					text += faintStyle.Render(fmt.Sprintf("  [image: %s]", strings.Join(names, ", ")))
+				}
 				m.appendBlock(m.rowUser(text))
 			}
 		case agent.RoleAssistant:

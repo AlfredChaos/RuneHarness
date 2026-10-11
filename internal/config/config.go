@@ -103,6 +103,35 @@ func contextWindow(env, model string) (int, error) {
 	return best, nil
 }
 
+// modelVision 是已知支持图片输入的模型家族前缀表，匹配方式仿 modelWindows
+// （小写前缀命中）。表是粗口径：未命中一律当纯文本模型处理，图片
+// 分片在发送前降级为占位文本——误判成文本模型只丢图不错发，反向才是事故。
+// minimax 只放行 m3：主用端点 MiniMax M3 已确认视觉能力（调研 §2.2），
+// 旧家族未确认不放行。
+var modelVision = []string{
+	"minimax-m3",
+	"gpt-4o",
+	"gpt-4.1",
+	"gpt-5",
+	"o4",
+	"claude",
+	"gemini",
+	"grok-4",
+	"grok-2-vision",
+}
+
+// ModelVision 报告模型是否支持图片输入；未命中表即纯文本。布尔表不需要
+// 最长前缀消歧：任一命中即视觉，与 contextWindow 的"取最长"只有形式差异。
+func ModelVision(model string) bool {
+	l := strings.ToLower(model)
+	for _, p := range modelVision {
+		if strings.HasPrefix(l, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // Load 读取 .env 并校验必填项。
 // Overload 让 .env 覆盖已存在的同名环境变量（本项目以 .env 为准）。
 func Load() (Config, error) {

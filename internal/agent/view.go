@@ -7,10 +7,13 @@ import (
 )
 
 // wireMessage 是一条消息里真正发给 API 的字段：Thinking、IsError、ID、
-// Kind、Usage 都不回传，不参与哈希。
+// Kind、Usage 都不回传，不参与哈希。Parts 参与哈希（§7a 决策）：Go 的
+// json.Marshal 按结构体字段声明序输出，序列化字节稳定，附件差异必须让
+// 重放哈希漂移，否则换了图片不报错。
 type wireMessage struct {
 	Role       Role       `json:"role"`
 	Content    string     `json:"content,omitempty"`
+	Parts      []Part     `json:"parts,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
@@ -18,7 +21,7 @@ type wireMessage struct {
 func wireView(history []Message) []wireMessage {
 	out := make([]wireMessage, len(history))
 	for i, m := range history {
-		out[i] = wireMessage{Role: m.Role, Content: m.Content, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID}
+		out[i] = wireMessage{Role: m.Role, Content: m.Content, Parts: m.Parts, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID}
 	}
 	return out
 }

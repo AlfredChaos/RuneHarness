@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,6 +17,68 @@ import (
 
 // ---- handlers（HTTP/SSE 轨）----
 // 所有 handler 先过 claims()，401 由 writeErr 统一格式。
+
+// 附件上限：三条上行轨（WS message 帧、POST /messages、POST /stream）同一套。
+const (
+	maxAttachments      = 8
+	maxAttachmentBytes  = 10 << 20 // 单个附件解码后 ≤10MB
+	maxAttachmentsTotal = 30 << 20 // 单轮合计解码后 ≤30MB
+)
+
+// attachmentIn 是上游 JSON 里的一个附件对象；三条上行轨同构，detail 非法值
+// 里的 "default" 被 SDK 客户端侧校验拒绝，这里同样不放行。
+type attachmentIn struct {
+	Kind      string `json:"kind"`
+	MediaType string `json:"media_type"`
+	Filename  string `json:"filename,omitempty"`
+	DataB64   string `json:"data_b64"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// parseAttachments 校验并转换上游附件数组；任何问题都在 Submit 之前拒绝。
+// 空数组返回 nil——与"无附件"零行为一致。
+func parseAttachments(raw []attachmentIn) ([]agent.Part, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) > maxAttachments {
+		return nil, errors.New("too many attachments")
+	}
+	parts := make([]agent.Part, 0, len(raw))
+	var total int
+	for _, a := range raw {
+		if a.Kind != agent.PartImage {
+			return nil, errors.New("unsupported attachment kind")
+		}
+		if !strings.HasPrefix(a.MediaType, "image/") {
+			return nil, errors.New("attachment media_type must be image/*")
+		}
+		if len(a.Filename) > 255 {
+			return nil, errors.New("attachment filename too long")
+		}
+		switch a.Detail {
+		case "", "auto", "low", "high":
+		default:
+			return nil, errors.New("attachment detail must be auto, low, or high")
+		}
+		data, err := base64.StdEncoding.DecodeString(a.DataB64)
+		if err != nil {
+			return nil, errors.New("invalid base64 attachment")
+		}
+		if len(data) > maxAttachmentBytes {
+			return nil, errors.New("attachment too large")
+		}
+		total += len(data)
+		if total > maxAttachmentsTotal {
+			return nil, errors.New("attachments too large overall")
+		}
+		parts = append(parts, agent.Part{
+			Kind: a.Kind, MediaType: a.MediaType, Filename: a.Filename,
+			DataB64: a.DataB64, Detail: a.Detail,
+		})
+	}
+	return parts, nil
+}
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"status": "ok", "time": time.Now().Unix()})
@@ -32,11 +95,14 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if rows == nil {
+		rows = []map[string]any{} // 契约：空库返回 {"chats":[]} 而非 null
+	}
 	writeJSON(w, 200, map[string]any{"chats": rows})
 }
 
 // listBindings 直查 chat_bindings；Store 需实现 ListByTenant。
-// 返回 {chat_id, channel, session_id, subject_id, active, last_active}。
+// 返回 {chat_id, channel, session_id, subject_id, count, active, last_active}。
 func (s *Server) listBindings(ctx context.Context, tenant string) ([]map[string]any, error) {
 	rows, err := s.Store.ListByTenant(ctx, tenant, s.Channel)
 	if err != nil {
@@ -72,8 +138,9 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Content string `json:"content"`
-		Display string `json:"display,omitempty"`
+		Content     string         `json:"content"`
+		Display     string         `json:"display,omitempty"`
+		Attachments []attachmentIn `json:"attachments,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, 400, "bad JSON: "+err.Error())
@@ -83,8 +150,13 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "content is empty")
 		return
 	}
+	atts, err := parseAttachments(body.Attachments)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
 	err = s.Mgr.Submit(r.Context(), key, runner.TurnInput{
-		Prompt: body.Content, Display: body.Display,
+		Prompt: body.Content, Display: body.Display, Attachments: atts,
 	})
 	if errors.Is(err, runner.ErrQueueFull) {
 		writeErr(w, 409, "chat is busy; retry after turn_end")
@@ -301,7 +373,7 @@ func (s *Server) handleSvcSearch(w http.ResponseWriter, r *http.Request) {
 
 // handleStream 是"提交+读流"一体的端点：POST {content} -> NDJSON 事件流
 // 直到本轮 turn_end。相比 SSE 订阅，这是单次请求内闭环，天然贴合
-// fetch + ReadableStream 的消费模式；忙时 409（与 POST /messages 同规则）。
+// fetch + ReadableStream 的消费模式；忙时 200 + 内联 error 帧（客户端串行依赖）。
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	key, err := s.chatKey(r, r.PathValue("id"))
 	if err != nil {
@@ -309,8 +381,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Content string `json:"content"`
-		Display string `json:"display,omitempty"`
+		Content     string         `json:"content"`
+		Display     string         `json:"display,omitempty"`
+		Attachments []attachmentIn `json:"attachments,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, 400, "bad JSON: "+err.Error())
@@ -318,6 +391,12 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(body.Content) == "" {
 		writeErr(w, 400, "content is empty")
+		return
+	}
+	// 校验必须赶在 WriteHeader(200) 之前，坏附件还能以 400 回绝。
+	atts, err := parseAttachments(body.Attachments)
+	if err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -332,13 +411,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	// 先订阅再提交，保证本轮事件不落在订阅窗口之外。
 	ch, _, err := s.Mgr.Subscribe(r.Context(), key, 0)
 	if err != nil {
-		writeNDJSON(w, runner.Event{Event: runner.EvError,
-			Data: mustErrJSON(err.Error())})
+		writeNDJSON(w, runner.Event{Event: runner.EvError, ChatID: key.ChatID,
+			At: time.Now().UnixMilli(), Data: mustErrJSON(err.Error())})
 		flusher.Flush()
 		return
 	}
 	err = s.Mgr.Submit(r.Context(), key, runner.TurnInput{
-		Prompt: body.Content, Display: body.Display,
+		Prompt: body.Content, Display: body.Display, Attachments: atts,
 	})
 	if errors.Is(err, runner.ErrQueueFull) {
 		writeNDJSON(w, runner.Event{Event: runner.EvError,

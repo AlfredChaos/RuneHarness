@@ -12,7 +12,11 @@
 package tui
 
 import (
+	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +26,8 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"runeharness/internal/agent"
 )
 
 const (
@@ -31,6 +37,9 @@ const (
 	attachTotalCap = 128 << 10       // 附件总量字节上限
 	attachDirCap   = 300             // 目录附件的行数上限
 	fileWalkCap    = 20000           // 非 git 目录遍历时收集的文件数上限
+
+	attachImageCap   = 10 << 20         // 单张图片原始字节上限（MiniMax 每图限制）
+	attachPDFTimeout = 15 * time.Second // PDF 抽文本的进程超时
 )
 
 // atTok 是光标处的一个 @ 提及 token。
@@ -379,37 +388,50 @@ func parseMentions(s string) []string {
 }
 
 // expandMentions 把 content 里的 @path 引用展开为尾部 <attachments> 块；
-// 返回展开后文本与逐条结果标签（供对话区留痕）。workspace 为空时不展开。
-func (m *Model) expandMentions(content string) (string, []string) {
+// 图片提及不进块、以 Part 形式随消息发出（不占文本预算）。返回展开后
+// 文本、图片分片与逐条结果标签（供对话区留痕）。workspace 为空时不展开。
+func (m *Model) expandMentions(content string) (string, []agent.Part, []string) {
 	paths := parseMentions(content)
 	if len(paths) == 0 || m.sc.Workspace == "" {
-		return content, nil
+		return content, nil, nil
 	}
 	var b strings.Builder
 	b.WriteString(content)
-	b.WriteString("\n\n<attachments>\n")
+	var blocks []string // 文本类 <file> 块；纯图片提及不产块
+	var parts []agent.Part
 	var labels []string
 	total := 0
 	for _, p := range paths {
-		body, label := m.readAttachment(p, attachTotalCap-total)
-		total += len(body)
-		fmt.Fprintf(&b, "<file path=%q>\n%s\n</file>\n", p, body)
+		ps, body, label := m.readAttachment(p, attachTotalCap-total)
+		total += len(body) // 图片正文为空，不消耗预算
+		if body != "" {
+			blocks = append(blocks, fmt.Sprintf("<file path=%q>\n%s\n</file>\n", p, body))
+		}
+		parts = append(parts, ps...)
 		labels = append(labels, label)
 	}
-	b.WriteString("</attachments>")
-	return b.String(), labels
+	if len(blocks) > 0 {
+		b.WriteString("\n\n<attachments>\n")
+		for _, blk := range blocks {
+			b.WriteString(blk)
+		}
+		b.WriteString("</attachments>")
+	}
+	return b.String(), parts, labels
 }
 
 // readAttachment 读取单个 @ 引用的内容：目录给递归清单，文件给正文
-// （截断标注），错误内联为 [error: …]。返回正文与展示标签。
-func (m *Model) readAttachment(p string, budget int) (string, string) {
+// （截断标注），错误内联为 [error: …]。图片走 Part 通道（不占文本预算、
+// 不截断，单张 10MB 上限）；PDF 抽出文本后按正文处理。返回分片、正文
+// 与展示标签。
+func (m *Model) readAttachment(p string, budget int) ([]agent.Part, string, string) {
 	full, err := resolveMention(m.sc.Workspace, p)
 	if err != nil {
-		return "[error: " + err.Error() + "]", p + " ✘"
+		return nil, "[error: " + err.Error() + "]", p + " ✘"
 	}
 	info, err := os.Stat(full)
 	if err != nil {
-		return "[error: " + err.Error() + "]", p + " ✘"
+		return nil, "[error: " + err.Error() + "]", p + " ✘"
 	}
 	if info.IsDir() {
 		var lines []string
@@ -434,18 +456,37 @@ func (m *Model) readAttachment(p string, budget int) (string, string) {
 		if len(lines) >= attachDirCap {
 			body += "\n...[listing truncated]"
 		}
-		return body, p + "/ (" + fmt.Sprintf("%d entries", len(lines)) + ")"
+		return nil, body, p + "/ (" + fmt.Sprintf("%d entries", len(lines)) + ")"
 	}
 	if budget <= 0 {
-		return "[omitted: attachment budget exhausted]", p + " (over budget)"
+		return nil, "[omitted: attachment budget exhausted]", p + " (over budget)"
 	}
 	data, err := os.ReadFile(full)
 	if err != nil {
-		return "[error: " + err.Error() + "]", p + " ✘"
+		return nil, "[error: " + err.Error() + "]", p + " ✘"
 	}
-	// 二进制嗅探：头部含 NUL 按二进制处理，不注入内容
-	if i := min(len(data), 512); strings.IndexByte(string(data[:i]), 0) >= 0 {
-		return "[binary file omitted]", p + " (binary)"
+	// 头部嗅探识别图片与 PDF；魔数优先，嗅探不出再看扩展名
+	head := data[:min(len(data), 512)]
+	ct := http.DetectContentType(head)
+	hasNUL := strings.IndexByte(string(head), 0) >= 0
+	if mt, ok := sniffImage(ct, filepath.Ext(p), hasNUL); ok {
+		if len(data) > attachImageCap {
+			return nil, "[error: image exceeds 10MB limit]", p + " (image too large)"
+		}
+		part := agent.Part{Kind: agent.PartImage, MediaType: mt,
+			Filename: filepath.Base(p), DataB64: base64.StdEncoding.EncodeToString(data)}
+		return []agent.Part{part}, "", p + " (image)"
+	}
+	if ct == "application/pdf" || strings.EqualFold(filepath.Ext(p), ".pdf") {
+		text, err := extractPDF(full)
+		if err != nil {
+			return nil, "[error: " + err.Error() + "]", p + " ✘"
+		}
+		data = []byte(text) // 抽出文本走普通正文路径（截断/预算同正文）
+	}
+	// 二进制（头部含 NUL 且非图片/PDF）不注入内容
+	if hasNUL {
+		return nil, "[binary file omitted]", p + " (binary)"
 	}
 	trunc := ""
 	if len(data) > attachFileCap {
@@ -456,7 +497,51 @@ func (m *Model) readAttachment(p string, budget int) (string, string) {
 		data = data[:max(budget, 0)]
 		trunc = " [truncated: total budget]"
 	}
-	return string(data) + trunc, p + trunc
+	return nil, string(data) + trunc, p + trunc
+}
+
+// sniffImage 识别图片附件：内容嗅探命中即认（魔数为准）；否则扩展名是
+// 常见图片格式且头部无 NUL 时按扩展名兜底（改名图片）。返回 MIME 与是否命中。
+func sniffImage(ct, ext string, hasNUL bool) (string, bool) {
+	switch ct {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return ct, true
+	}
+	if hasNUL {
+		return "", false
+	}
+	switch strings.ToLower(ext) {
+	case ".png":
+		return "image/png", true
+	case ".jpg", ".jpeg":
+		return "image/jpeg", true
+	case ".gif":
+		return "image/gif", true
+	case ".webp":
+		return "image/webp", true
+	}
+	return "", false
+}
+
+// extractPDF 用 pdftotext（缺位回退 mutool）把 PDF 抽成文本，进程限时
+// 15s；两个工具都缺位时报 not installed，其余失败归并为 pdftotext failed。
+func extractPDF(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), attachPDFTimeout)
+	defer cancel()
+	for _, argv := range [][]string{
+		{"pdftotext", "-layout", "-q", path, "-"},
+		{"mutool", "draw", "-F", "txt", "-o", "-", path},
+	} {
+		if _, err := exec.LookPath(argv[0]); err != nil {
+			continue
+		}
+		out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).Output()
+		if err != nil {
+			return "", fmt.Errorf("pdftotext failed: %v", err)
+		}
+		return string(out), nil
+	}
+	return "", errors.New("pdftotext not installed")
 }
 
 // resolveMention 解析 @ 路径：相对路径锚定 workspace，绝对路径与 ".."
@@ -481,4 +566,18 @@ func splitAttachments(content string) (string, int) {
 	}
 	n := strings.Count(content[i:], "<file ")
 	return content[:i], n
+}
+
+// partNames 取附件分片的展示名（无名时退回 MIME），供回放占位标记用；
+// 载荷（base64）永不进展示层。
+func partNames(parts []agent.Part) []string {
+	var names []string
+	for _, p := range parts {
+		if p.Filename == "" {
+			names = append(names, p.MediaType)
+			continue
+		}
+		names = append(names, p.Filename)
+	}
+	return names
 }

@@ -132,6 +132,7 @@ func (s *slot) runTurn(in TurnInput) {
 	userMsg := agent.Message{
 		Role:    agent.RoleUser,
 		Content: in.Prompt,
+		Parts:   in.Attachments, // nil 透传为 nil：无附件时零行为变化
 		Channel: s.key.Channel,
 	}
 	sessCtx := scope.WithSession(s.slotCtx, s.sessionID)

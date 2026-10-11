@@ -11,16 +11,16 @@ import (
 	"net/http"
 	"strings"
 
+	"runeharness/internal/agent"
 	"runeharness/internal/memory"
 	"runeharness/internal/runner"
 	"runeharness/internal/scope"
-	"runeharness/internal/agent"
 )
 
 // Token 是 Bearer token 的解析结果；tenant+subject 来自 token 声明，
 // 渠道层不自带身份——token 持有者即用户。
 type Token struct {
-	TenantID string
+	TenantID  string
 	SubjectID string
 }
 
@@ -97,8 +97,8 @@ type Store interface {
 type Server struct {
 	Mgr     *runner.Manager
 	Auth    Authenticator
-	Store   Store   // chat_bindings 查询 + 历史页
-	Channel string  // 本轨道渠道名（"bear"/"http"），落到 ChatKey 与 channel 列
+	Store   Store  // chat_bindings 查询 + 历史页
+	Channel string // 本轨道渠道名（"bear"/"http"），落到 ChatKey 与 channel 列
 	// Mem 是记忆查看出口；nil 时 /v1/memory* 一律 503。
 	Mem *memory.Memory
 

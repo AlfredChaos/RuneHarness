@@ -154,6 +154,16 @@ func renderEvent(b *strings.Builder, m agent.Message, toolChars int) {
 		}
 		fmt.Fprintf(b, "[%s]\n%s\n", label, clip(m.Content, toolChars))
 	}
+	// 附件分片只以占位进摘要（§7b 决策）：base64 绝不进摘要提示词，
+	// 摘要只需知道"这里有一张图"。被折叠掉的分片随消息一起离开视图，
+	// 生命周期与 Content 相同。
+	for _, p := range m.Parts {
+		name := p.Filename
+		if name == "" {
+			name = p.MediaType
+		}
+		fmt.Fprintf(b, "[image: %s]\n", name)
+	}
 }
 
 // clip 保留头尾，中间以省略标记代替。

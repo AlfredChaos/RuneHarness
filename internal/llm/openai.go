@@ -16,6 +16,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/config"
 	"runeharness/internal/tools"
 )
 
@@ -45,7 +46,7 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 
 	stream := c.sdk.Chat.Completions.NewStreaming(ctx, openai.ChatCompletionNewParams{
 		Model:    c.model,
-		Messages: toParams(history),
+		Messages: toParams(history, c.model),
 		Tools:    toTools(specs),
 		// 要求流末尾回传 usage，作为上下文估算锚点；不支持的端点忽略该字段。
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
@@ -144,14 +145,20 @@ func parseLimit(apiErr *openai.Error) int {
 	return 0
 }
 
-func toParams(history []agent.Message) []openai.ChatCompletionMessageParamUnion {
+// toParams 是发送形态的唯一 marshal 点：按角色选 SDK 便捷构造；带附件
+// 分片的 user 消息改走 content parts 数组（需要 model 做视觉能力门控）。
+func toParams(history []agent.Message, model string) []openai.ChatCompletionMessageParamUnion {
 	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(history))
 	for _, m := range history {
 		switch m.Role {
 		case agent.RoleSystem:
 			out = append(out, openai.SystemMessage(m.Content))
 		case agent.RoleUser:
-			out = append(out, openai.UserMessage(m.Content))
+			if len(m.Parts) > 0 {
+				out = append(out, userParam(m, model))
+			} else {
+				out = append(out, openai.UserMessage(m.Content))
+			}
 		case agent.RoleAssistant:
 			out = append(out, assistantParam(m))
 		case agent.RoleTool:
@@ -159,6 +166,49 @@ func toParams(history []agent.Message) []openai.ChatCompletionMessageParamUnion 
 		}
 	}
 	return out
+}
+
+// userParam 组装带附件分片的 user 消息：Content 非空时第一个 part 是文本，
+// 其后每个 Part 产一个 image_url 分片，URL 用 base64 data-URI 内联——
+// 附件与 prompt 同生命周期，没有公网可达 URL，hosted URL 路线不适用
+// （调研 §2.1）。
+//
+// detail 枚举各家不同：OpenAI 是 auto/low/high（缺省 auto），MiniMax 是
+// low/default/high（缺省 default）。Part.Detail 为空时完全不发送该字段，
+// 各端点取各自缺省值——省略是两端交集上的安全映射；MiniMax 的缺省枚举
+// "default" 恰是字段缺席时端点的行为，永远不该出现在 Part.Detail 里：
+// SDK 在 marshal 时做客户端校验，只放行 auto/low/high，其余值（含
+// "default"）在进程内即报错。
+//
+// 视觉门控在唯一 marshal 点做：纯文本模型的图片分片降级为占位文本，
+// 绝不把 image_url 发给不支持图片的模型。
+func userParam(m agent.Message, model string) openai.ChatCompletionMessageParamUnion {
+	parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(m.Parts)+1)
+	if m.Content != "" {
+		parts = append(parts, openai.TextContentPart(m.Content))
+	}
+	for _, p := range m.Parts {
+		if p.Kind != agent.PartImage || !config.ModelVision(model) {
+			parts = append(parts, openai.TextContentPart(partPlaceholder(p)))
+			continue
+		}
+		image := openai.ChatCompletionContentPartImageImageURLParam{
+			URL: "data:" + p.MediaType + ";base64," + p.DataB64,
+			// SDK 标了 omitzero：空串不会出现在 wire 上
+			Detail: p.Detail,
+		}
+		parts = append(parts, openai.ImageContentPart(image))
+	}
+	return openai.UserMessage(parts)
+}
+
+// partPlaceholder 把发不出去的分片降级为内联占位文本，文案风格对齐
+// files.go 的 [binary file omitted]。
+func partPlaceholder(p agent.Part) string {
+	if p.Kind != agent.PartImage {
+		return "[attachment omitted: unsupported kind " + p.Kind + "]"
+	}
+	return "[image omitted: model is text-only]"
 }
 
 // assistantParam 重建 assistant 消息，保留 tool_calls（模型要求原样回传）。

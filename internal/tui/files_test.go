@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -236,7 +240,7 @@ func TestExpandMentions(t *testing.T) {
 	m, ws := newFileModel(t)
 	seedFiles(t, ws, "a.go")
 
-	out, labels := m.expandMentions("check @a.go and @missing.go")
+	out, _, labels := m.expandMentions("check @a.go and @missing.go")
 	if !strings.Contains(out, "<attachments>") || !strings.Contains(out, "content of a.go") {
 		t.Fatalf("expanded:\n%s", out)
 	}
@@ -253,17 +257,17 @@ func TestExpandMentions(t *testing.T) {
 	if err := os.WriteFile(op, []byte("external"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _ = m.expandMentions("see @" + op)
+	out, _, _ = m.expandMentions("see @" + op)
 	if !strings.Contains(out, "external") {
 		t.Errorf("outside-workspace mention should attach:\n%s", out)
 	}
 
 	// 无 @ 不变；空 workspace 不展开
-	if o, l := m.expandMentions("plain text"); o != "plain text" || l != nil {
+	if o, _, l := m.expandMentions("plain text"); o != "plain text" || l != nil {
 		t.Error("no mentions should pass through")
 	}
 	m.sc.Workspace = ""
-	if o, l := m.expandMentions("hi @a.go"); o != "hi @a.go" || l != nil {
+	if o, _, l := m.expandMentions("hi @a.go"); o != "hi @a.go" || l != nil {
 		t.Error("empty workspace should pass through")
 	}
 }
@@ -272,7 +276,7 @@ func TestExpandMentions(t *testing.T) {
 func TestExpandDirMention(t *testing.T) {
 	m, ws := newFileModel(t)
 	seedFiles(t, ws, "pkg/a.go", "pkg/sub/b.go")
-	out, labels := m.expandMentions("see @pkg")
+	out, _, labels := m.expandMentions("see @pkg")
 	if !strings.Contains(out, "a.go") || !strings.Contains(out, "sub/b.go") {
 		t.Fatalf("dir listing:\n%s", out)
 	}
@@ -289,6 +293,174 @@ func TestSplitAttachments(t *testing.T) {
 	}
 	if text, n := splitAttachments("plain"); text != "plain" || n != 0 {
 		t.Error("no block passes through")
+	}
+}
+
+// tinyPNGB64 是 1x1 透明 PNG（魔数可被 DetectContentType 识别为 image/png）。
+const tinyPNGB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+func pngBytes(t *testing.T) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(tinyPNGB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// 图片提及产出 image Part：不进 <file> 块、base64 不入文本，标签留 "(image)"；
+// 与文本提及混用时只有文本文件进附件块。
+func TestExpandImageMention(t *testing.T) {
+	m, ws := newFileModel(t)
+	seedFiles(t, ws, "a.go")
+	if err := os.WriteFile(filepath.Join(ws, "pic.png"), pngBytes(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, parts, labels := m.expandMentions("look @pic.png and @a.go")
+	if len(parts) != 1 || parts[0].Kind != agent.PartImage || parts[0].MediaType != "image/png" {
+		t.Fatalf("parts=%+v", parts)
+	}
+	if parts[0].Filename != "pic.png" || parts[0].DataB64 == "" {
+		t.Errorf("part=%+v", parts[0])
+	}
+	if strings.Contains(out, parts[0].DataB64) {
+		t.Error("base64 must not leak into text content")
+	}
+	if !strings.Contains(out, `path="a.go"`) || strings.Contains(out, `path="pic.png"`) {
+		t.Errorf("only text mention should enter block:\n%s", out)
+	}
+	if len(labels) != 2 || labels[0] != "pic.png (image)" {
+		t.Errorf("labels=%v", labels)
+	}
+
+	// 纯图片提及：不产 <attachments> 块
+	out, parts, _ = m.expandMentions("look @pic.png")
+	if len(parts) != 1 || strings.Contains(out, "<attachments>") {
+		t.Errorf("image-only mention should produce no text block:\n%s", out)
+	}
+}
+
+// 嗅探不出魔数的图片按扩展名兜底（改名图片）；头部含 NUL 的非图片仍按
+// 二进制略过，不吃扩展名兜底。
+func TestImageExtensionFallback(t *testing.T) {
+	m, ws := newFileModel(t)
+	// 0xFF 非法 UTF-8、无 NUL：嗅探为 octet-stream，.png 扩展兜底命中
+	junk := bytes.Repeat([]byte{0xFF}, 600)
+	if err := os.WriteFile(filepath.Join(ws, "photo.png"), junk, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, parts, labels := m.expandMentions("see @photo.png")
+	if len(parts) != 1 || parts[0].MediaType != "image/png" {
+		t.Fatalf("parts=%+v", parts)
+	}
+	if labels[0] != "photo.png (image)" {
+		t.Errorf("label=%q", labels[0])
+	}
+
+	// 含 NUL 的同名字件不兜底：按二进制略过
+	if err := os.WriteFile(filepath.Join(ws, "dark.png"), append([]byte{0}, junk...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, parts, labels = m.expandMentions("see @dark.png")
+	if len(parts) != 0 || !strings.Contains(labels[0], "(binary)") {
+		t.Fatalf("NUL file should stay binary: parts=%v label=%q", parts, labels[0])
+	}
+}
+
+// pdfBytes 拼一个含一行文本的最小 PDF（xref 偏移按实际字节计算）。
+func pdfBytes(t *testing.T) []byte {
+	t.Helper()
+	stream := "BT /F1 24 Tf 72 720 Td (Hello Rune PDF) Tj ET"
+	objs := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(stream), stream),
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	}
+	var b bytes.Buffer
+	var offs []int
+	b.WriteString("%PDF-1.4\n")
+	for i, o := range objs {
+		offs = append(offs, b.Len())
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, o)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, off := range offs {
+		fmt.Fprintf(&b, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return b.Bytes()
+}
+
+// PDF 提及抽出文本走正文路径：文本落入附件块、不产 Part（无 pdftotext
+// 的裸 CI 跳过）。
+func TestPDFMentionExtraction(t *testing.T) {
+	if _, err := exec.LookPath("pdftotext"); err != nil {
+		t.Skip("pdftotext not installed")
+	}
+	m, ws := newFileModel(t)
+	if err := os.WriteFile(filepath.Join(ws, "doc.pdf"), pdfBytes(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, parts, labels := m.expandMentions("read @doc.pdf")
+	if len(parts) != 0 {
+		t.Fatalf("pdf should not produce parts: %+v", parts)
+	}
+	if !strings.Contains(out, `path="doc.pdf"`) || !strings.Contains(out, "Hello Rune PDF") {
+		t.Fatalf("pdf text not extracted:\n%s", out)
+	}
+	if labels[0] != "doc.pdf" {
+		t.Errorf("label=%q", labels[0])
+	}
+}
+
+// 两个抽取器都缺位时内联 not installed 标记（PATH 指向空目录）。
+func TestPDFExtractorMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	m, ws := newFileModel(t)
+	if err := os.WriteFile(filepath.Join(ws, "doc.pdf"), pdfBytes(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, parts, _ := m.expandMentions("read @doc.pdf")
+	if len(parts) != 0 || !strings.Contains(out, "[error: pdftotext not installed]") {
+		t.Fatalf("want not-installed marker:\n%s", out)
+	}
+}
+
+// 超 10MB 的图片不产 Part，内联超限标记。
+func TestImageOverCap(t *testing.T) {
+	m, ws := newFileModel(t)
+	big := append(pngBytes(t), make([]byte, attachImageCap-len(pngBytes(t))+1)...)
+	if err := os.WriteFile(filepath.Join(ws, "big.png"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, parts, labels := m.expandMentions("see @big.png")
+	if len(parts) != 0 {
+		t.Fatal("oversize image should not produce parts")
+	}
+	if !strings.Contains(out, "[error: image exceeds 10MB limit]") {
+		t.Fatalf("want size marker:\n%s", out)
+	}
+	if labels[0] != "big.png (image too large)" {
+		t.Errorf("label=%q", labels[0])
+	}
+}
+
+// 回放时图片 Part 只渲染占位标记，base64 绝不进对话区。
+func TestReplayPartsMarker(t *testing.T) {
+	m, _ := newFileModel(t)
+	m.replayHistory([]agent.Message{{
+		Role:    agent.RoleUser,
+		Content: "look",
+		Parts:   []agent.Part{{Kind: agent.PartImage, MediaType: "image/png", Filename: "pic.png", DataB64: "QUJD"}},
+	}})
+	if strings.Contains(m.transcript, "QUJD") {
+		t.Fatal("base64 leaked into transcript")
+	}
+	if !strings.Contains(m.transcript, "[image: pic.png]") {
+		t.Fatalf("no image marker:\n%s", m.transcript)
 	}
 }
 

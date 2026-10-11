@@ -514,8 +514,9 @@ func (m *Model) sendUserText(display, content string) tea.Cmd {
 	// 对话区展示用户实际输入；hook 改写只作用于发给模型的内容。
 	m.appendBlock(m.rowUser(display))
 
-	// @path 引用展开为附件内容块随消息发出；附件在对话区折成一行清单。
-	content, attached := m.expandMentions(content)
+	// @path 引用展开为附件内容块随消息发出；图片提及转 Part，附件在对话区
+	// 折成一行清单。
+	content, parts, attached := m.expandMentions(content)
 	if len(attached) > 0 {
 		m.appendLine(m.rowNote("⚲", "attached "+strings.Join(attached, " · ")))
 	}
@@ -530,7 +531,7 @@ func (m *Model) sendUserText(display, content string) tea.Cmd {
 	if replace != "" {
 		content = replace
 	}
-	m.history = append(m.history, agent.Message{Role: agent.RoleUser, Content: content})
+	m.history = append(m.history, agent.Message{Role: agent.RoleUser, Content: content, Parts: parts})
 	if err := m.record(ctx, &m.history[len(m.history)-1]); err != nil {
 		cancel()
 		m.appendLine(m.rowNote("✘", "session append failed: "+err.Error()))
