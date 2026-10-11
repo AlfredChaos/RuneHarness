@@ -1,11 +1,17 @@
-# runebot 服务端 k3s 清单（ns nanobot）。
-# 参照远程在跑的 deployment/service/ingress 整理，可直接 apply。
+# runebot 服务端 k3s 清单（ns nanobot）。可直接 apply。
 #
-# 镜像：多阶段构建（见根目录 Dockerfile），产物为静态二进制 + alpine 运行时，
-# 本机构建后导入节点 containerd（imagePullPolicy: Never）：
-#   docker build -t runebot:mig1 .
-#   docker save runebot:mig1 | ssh bangkok "sudo k3s ctr images import -"
+# 镜像：多阶段构建（见根目录 Dockerfile），产物为静态二进制 + alpine 运行时。
+# bangkok 已装 docker（v28）但无 go，构建在 bangkok 本机做：
+#   git archive HEAD | ssh bangkok "mkdir -p ~/runebot-src && tar -x -C ~/runebot-src"
+#   # 或 git clone 后取源码
+#   ssh bangkok "cd ~/runebot-src && docker build -t runebot:mig1 ."
+#   ssh bangkok "docker save runebot:mig1 | sudo k3s ctr images import -"
+# ctr 默认导入 k8s.io namespace，containerd 可见后 apply（imagePullPolicy: Never）。
 # tag 约定沿用现有 runebot:e2e 的 <名称>:<阶段> 风格，mig1 = 迁移第一版。
+#
+# 权限注意：镜像 USER rune（uid 1000），而 hostPath /home/ubuntu/runebot-data
+# 现有文件属 root——apply 前 chown -R 1000:1000 /home/ubuntu/runebot-data，
+# 否则进程写 sessions.db/memory.db 报权限错。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -80,9 +86,10 @@ spec:
     port: 80
     targetPort: 18765
 ---
-# bear-ws 由三个后端共享：/ 与 /svc 两段（nanobot-ws、bear-sidecar）是既有
-# 路由，原样保留——整体 apply 本清单不会挤掉它们；runebot 只占 /v1 前缀。
-# TLS 证书沿用 cloudflare-origin-tls。
+# bear.alfred-develop.online 整域接管：nanobot-ws、bear-sidecar 两个旧后端已
+# 永久删除（整体切换，非共存），/ 与 /svc 不再指向它们。runebot 网关自身
+# serve /v1/*、/svc/*（gateway.go routes()）与 /ws（bear 轨），单条 "/" Prefix
+# 全部收进来。TLS 证书沿用 cloudflare-origin-tls。
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -95,20 +102,6 @@ spec:
     http:
       paths:
       - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: nanobot-ws
-            port:
-              number: 8765
-      - path: /svc
-        pathType: Prefix
-        backend:
-          service:
-            name: bear-sidecar
-            port:
-              number: 80
-      - path: /v1
         pathType: Prefix
         backend:
           service:
