@@ -88,6 +88,7 @@ func main() {
 	todos := todo.NewManager()
 
 	env := prompt.Env{Workspace: wd, Platform: runtime.GOOS + "/" + runtime.GOARCH}
+	env.Soul = prompt.LoadSoul(os.Getenv("RUNE_SOUL"))
 	if home, err := os.UserHomeDir(); err == nil {
 		env.Skills = skill.Catalog(skill.Scan(filepath.Join(home, ".agents", "skills")))
 	}

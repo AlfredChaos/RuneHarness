@@ -75,6 +75,7 @@ type Env struct {
 	Tools       []tools.Spec // 已注册工具
 	Skills      string       // skill.Catalog 渲染结果；空串则省略该段
 	MemoryGuide string       // 记忆层说明段（画像固定，进程内不变）；空串则省略
+	Soul        string       // 人设契约（SOUL.md，启动读一次冻结）；空串则省略该段
 	Workspace   string       // 进程启动时的工作目录
 	Platform    string       // 如 darwin/arm64
 }
@@ -84,6 +85,11 @@ type Env struct {
 func Build(e Env) string {
 	var b strings.Builder
 	b.WriteString(Identity)
+
+	if e.Soul != "" {
+		b.WriteString("\n\n## 人设\n")
+		b.WriteString(e.Soul)
+	}
 
 	b.WriteString("\n\n## 工具\n本会话可用的工具（参数定义见工具 schema）：")
 	for _, s := range e.Tools {
