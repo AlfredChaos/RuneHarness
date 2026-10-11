@@ -1,0 +1,9 @@
+.git
+personal/
+docs/
+runebot
+runebot.log
+runebot.pid
+.env
+*.db
+tasks/
