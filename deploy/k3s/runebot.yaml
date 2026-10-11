@@ -1,0 +1,121 @@
+# runebot 服务端 k3s 清单（ns nanobot）。
+# 参照远程在跑的 deployment/service/ingress 整理，可直接 apply。
+#
+# 镜像：多阶段构建（见根目录 Dockerfile），产物为静态二进制 + alpine 运行时，
+# 本机构建后导入节点 containerd（imagePullPolicy: Never）：
+#   docker build -t runebot:mig1 .
+#   docker save runebot:mig1 | ssh bangkok "sudo k3s ctr images import -"
+# tag 约定沿用现有 runebot:e2e 的 <名称>:<阶段> 风格，mig1 = 迁移第一版。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runebot
+  namespace: nanobot
+  labels:
+    app: runebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runebot
+  template:
+    metadata:
+      labels:
+        app: runebot
+    spec:
+      containers:
+      - name: runebot
+        image: runebot:mig1
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 18765
+          protocol: TCP
+        env:
+        # 旧 pod 实际监听 0.0.0.0:18765，但该值既不在 Secret 也不在旧镜像
+        # env 里，来源不可考；这里显式钉死，进程内默认 127.0.0.1:8765 不可达。
+        - name: RUNE_LISTEN
+          value: 0.0.0.0:18765
+        # 数据目录：hostPath /home/ubuntu/runebot-data → /data。
+        # HOME 指到 /data 使 skills 扫描、~/.rune 派生路径与旧部署一致；
+        # 两个 DB 显式落 /data 根（与旧部署相同）。
+        - name: HOME
+          value: /data
+        - name: RUNE_DB
+          value: /data/sessions.db
+        - name: RUNE_MEMORY_DB
+          value: /data/memory.db
+        # 人设外挂：SOUL.md 放在 hostPath 数据目录里，由部署方维护；
+        # 文件不存在时进程行为与不带人设一致（internal/prompt.LoadSoul）。
+        - name: RUNE_SOUL
+          value: /data/SOUL.md
+        envFrom:
+        - secretRef:
+            name: runebot-env
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        hostPath:
+          path: /home/ubuntu/runebot-data
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runebot
+  namespace: nanobot
+spec:
+  selector:
+    app: runebot
+  ports:
+  - name: http
+    port: 80
+    targetPort: 18765
+---
+# bear-ws 由三个后端共享：/ 与 /svc 两段（nanobot-ws、bear-sidecar）是既有
+# 路由，原样保留——整体 apply 本清单不会挤掉它们；runebot 只占 /v1 前缀。
+# TLS 证书沿用 cloudflare-origin-tls。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bear-ws
+  namespace: nanobot
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: bear.alfred-develop.online
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nanobot-ws
+            port:
+              number: 8765
+      - path: /svc
+        pathType: Prefix
+        backend:
+          service:
+            name: bear-sidecar
+            port:
+              number: 80
+      - path: /v1
+        pathType: Prefix
+        backend:
+          service:
+            name: runebot
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - bear.alfred-develop.online
+    secretName: cloudflare-origin-tls
