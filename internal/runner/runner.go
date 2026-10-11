@@ -69,6 +69,18 @@ var ErrLag = errors.New("seq falls behind retained window")
 // ErrQueueFull 表示该 chat 的排队队列已满，本次 Submit 被拒。
 var ErrQueueFull = errors.New("turn queue is full")
 
+// BusyError 表示 Submit 打在忙碌槽位上被拒；Unwrap 到 ErrQueueFull，
+// errors.Is(err, ErrQueueFull) 兼容旧调用方。携带在跑轮次的归属与账本
+// 当前 seq 上界，供调用方把信封填进请求级的错误帧（不入账本、不新分配 seq）。
+type BusyError struct {
+	TurnID  string // 当前在跑轮次的 id；起跑缝隙间可能为空
+	TurnSeq int    // 当前在跑轮次序号
+	Seq     int64  // 账本已分配的 seq 上界
+}
+
+func (e *BusyError) Error() string { return ErrQueueFull.Error() }
+func (e *BusyError) Unwrap() error { return ErrQueueFull }
+
 // ErrNotFound 表示 chat 无活跃槽位（Interrupt/Answer 打在不存在的槽上）。
 var ErrNotFound = errors.New("chat slot not found")
 

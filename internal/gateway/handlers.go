@@ -419,15 +419,18 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	err = s.Mgr.Submit(r.Context(), key, runner.TurnInput{
 		Prompt: body.Content, Display: body.Display, Attachments: atts,
 	})
-	if errors.Is(err, runner.ErrQueueFull) {
-		writeNDJSON(w, runner.Event{Event: runner.EvError,
-			Data: mustErrJSON("chat is busy")})
+	var busy *runner.BusyError
+	switch {
+	case errors.As(err, &busy):
+		// 请求级错误帧：不入账本，seq 取账本当前上界。
+		writeNDJSON(w, runner.Event{Event: runner.EvError, ChatID: key.ChatID,
+			TurnID: busy.TurnID, TurnSeq: busy.TurnSeq, Seq: busy.Seq,
+			At: time.Now().UnixMilli(), Data: mustErrJSON("chat is busy")})
 		flusher.Flush()
 		return
-	}
-	if err != nil {
-		writeNDJSON(w, runner.Event{Event: runner.EvError,
-			Data: mustErrJSON(err.Error())})
+	case err != nil:
+		writeNDJSON(w, runner.Event{Event: runner.EvError, ChatID: key.ChatID,
+			At: time.Now().UnixMilli(), Data: mustErrJSON(err.Error())})
 		flusher.Flush()
 		return
 	}

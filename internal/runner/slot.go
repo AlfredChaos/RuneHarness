@@ -285,11 +285,16 @@ func (m *Manager) Submit(ctx context.Context, key ChatKey, in TurnInput) error {
 	s.mu.Unlock()
 	// 忙：queue cap=QueueDepth，满即拒（QueueDepth=0 时 unbuffered，
 	// runChain 在轮间 default 分支非阻塞取——忙期间一律被拒）。
+	// BusyError 携带在跑轮次的归属与账本 seq 上界，给调用方填请求级错误帧。
 	select {
 	case s.queue <- in:
 		return nil
 	default:
-		return ErrQueueFull
+		s.mu.Lock()
+		err := &BusyError{TurnID: s.curTurn, TurnSeq: s.turnSeq,
+			Seq: s.ledger.Latest()}
+		s.mu.Unlock()
+		return err
 	}
 }
 
