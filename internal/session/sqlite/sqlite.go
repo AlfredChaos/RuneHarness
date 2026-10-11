@@ -662,9 +662,16 @@ func (s *Store) UpsertBinding(ctx context.Context, tenant, channel, chatID, sess
 
 // ListByTenant 返回该租户在本渠道的 chat_bindings 清单（/v1/chats 列表用）。
 // 只读查询，不做租约校验——绑定归属由 Gateway 层 token 保证。
+// count 是绑定 session 内非控制消息条数（口径与 /history 跳过 IsControl
+// 行一致）；控制 kind 词表与 agent.Kind.IsControl 保持同步，空会话为 0。
 func (s *Store) ListByTenant(ctx context.Context, tenant, channel string) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT chat_id, session_id, subject_id, created_at, last_active
-		FROM chat_bindings WHERE tenant_id = ? AND channel = ? ORDER BY last_active DESC`,
+	rows, err := s.db.QueryContext(ctx, `SELECT b.chat_id, b.session_id, b.subject_id, b.created_at, b.last_active,
+		COALESCE(SUM(CASE WHEN m.kind NOT IN ('compact_boundary','view_clear','fork','turn_end') THEN 1 ELSE 0 END), 0) AS count
+		FROM chat_bindings b
+		LEFT JOIN messages m ON m.session_id = b.session_id
+		WHERE b.tenant_id = ? AND b.channel = ?
+		GROUP BY b.tenant_id, b.channel, b.chat_id
+		ORDER BY b.last_active DESC`,
 		tenant, channel)
 	if err != nil {
 		return nil, err
@@ -673,13 +680,14 @@ func (s *Store) ListByTenant(ctx context.Context, tenant, channel string) ([]map
 	var out []map[string]any
 	for rows.Next() {
 		var chatID, sessionID, subjectID string
-		var created, active int64
-		if err := rows.Scan(&chatID, &sessionID, &subjectID, &created, &active); err != nil {
+		var created, active, count int64
+		if err := rows.Scan(&chatID, &sessionID, &subjectID, &created, &active, &count); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]any{
 			"chat_id": chatID, "session_id": sessionID,
 			"subject_id": subjectID, "created_at": created, "last_active": active,
+			"count": count,
 		})
 	}
 	return out, rows.Err()

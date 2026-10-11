@@ -281,6 +281,57 @@ func TestResumeAcrossReopen(t *testing.T) {
 
 // ListByTenant 的 count = 绑定会话内非控制消息条数（与 /history 口径一致），
 // 控制行不计、无消息的绑定为 0。
+func TestListByTenantCount(t *testing.T) {
+	s := open(t)
+	ssn := mustCreate(t, s, "t1", session.Meta{Kind: session.KindMain})
+	ctx := ctxFor("t1", ssn.ID)
+
+	for _, m := range []agent.Message{
+		{Role: agent.RoleUser, Content: "hi"},
+		{Role: agent.RoleAssistant, Content: "hello"},
+		{Role: agent.RoleUser, Kind: agent.KindTurnEnd, Content: "{}"}, // 控制行不计
+		{Role: agent.RoleUser, Kind: agent.KindInject, Content: "nag"}, // inject 非控制，计
+		{Role: agent.RoleUser, Kind: agent.KindSummary, Content: "摘要"}, // 摘要进形态，计
+	} {
+		if _, err := s.Append(ctx, m); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	empty := mustCreate(t, s, "t1", session.Meta{Kind: session.KindMain})
+
+	bctx := ctxFor("t1", "")
+	if _, err := s.UpsertBinding(bctx, "t1", "bear", "c1", ssn.ID, "u1"); err != nil {
+		t.Fatalf("UpsertBinding c1: %v", err)
+	}
+	if _, err := s.UpsertBinding(bctx, "t1", "bear", "c2", empty.ID, "u1"); err != nil {
+		t.Fatalf("UpsertBinding c2: %v", err)
+	}
+
+	rows, err := s.ListByTenant(bctx, "t1", "bear")
+	if err != nil {
+		t.Fatalf("ListByTenant: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	counts := map[string]int64{}
+	for _, r := range rows {
+		c, ok := r["count"].(int64)
+		if !ok {
+			t.Fatalf("count missing or wrong type: %+v", r)
+		}
+		counts[r["chat_id"].(string)] = c
+	}
+	if counts["c1"] != 4 {
+		t.Fatalf("c1 count = %d, want 4", counts["c1"])
+	}
+	if counts["c2"] != 0 {
+		t.Fatalf("c2 count = %d, want 0", counts["c2"])
+	}
+}
+
+// 附件分片 roundtrip：两个图片分片字节级原样往返；无分片消息不受影响。
+// 纯附件消息（Content 空）的 title 回退为首个分片的占位文本。
 func TestPartsRoundtrip(t *testing.T) {
 	s := open(t)
 	ssn := mustCreate(t, s, "t1", session.Meta{Kind: session.KindMain})
