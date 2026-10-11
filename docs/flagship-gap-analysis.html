@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RuneHarness 对标旗舰 Agent 能力差距分析</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap { max-width: 860px; margin: 0 auto; padding: 0 28px 140px }
+
+    header { padding: 80px 0 44px; border-bottom: 1px solid var(--line) }
+
+    .eyebrow {
+      font-family: var(--mono); font-size: 11.5px; letter-spacing: .2em;
+      text-transform: uppercase; color: var(--teal); margin-bottom: 16px;
+      display: flex; align-items: center; gap: 12px
+    }
+    .eyebrow::before { content: ""; width: 28px; height: 1.5px; background: var(--teal) }
+
+    h1 { font-size: 36px; font-weight: 700; letter-spacing: -.015em; line-height: 1.3; margin-bottom: 16px }
+    .subtitle { color: var(--ink-2); font-size: 17px; max-width: 660px }
+
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px }
+    .meta span {
+      font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+      background: var(--paper); border: 1px solid var(--line);
+      padding: 4px 11px; border-radius: 99px
+    }
+
+    section { padding: 44px 0 8px }
+    .chap {
+      font-family: var(--mono); font-size: 11.5px; letter-spacing: .16em;
+      text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px
+    }
+    h2 { font-size: 26px; font-weight: 700; letter-spacing: -.01em; line-height: 1.35; margin-bottom: 14px }
+    h3 { font-size: 18px; font-weight: 650; margin: 34px 0 10px; color: var(--ink) }
+    h4 { font-size: 15.5px; font-weight: 650; margin: 22px 0 8px; color: var(--ink) }
+
+    p { margin: 12px 0; color: var(--ink-2) }
+    p b, li b { color: var(--ink); font-weight: 650 }
+    .lede { font-size: 17px; color: var(--ink); line-height: 1.8 }
+
+    ul, ol { margin: 12px 0 12px 22px; color: var(--ink-2) }
+    li { margin-bottom: 7px }
+
+    code {
+      font-family: var(--mono); font-size: 13px; background: var(--code-bg);
+      padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line);
+      color: #7A4F1D; word-break: break-word
+    }
+
+    .decision {
+      background: var(--paper); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 22px 26px; margin: 18px 0
+    }
+    .decision h3 {
+      font-size: 17px; font-weight: 650; margin: 0 0 10px; display: flex;
+      align-items: baseline; gap: 10px; flex-wrap: wrap
+    }
+    .decision .d-id {
+      font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+      letter-spacing: .08em
+    }
+
+    .kv {
+      display: grid; grid-template-columns: 92px 1fr;
+      gap: 4px 14px; font-size: 14.5px
+    }
+    .kv dt {
+      font-family: var(--mono); font-size: 11px; font-weight: 700;
+      letter-spacing: .08em; text-transform: uppercase;
+      color: var(--ink-3); padding-top: 4px
+    }
+    .kv dd { color: var(--ink-2) }
+    .kv dd.chosen { color: var(--ink); font-weight: 550 }
+    .kv dd.cost { color: var(--amber) }
+    .kv dd.revisit { color: var(--rose) }
+
+    .note {
+      border-left: 3px solid var(--blue); background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px; margin: 18px 0; font-size: 15px
+    }
+    .note.warn { border-color: var(--amber); background: var(--amber-bg) }
+    .note.danger { border-color: var(--rose); background: var(--rose-bg) }
+    .note.ok { border-color: var(--green); background: var(--green-bg) }
+    .note.teal { border-color: var(--teal); background: var(--teal-bg) }
+    .note .nt {
+      font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+      letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px
+    }
+    .note.warn .nt { color: var(--amber) }
+    .note.danger .nt { color: var(--rose) }
+    .note.ok .nt { color: var(--green) }
+    .note.teal .nt { color: var(--teal) }
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt { color: var(--blue) }
+    .note p { margin-bottom: 8px }
+    .note p:last-child { margin-bottom: 0 }
+
+    .tbl-wrap {
+      overflow-x: auto; margin: 16px 0 24px; border: 1px solid var(--line);
+      border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow)
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 14px }
+    th {
+      text-align: left; font-family: var(--mono); font-size: 11px; font-weight: 600;
+      letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+      background: #F6F5F0; padding: 11px 16px; border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+    td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: top }
+    tr:last-child td { border-bottom: none }
+    td code { font-size: 12px }
+    td .dim { color: var(--ink-3); font-size: 13px }
+    td ul { margin: 0 0 0 16px; font-size: 13.5px }
+    td li { margin-bottom: 4px }
+
+    .badge {
+      display: inline-block; font-family: var(--mono); font-size: 10.5px;
+      font-weight: 700; letter-spacing: .08em; padding: 2px 9px;
+      border-radius: 99px; white-space: nowrap; vertical-align: 1px
+    }
+    .badge.g0 { background: var(--green-bg); color: var(--green); border: 1px solid #CDE7D7 }
+    .badge.g1 { background: var(--teal-bg); color: var(--teal); border: 1px solid #CFE8E4 }
+    .badge.g2 { background: var(--amber-bg); color: var(--amber); border: 1px solid #EFDDBE }
+    .badge.g3 { background: var(--rose-bg); color: var(--rose); border: 1px solid #F0CBD5 }
+    .badge.p0 { background: var(--rose-bg); color: var(--rose); border: 1px solid #F0CBD5 }
+    .badge.p1 { background: var(--amber-bg); color: var(--amber); border: 1px solid #EFDDBE }
+    .badge.p2 { background: var(--blue-bg); color: var(--blue); border: 1px solid #C9D6F2 }
+    .badge.who { background: var(--violet-bg); color: var(--violet); border: 1px solid #DCCCF4 }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 4px; font-size: 13.5px; color: var(--ink-2) }
+    .legend span { display: inline-flex; align-items: center; gap: 6px }
+
+    .src { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3) }
+
+    footer {
+      border-top: 1px solid var(--line); margin-top: 80px;
+      padding-top: 28px; color: var(--ink-3); font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">差距分析 · Competitive Gap Analysis</div>
+      <h1>RuneHarness 对标旗舰 Agent 能力差距分析</h1>
+      <p class="subtitle">沿七个维度把 RuneHarness 与 Claude Code、Codex CLI、Cursor、OpenHands 放在同一标尺下：
+        哪些能力已达标甚至超前，差在哪一级，先补哪几项。RuneHarness 侧事实全部经源码审计并给出
+        <code>file:line</code>；竞品侧事实取自各官方文档或开源仓库，未公开处标注「未公开」。</p>
+      <div class="meta">
+        <span>报告日期 2026-10-11</span>
+        <span>竞品信息日期 2026-10-11</span>
+        <span>数据基线：源码审计 file:line + 官方文档</span>
+      </div>
+    </header>
+
+    <!-- ============ 0. 结论先行 ============ -->
+    <section id="conclusions">
+      <div class="chap">结论先行 · Executive Summary</div>
+      <h2>七条结论，读这一节就够</h2>
+      <p class="lede">评级口径：<span class="badge g0">无</span> 基本持平或领先 ·
+        <span class="badge g1">小</span> 有差距不致命 · <span class="badge g2">中</span> 局部场景受限 ·
+        <span class="badge g3">大</span> 存在代差。总评：七个维度中四个为大差距，但落后的面集中在
+        「生态、并行、权限、分发」四条线上；压缩与持久化的底层设计反而领先于多数对标对象。</p>
+
+      <div class="decision">
+        <h3><span class="d-id">C1</span>无 MCP、无插件加载点：工具生态是最大代差 <span class="badge g3">大</span></h3>
+        <dl class="kv">
+          <dt>事实</dt>
+          <dd>模型可调 12 个工具，全部在 <code>main.go:187-243</code> 与 <code>cmd/runebot/main.go:154-186</code>
+            硬编码装配；全仓无 MCP/plugin/extern tool 命中（<code>go.mod:5-18</code> 无 SDK）。四家旗舰全部支持 MCP。</dd>
+          <dt>为什么</dt>
+          <dd>工具生态决定 agent 能触达什么。数据库、浏览器、SaaS 连接器在 RuneHarness 上不可达，只能靠
+            <code>run_command</code> 走 shell 变通——易错且权限判定粗糙。</dd>
+          <dt>不做会怎样</dt>
+          <dd class="cost">用户真实工作流一旦需要外部工具即流失；这是四家旗舰的共同基线，不是加分项。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">C2</span>子代理纯串行：多任务委派吞吐落后一整代 <span class="badge g3">大</span></h3>
+        <dl class="kv">
+          <dt>事实</dt>
+          <dd><code>task</code> 是普通工具，<code>Run</code> 同步阻塞跑完子 loop 才返回；同批多个 task 按序执行
+            （<code>internal/subagent/subagent.go:149-258</code>；工具批为顺序 for 循环
+            <code>internal/agent/agent.go:294-355</code>）。无 agent 间消息、无 fan-out。</dd>
+          <dt>为什么</dt>
+          <dd>Claude Code 有 <code>/batch</code> 5–30 个 worktree 并行与 agent teams；Cursor 一条消息多个 Task 即并行；
+            Codex 有 agent message board。「委派 N 个独立任务」是最常见的旗舰用法。</dd>
+          <dt>不做会怎样</dt>
+          <dd class="cost">N 个任务耗时 ×N；在探索-委托型工作流上与 CC/Cursor/Codex 无可比性（仅与 OpenHands 同档）。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">C3</span>零分发工程：用户拿不到，能力全部归零 <span class="badge g3">大</span></h3>
+        <dl class="kv">
+          <dt>事实</dt>
+          <dd>无 Makefile、无 goreleaser、无 CI workflow、无 Dockerfile、无 install 脚本、无版本号；
+            安装 = 自行 <code>go build</code>。竞品均有安装脚本/包管理/发布二进制，另有桌面、Web、IDE、SDK 等形态。</dd>
+          <dt>为什么</dt>
+          <dd>分发是产品闭环的第一环。依赖面极简（纯 Go、modernc sqlite 无 cgo），补齐成本在七项差距里最低。</dd>
+          <dt>不做会怎样</dt>
+          <dd class="cost">没有用户就没有反馈循环；本文其余所有差距的修复优先级都建立在「有人用」之上。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">C4</span>权限无持久化、无模式：确认疲劳 + headless 卡死 <span class="badge g3">大</span></h3>
+        <dl class="kv">
+          <dt>事实</dt>
+          <dd>三道闸实现本身不差（硬拒绝/前缀白名单/元字符升 Ask，<code>internal/permission/permission.go:1-7,58-99</code>），
+            但批准一次不写回规则，同一命令每次弹；无 plan/acceptEdits/bypass 档（<code>permission.go:14-24,36</code>）；
+            headless 下 AskTimeout 默认 120s 超时按 deny（<code>internal/runner/slot.go:220-267</code>）。</dd>
+          <dt>为什么</dt>
+          <dd>CC 有 6 种权限模式 + <code>Tool(specifier)</code> 规则；Codex 有 4 档审批策略 + OS 级沙箱；
+            Cursor 有 3 种 Run Modes + classifier。确认疲劳是 agent 产品头号体验杀手。</dd>
+          <dt>不做会怎样</dt>
+          <dd class="cost">交互用户被重复弹窗淹没，最终要么放弃要么设法绕开权限；headless 长任务在第 120s 静默死亡。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">C5</span>LLM 调用失败一律致命：恢复逻辑还是 loop 里的 TODO <span class="badge g3">大</span></h3>
+        <dl class="kv">
+          <dt>事实</dt>
+          <dd>重试/退避/429 处理是 <code>internal/agent/agent.go:223-246</code> 内的明列 TODO；
+            <code>finish_reason=length</code> 截断恢复同为 TODO（<code>agent.go:273-279</code>）。
+            TUI 侧 autoResumed 只覆盖 maxSteps 撞墙（<code>internal/tui/model.go:554-564</code>）。</dd>
+          <dt>为什么</dt>
+          <dd>429、断流、端点抖动在真实使用中必然出现。一次抖动杀死数小时的委派任务，是 headless 场景不可接受的失效率。</dd>
+          <dt>不做会怎样</dt>
+          <dd class="cost">runebot 的「无人值守长任务」定位不成立；此 TODO 同时是 P2 多副本扩展的前置。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">C6</span>会话无写锁：session_leases 建了表未接逻辑 <span class="badge g2">中</span></h3>
+        <dl class="kv">
+          <dt>事实</dt>
+          <dd>schema 已有 <code>session_leases</code> 表（<code>internal/session/sqlite/sqlite.go:121-183</code>），
+            但两个 TUI 进程可对同一 session id 并发 Append，互不感知；唯一例外是 cron 的 workspace flock。</dd>
+          <dt>为什么</dt>
+          <dd>append-only 账本的前提是写者串行。并发写会让全局时序（自增 id）在逻辑上交错，resume 回放可能拼出非预期视图。</dd>
+          <dt>不做会怎样</dt>
+          <dd class="cost">多实例/多进程共库场景（runebot + TUI 同时开）会静默损坏账本；也是水平扩展的硬性前置。</dd>
+        </dl>
+      </div>
+
+      <div class="decision">
+        <h3><span class="d-id">C7</span>压缩与持久化是长板，不应跟着竞品重做 <span class="badge g0">无</span></h3>
+        <dl class="kv">
+          <dt>事实</dt>
+          <dd>「offload 卸载 + 滚动摘要」双层、过期结果识别、压缩熔断、fork 水印零拷贝继承、append-only 可回放账本、
+            崩溃读侧自愈——这套设计比「到顶一刀切摘要」细一档；记忆侧双轨写入 + 全量流水 + tombstone 的结构完整度
+            接近 CC 的记忆体系。</dd>
+          <dt>为什么</dt>
+          <dd>差距报告不是全盘否定清单。把追赶资源压在 C1–C4 上回报更高；压缩维度的短板是召回侧（无检索）而非压缩本身。</dd>
+          <dt>不做会怎样</dt>
+          <dd class="cost">若误把长板重做，会消耗本应用于生态与分发的工时，且未必做得更好。</dd>
+        </dl>
+      </div>
+    </section>
+
+    <!-- ============ 1. 全景对比矩阵 ============ -->
+    <section id="matrix">
+      <div class="chap">第 1 章 · 全景对比矩阵</div>
+      <h2>七维度 × 五产品，一格一短语</h2>
+      <div class="legend">
+        <span>差距口径：</span>
+        <span><span class="badge g0">无</span> 持平/领先</span>
+        <span><span class="badge g1">小</span> 有差距不致命</span>
+        <span><span class="badge g2">中</span> 局部场景受限</span>
+        <span><span class="badge g3">大</span> 存在代差</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>维度</th><th>RuneHarness</th><th>Claude Code</th><th>Codex CLI</th><th>Cursor</th><th>OpenHands</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>会话压缩/上下文管理</b></td>
+              <td>三段式切分 + offload/摘要双层 + 熔断 + 被动钳窗 <span class="badge g1">小</span></td>
+              <td>auto-compact + <code>/compact</code>，窗口可调（<code>/autocompact</code>），存活物语义明确</td>
+              <td>自动 + 手动压缩（<code>/compact</code>/<code>/recap</code>），compaction checkpoint；阈值未公开</td>
+              <td><code>/summarize</code> + <code>preCompact</code> 钩子；桌面端机制未公开</td>
+              <td>Condenser（<code>max_size</code>/<code>keep_first</code>，可编程）</td>
+            </tr>
+            <tr>
+              <td><b>子 agent/并行</b></td>
+              <td>task 工具 spawn，两型 + fork 水印 + 嵌套 ≤2，纯串行 <span class="badge g3">大</span></td>
+              <td>subagents + 后台 agent + <code>/batch</code> worktree 并行 + agent teams</td>
+              <td>multi-agent spawn + 消息板 + 角色 + 云任务</td>
+              <td>subagents 前/后台 + 多 Task 并行 + swarm 隔离 + Projects 编排</td>
+              <td>TaskToolSet 同步阻塞子代理；无并行编排</td>
+            </tr>
+            <tr>
+              <td><b>持久记忆</b></td>
+              <td>三表 + 流水审计 + 空间/画像 + 双轨写入 + dream；无检索 <span class="badge g1">小</span></td>
+              <td>CLAUDE.md 层级 + AGENTS.md + auto memory（MEMORY.md 注入 200 行/25KB）+ rules glob</td>
+              <td>AGENTS.md + 两阶段 Memories 流水线（提取 + consolidation sub-agent）</td>
+              <td>Rules 四类（.mdc）+ AGENTS.md；自动记忆未公开</td>
+              <td>AGENTS.md + Skills + opt-in 两层 MEMORY.md</td>
+            </tr>
+            <tr>
+              <td><b>工具生态</b></td>
+              <td>12 个内置工具硬编码装配；无 MCP/插件/运行时加载；有 skill 目录 <span class="badge g3">大</span></td>
+              <td>MCP（stdio/SSE/HTTP、OAuth、tool schema 懒加载）+ hooks + plugins + skills</td>
+              <td>MCP（含 <code>mcp login</code> OAuth）+ hooks + skills + plugins/apps + marketplace</td>
+              <td>MCP 全能力（Tools/Prompts/Resources/Roots/Elicitation/Apps）+ hooks + marketplace</td>
+              <td>MCP（<code>filter_tools_regex</code>、OAuth）+ hooks + skills + plugins，最开放</td>
+            </tr>
+            <tr>
+              <td><b>权限/审批</b></td>
+              <td>三道闸（硬拒绝/白名单/Ask）+ breaker；无持久化、无模式、无沙箱 <span class="badge g3">大</span></td>
+              <td>6 种权限模式 + <code>Tool(specifier)</code> allow/ask/deny + 沙箱 + 企业管控</td>
+              <td>3 沙箱级 × 4 审批策略（含 granular）+ Seatbelt/Landlock OS 沙箱</td>
+              <td>3 Run Modes + 后端 classifier + permissions.json/sandbox.json</td>
+              <td>确认策略 3 档 + LLM 风险分析器 + Docker/远程沙箱</td>
+            </tr>
+            <tr>
+              <td><b>断线续传</b></td>
+              <td>append-only 账本 + resume 三入口 + fork 水印 + 崩溃读侧自愈；LLM 失败仍致命 <span class="badge g2">中</span></td>
+              <td><code>/resume</code> + checkpoint/<code>/rewind</code> + 云会话/teleport</td>
+              <td>rollout JSONL + SQLite + <code>/resume</code>/<code>/fork</code> + 云任务</td>
+              <td><code>/resume</code>/<code>/fork</code>/<code>/rewind</code> + 云端 Agents 面板 + 会话搜索</td>
+              <td><code>~/.openhands/conversations</code> + <code>--resume</code> + Fork + 云持久</td>
+            </tr>
+            <tr>
+              <td><b>多平台分发</b></td>
+              <td>两可执行（TUI + runebot 双轨网关）；零 CI/版本/二进制/安装脚本 <span class="badge g3">大</span></td>
+              <td>CLI（4 种装法）+ 桌面 + Web + IDE + Chrome + GitHub App + SDK</td>
+              <td>CLI（npm/brew/脚本/二进制）+ IDE 扩展 + 桌面 App + Web + SDK</td>
+              <td>桌面 IDE + CLI + 云/Web + 移动端 + SDK + GitHub Actions</td>
+              <td>uv/二进制/Docker + Cloud + Agent Canvas + ACP 接入 IDE + SDK</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="src">评级仅针对 RuneHarness 列；竞品格只记承重事实。逐项论证见第 2–8 章。</p>
+    </section>
+
+    <!-- ============ 2. 会话压缩/上下文管理 ============ -->
+    <section id="dim-compact">
+      <div class="chap">第 2 章 · 维度一</div>
+      <h2>会话压缩 / 上下文管理 <span class="badge g1">小</span></h2>
+
+      <h4>RuneHarness 现状</h4>
+      <ul>
+        <li><b>三段式视图切分</b>：发送形态 = system + 首部（前 3 条真实用户消息、8K 预算、第 1 条钉死）+ 最新摘要 +
+          尾部（最近 40 个用户轮、40K 预算），压缩只动中段（<code>internal/compact/segment.go:6-12</code>；
+          <code>internal/session/view.go:43-47</code>）。</li>
+        <li><b>三条阈值线</b>：提醒线 W−56K、强制压缩线 W−33K、阻断线 W−20K，<code>MinWindow=64K</code>
+          （<code>internal/compact/compactor.go:21-52</code>）。</li>
+        <li><b>卸载层先行</b>：压缩时先把中段 &gt;1K 的工具结果落 blob 换索引；被较新同键调用取代的过期结果无论大小都卸载；
+          tool_calls 参数里 &gt;2K 的字符串字段换索引（<code>internal/compact/offload.go:17-21,31-99,171-192</code>）。</li>
+        <li><b>写侧回填规范化</b>：单条 &gt;50K 字符或整批 &gt;200K 字符落 blob 换 <code>blob://</code> 指针；
+          &gt;400K 硬截断（<code>internal/compact/backfill.go:17-22,39-94</code>）。</li>
+        <li><b>熔断与自愈</b>：摘要失败连续 3 次断开自动通道（<code>internal/compact/maintain.go:15-20,115-144</code>）；
+          端点报错里的真实窗口经 <code>NoteLimit</code> 向下钳进配置并持久化
+          （<code>internal/agent/agent.go:202-208</code>；<code>internal/compact/maintain.go:146-173</code>）。</li>
+        <li><b>子代理压缩</b>：共享压缩器；normal 型 spawn 前对继承快照先卸载不摘要（Prime，
+          <code>internal/compact/maintain.go:66-81</code>；<code>internal/subagent/subagent.go:231-235</code>）。</li>
+      </ul>
+
+      <h4>对标速览</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>承重事实</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><ul>
+              <li>默认窗口 200k；auto-compact 近阈值自动触发，<code>/autocompact</code> 可调触发窗口。</li>
+              <li>压缩后「存活物」语义明确：CLAUDE.md/path 规则重新注入，skill 只留实际调用过的，文件读取恢复一行占位。</li>
+              <li><code>/context</code> 可视化占用；<code>/rewind</code> 可部分摘要回滚。</li>
+            </ul></td></tr>
+            <tr><td>Codex CLI</td><td><ul>
+              <li><code>/compact</code> 手动压缩、<code>/recap</code> 立即总结；core 有 AutoCompact/CompactionTrigger 机制，压缩生成 checkpoint 替换历史。</li>
+              <li>PreCompact/PostCompact 钩子可拦截；触发阈值的具体 token 数未公开。</li>
+            </ul></td></tr>
+            <tr><td>Cursor</td><td><ul>
+              <li>CLI <code>/summarize</code>（别名 <code>/compress</code>）；hooks 体系含 <code>preCompact</code>。</li>
+              <li>内置 Explore/Browser 子代理把高噪声输出隔离在子上下文；桌面端自动压缩阈值未公开。</li>
+            </ul></td></tr>
+            <tr><td>OpenHands</td><td><ul>
+              <li>Condenser 可编程：默认 LLMSummarizingCondenser，<code>max_size</code>/<code>keep_first</code> 参数化，可继承自定义策略。</li>
+              <li>Agent Server 暴露强制压缩端点；CLI/Cloud 默认参数未公开。</li>
+            </ul></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>差距评级：<span class="badge g1">小</span></h4>
+      <p>压缩机制本身不落后：offload + 摘要双层、过期结果主动识别、压缩熔断、端点真实窗口反哺——这套组合的精细度超过
+        「单次摘要替换历史」的主流做法。真实差距在两点：token 估算是字符粗估（非锚点段，非 ASCII 口径 0.7 tok/字，
+        <code>internal/compact/estimate.go:19-56</code>），阈值线实为「估算线」；以及卸载后只有 <code>blob://</code>
+        指针，模型需主动 <code>read_file</code> 取回，无自动召回。</p>
+
+      <div class="note teal">
+        <div class="nt">建议动作</div>
+        <p><b>应</b>借鉴 CC 的「压缩后存活物」清单：把项目规则（AGENTS.md/CLAUDE.md 类）、已声明 skill 摘要列入压缩后重注入集合；
+          <b>应</b>逐步提高真实 usage 锚点覆盖率，把估算段收窄。</p>
+        <p><b>为什么</b>：压缩后规则丢失会让 agent 在长会话后半段「忘记项目约定」；估算偏激进会导致早压（丢信息）或晚压（撞限）。</p>
+        <p><b>不做会怎样</b>：长任务后半段行为漂移；极端场景 <code>ErrContextFull</code> 拒发整轮的问题仍在。</p>
+      </div>
+    </section>
+
+    <!-- ============ 3. 子 agent/并行 ============ -->
+    <section id="dim-subagent">
+      <div class="chap">第 3 章 · 维度二</div>
+      <h2>子 agent / 并行 <span class="badge g3">大</span></h2>
+
+      <h4>RuneHarness 现状</h4>
+      <ul>
+        <li><code>task</code> 工具 spawn 子代理：独立 <code>agent.Agent</code> + 独立 Registry + maxSteps=40 + 兜底 10min 超时
+          （<code>internal/subagent/subagent.go:44-51,148-258</code>）。</li>
+        <li>两型：<code>general_purpose</code>（全新上下文）与 <code>normal</code>（继承委派时刻的历史快照，
+          <code>internal/subagent/subagent.go:28-35,120-146,269-280</code>）。</li>
+        <li><b>fork 水印零拷贝</b>：子会话只写 <code>fork</code> 控制行（父会话 + 水印行 id），读侧拼父视图 + 子行
+          （<code>internal/subagent/subagent.go:209-229</code>；<code>internal/session/view.go:28-32</code>）。</li>
+        <li><b>纯串行</b>：<code>task</code> 是普通工具，<code>Run</code> 同步阻塞；同批多个 task 按序执行，无 fan-out
+          （<code>internal/subagent/subagent.go:149-258</code>；<code>internal/agent/agent.go:294-355</code>）。</li>
+        <li>嵌套 depth 上限 2（<code>RUNE_SUBAGENT_NEST</code> 开启时）否则 1（<code>internal/subagent/subagent.go:110-118,282-290</code>）；
+          子代理复用同一权限三道闸（<code>main.go:158-165,234-240</code>）。</li>
+        <li>上下文隔离：只有最后一条 assistant 文本回传（<code>internal/subagent/subagent.go:322-331</code>）；
+          子会话完整落库可审计（<code>internal/subagent/subagent.go:198-207</code>）。</li>
+      </ul>
+
+      <h4>对标速览</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>承重事实</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><ul>
+              <li>内置 Explore/Plan/general-purpose 子代理，独立上下文与工具集；自定义 subagent 五种来源（项目/用户/托管/CLI/插件）。</li>
+              <li><code>/batch</code> 把大改动拆成 5–30 个独立 worktree 并行执行；<code>/background</code>、<code>/fork</code> 后台会话；agent teams 跨会话互发消息。</li>
+            </ul></td></tr>
+            <tr><td>Codex CLI</td><td><ul>
+              <li><code>/agents</code> command center、<code>/subagents</code> 切换；代理间经 agent-message-board 交换消息。</li>
+              <li><code>MultiAgentMode</code> 两档 + agent-roles 角色定义；Codex Web/<code>codex cloud</code> 云任务并行。</li>
+            </ul></td></tr>
+            <tr><td>Cursor</td><td><ul>
+              <li>Task 工具委派；一条消息内多个 Task 调用即并行；前台阻塞/后台（<code>is_background</code>）两模式。</li>
+              <li>swarm 隔离（各自 worktree 或云 VM）；<code>/in-cloud</code> 云子代理；Projects coordinator 规划并委派。</li>
+            </ul></td></tr>
+            <tr><td>OpenHands</td><td><ul>
+              <li>TaskToolSet 委派 sub-agent，<b>同步阻塞</b>，官方明示「designed for sequential blocking tasks」；任务可凭 task_id 续跑。</li>
+              <li>Parallel Tool Execution 只并行单回合内多工具调用；无代理间消息；Agent Canvas 的并行在应用层而非进程内。</li>
+            </ul></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>差距评级：<span class="badge g3">大</span></h4>
+      <p>继承机制（fork 水印）与权限复用是干净的自洽设计，但执行模型停留在「一次一个阻塞式委派」。对 CC/Codex/Cursor
+        而言并行 fan-out、后台 agent、代理间消息已是标配；RuneHarness 只与 OpenHands 同档。差距不在 spawn 能力，在并发与编排。</p>
+
+      <div class="note">
+        <div class="nt">建议动作</div>
+        <p><b>应</b>先实现同批多个 <code>task</code> 调用的并发执行 + 结果按序汇聚（工具批处理从顺序 for 循环改为
+          errgroup 式 fan-out）；worktree 隔离、代理间消息可后置。<b>宜</b>给子代理结果加结构化 schema 选项而非仅回传末条文本。</p>
+        <p><b>为什么</b>：多任务委派是旗舰场景的高频用法；并发化只动工具批调度，不触碰隔离与权限模型。</p>
+        <p><b>不做会怎样</b>：N 个任务耗时 ×N；在「探索-委托」工作流上与三家旗舰无可比性，该维度差距会随竞品继续演进而扩大。</p>
+      </div>
+    </section>
+
+    <!-- ============ 4. 持久记忆 ============ -->
+    <section id="dim-memory">
+      <div class="chap">第 4 章 · 维度三</div>
+      <h2>持久记忆 <span class="badge g1">小</span></h2>
+
+      <h4>RuneHarness 现状</h4>
+      <ul>
+        <li>独立库 <code>~/.rune/memory.db</code>（<code>internal/config/config.go:153-161</code>），三表：
+          <code>memories</code>（当前信念视图）+ <code>memory_log</code>（upsert/supersede/delete/merge-into 全量流水）+
+          <code>memory_meta</code>（游标/锁/熔断）（<code>internal/memory/store.go:1-5</code>）。</li>
+        <li>空间模型三档（workspace/subject/tenant）+ 画像驱动（coding/companion/generic 内置），
+          <code>Profile</code> 决定空间维度、类型辞典、写工具开关、注入配额、dream 节奏
+          （<code>internal/memory/store.go:16-23,107-122</code>；<code>internal/memory/profile.go:26-39,47-50,166-174</code>）。</li>
+        <li>读路径：<code>UserPromptSubmit</code> hook 把索引 + 常驻正文注入本进程该会话第一条 user 消息；
+          记忆变更标脏，下一条 user 消息带新索引（<code>internal/memory/memory.go:73-96,98-104</code>）。</li>
+        <li>写路径双轨：模型 <code>memory</code> 工具五操作（<code>internal/memory/tool.go:14-80,82-177</code>）+
+          dream 后台消化（锁/熔断/冷却/物料四门 + ops 校验 + 事务落库，<code>internal/memory/dream.go:33-101,152-211</code>）。</li>
+        <li>凭据两道闸：提示词 DoNot 清单 + <code>LooksLikeSecret</code> 扫描（<code>internal/memory/secrets.go:20-21</code>；
+          <code>internal/memory/dream.go:304-306</code>）。</li>
+        <li>短板：<b>无检索</b>——读路径只有「索引注入 + 按名取/按实体查」，<code>GET /svc/search</code> 直接 501
+          （<code>internal/gateway/handlers.go:298-300</code>）；注入只进首条 user 消息，颗粒度为轮。</li>
+      </ul>
+
+      <h4>对标速览</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>承重事实</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><ul>
+              <li>CLAUDE.md 四级层级（企业/用户/项目/本地）逐级加载，<code>@path</code> 导入最深 4 跳；原生识别 AGENTS.md。</li>
+              <li>Auto memory 自动写 <code>MEMORY.md</code>，每会话注入前 200 行或 25KB；<code>.claude/rules/</code> 支持 glob 触发。</li>
+            </ul></td></tr>
+            <tr><td>Codex CLI</td><td><ul>
+              <li>AGENTS.md 一等支持（解析注入 + <code>/init</code> 生成）。</li>
+              <li>Memories 两阶段流水线：Phase 1 从历史并行提取结构化记忆（secret 脱敏），Phase 2 由 consolidation sub-agent 合并进
+                <code>~/.codex/memories/</code>（git 基线）。</li>
+            </ul></td></tr>
+            <tr><td>Cursor</td><td><ul>
+              <li>Rules 四类（.mdc frontmatter <code>alwaysApply/description/globs</code>，Always/智能/glob/手动四种应用方式）+ User/Team Rules + AGENTS.md。</li>
+              <li>自动记忆（Memories/跨会话自动学习）在当前官方文档索引中未见——未公开。</li>
+            </ul></td></tr>
+            <tr><td>OpenHands</td><td><ul>
+              <li>Persistent Memory opt-in（默认关）：用户层 + 项目层两层 <code>MEMORY.md</code> 索引注入
+                <code>&lt;MEMORY_CONTEXT&gt;</code>，索引上限约 6000 字符。</li>
+              <li>注入内容标记 <code>&lt;UNTRUSTED_CONTENT&gt;</code> 防注入；未开记忆时以 AGENTS.md 为唯一指引。</li>
+            </ul></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>差距评级：<span class="badge g1">小</span></h4>
+      <p>写入侧结构完整度已接近甚至局部超前：全量变更流水、tombstone 防复活、ops 校验挡幻觉写入、空间/画像二维模型——
+        Codex 的 consolidation 流水线是相近思路。真实缺口在召回侧：没有任何检索机制（全文或向量），记忆只能「整体索引注入 +
+        按名精确取」，且注入锚定在会话首条 user 消息。</p>
+
+      <div class="note">
+        <div class="nt">建议动作</div>
+        <p><b>应</b>先用 SQLite FTS5 落地 <code>/svc/search</code> 与 memory 工具的 search 操作（库内已有表，无新依赖），
+          再议向量索引；<b>宜</b>把「相关度触发的条目注入」作为第二步，而非一步到位改注入模型。</p>
+        <p><b>为什么</b>：记忆只写不查等于成本沉没；FTS5 在现有存储层上即可补齐 80% 召回需求。</p>
+        <p><b>不做会怎样</b>：记忆库增长反而稀释索引注入的信号；companion 画像（默认不暴露写工具）下用户即时纠正只能等 dream 消化。</p>
+      </div>
+    </section>
+
+    <!-- ============ 5. 工具生态 ============ -->
+    <section id="dim-tools">
+      <div class="chap">第 5 章 · 维度四</div>
+      <h2>工具生态 <span class="badge g3">大</span></h2>
+
+      <h4>RuneHarness 现状</h4>
+      <ul>
+        <li>模型可调 12 个工具（<code>get_current_time/list_dir/read_file/run_command/todo_write/task/task_list/task_kill/
+          compact/cron_*/memory</code>），在 <code>main.go:187-243</code> 与 <code>cmd/runebot/main.go:154-186</code>
+          硬编码装配；<code>compact</code> 由 loop 按名特判（<code>internal/agent/agent.go:315-325</code>）。</li>
+        <li><b>无 MCP / 无外部工具机制</b>：全仓 grep <code>mcp|plugin|extension|extern.tool</code> 无命中；
+          <code>go.mod:5-18</code> 无任何 MCP SDK；无运行时加载点。</li>
+        <li>唯一渐进披露是 skill 目录：启动扫描 <code>~/.agents/skills/*/SKILL.md</code>，frontmatter 进 system prompt，
+          正文由模型 <code>read_file</code> 自取（<code>internal/skill/skill.go:1-4,28-54</code>；<code>main.go:76-80</code>）。</li>
+        <li>hooks 是进程内 Go 接口（PreChat/PreToolUse/PostToolUse/UserPromptSubmit/Stop，
+          <code>internal/agent/hooks.go:24-52</code>）——扩展需改源码重编译。</li>
+        <li>无结构化 edit/write 工具：写文件只能经 <code>run_command</code>（cat/sed/heredoc）；
+          无 web search/fetch、无 notebook、无 LSP/IDE 集成。</li>
+      </ul>
+
+      <h4>对标速览</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>承重事实</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><ul>
+              <li>MCP 完整支持（stdio/SSE/HTTP、OAuth）；工具 schema 默认延迟加载（tool search 按需取）。</li>
+              <li>Plugins（marketplace 安装，可含 agents/hooks/MCP/skills）+ Skills + 外部进程 hooks（输出可注入上下文）。</li>
+            </ul></td></tr>
+            <tr><td>Codex CLI</td><td><ul>
+              <li><code>codex mcp</code> 子命令（含 <code>mcp login</code> OAuth）、config.toml <code>mcp_servers</code>。</li>
+              <li><code>/plugins</code>、<code>/apps</code>、marketplace 子命令、可移植 Agent Plugins 清单；skills + hooks。</li>
+            </ul></td></tr>
+            <tr><td>Cursor</td><td><ul>
+              <li>MCP 全能力（Tools/Prompts/Resources/Roots/Elicitation/Apps）+ 项目/全局 mcp.json + OAuth + 企业 Allowlist。</li>
+              <li>hooks.json 命令型 + prompt 型钩子，事件覆盖 pre/postToolUse、beforeMCPExecution、preCompact 等；兼容 CC 第三方 hooks。</li>
+            </ul></td></tr>
+            <tr><td>OpenHands</td><td><ul>
+              <li>MCP 原生支持（FastMCP 配置、<code>filter_tools_regex</code> 过滤、OAuth 令牌缓存）。</li>
+              <li>Plugins 打包 skills+hooks+MCP+agents+commands；模型侧任意 LiteLLM 兼容，ACP 可反向托管别家 CLI。</li>
+            </ul></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>差距评级：<span class="badge g3">大</span></h4>
+      <p>内置工具面小而正交、结果规范化统一在回填层，这些是优点。但「加工具 = 改 main.go + 重编译」意味着外部生态为零：
+        数据库、浏览器、SaaS 连接器、LSP、web search 全部不可达。MCP 是四家旗舰的共同基线，其中三家还叠加了
+        插件市场与外部进程 hooks——这是七项差距里对产品能力上限影响最大的一项。</p>
+
+      <div class="note warn">
+        <div class="nt">建议动作</div>
+        <p><b>应</b>分两步走：第一步把工具装配从硬编码 <code>[]tools.Tool</code> 改为「注册表 + 配置驱动的加载点」
+          （本地工具声明式注册，工具 schema 延迟注入沿用现有 prompt 机制）；第二步实现 MCP client（stdio 优先，
+          工具名加 <code>mcp__server__tool</code> 命名空间过同一权限闸）。</p>
+        <p><b>为什么</b>：加载点是 MCP 与一切未来外部工具的前置；MCP 一次性接通整个宿主生态，单点投入换回生态面。</p>
+        <p><b>不做会怎样</b>：竞品工具数随生态每日增长，RuneHarness 封顶在 12 个；skill 目录再强也只是文本注入，
+          无法调用外部能力。</p>
+      </div>
+    </section>
+
+    <!-- ============ 6. 权限/审批 ============ -->
+    <section id="dim-permission">
+      <div class="chap">第 6 章 · 维度五</div>
+      <h2>权限 / 审批模型 <span class="badge g3">大</span></h2>
+
+      <h4>RuneHarness 现状</h4>
+      <ul>
+        <li>三道闸（<code>internal/permission/permission.go:1-7,58-99</code>）：Gate 1 硬拒绝（10 条命令 pattern +
+          敏感路径）；Gate 2 规则匹配（safe 工具名 + 命令前缀白名单，含 <code>&amp;|;`$&gt;&lt;</code> 元字符一律升 Ask，
+          <code>permission.go:88-99</code>）；Gate 3 用户确认。</li>
+        <li>Ask 通道：PreToolUse hook 得 <code>&lt;-chan bool</code>，同批多 Ask 逐个编号；headless 经
+          <code>routeAsk</code> 转 ask 事件，<code>AskTimeout</code> 默认 120s 超时按 deny
+          （<code>internal/runner/slot.go:220-267</code>；<code>internal/runner/runner.go:265-268</code>）。</li>
+        <li>safe 名单与 Desk 覆盖子代理与后台任务（<code>main.go:170-224,233-240</code>）；
+          退化熔断三层（<code>internal/breaker/breaker.go:1-23,50-59</code>）。</li>
+        <li><b>无持久化授权</b>：批准一次不写回规则，同一命令每次弹；<b>无模式</b>：无 plan/acceptEdits/bypass 档，
+          Verdict 三值固定（<code>permission.go:14-24,36</code>）。</li>
+        <li>名单硬编码两处（<code>main.go:167-186</code> vs <code>cmd/runebot/main.go:138-153</code>）需手工同步；
+          run_command 的 cwd 限定可被 cd/绝对路径逃逸（<code>internal/tools/shell.go:88-96</code>）。</li>
+      </ul>
+
+      <h4>对标速览</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>承重事实</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><ul>
+              <li>6 种权限模式（default/acceptEdits/plan/auto/dontAsk/bypassPermissions），auto 档由后台 classifier 审核动作。</li>
+              <li>规则语法 <code>Tool(specifier)</code>（如 <code>Bash(npm run *)</code>、<code>WebFetch(domain:*)</code>）allow/ask/deny 三级 + 沙箱模式 + 企业管控。</li>
+            </ul></td></tr>
+            <tr><td>Codex CLI</td><td><ul>
+              <li><code>SandboxMode</code> 三级（read-only/workspace-write/danger-full-access）× <code>AskForApproval</code>
+                四策略（untrusted/on-request/granular/never）。</li>
+              <li>OS 级沙箱落地：macOS Seatbelt、Linux Landlock+seccomp、Windows 沙箱、网络代理管控出网。</li>
+            </ul></td></tr>
+            <tr><td>Cursor</td><td><ul>
+              <li>3 Run Modes：Auto-review（allowlist + 沙箱 + 后端 classifier）/ Allowlist / Run Everything。</li>
+              <li><code>permissions.json</code> 自然语言规则 + CLI 令牌语法 <code>Shell(cmd)</code>/<code>Read(glob)</code>；
+                Seatbelt/Landlock 沙箱 + sandbox.json 域名白名单。</li>
+            </ul></td></tr>
+            <tr><td>OpenHands</td><td><ul>
+              <li>确认策略三档：AlwaysConfirm / NeverConfirm / ConfirmRisky（联动 LLM 安全分析器对动作评级 LOW/MEDIUM/HIGH）。</li>
+              <li>沙箱：Docker（推荐，每会话独立容器）/ Remote / Process；未见命令白名单式语法。</li>
+            </ul></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>差距评级：<span class="badge g3">大</span></h4>
+      <p>判定内核不差：三层结构比「整串命令白名单」细，breaker 退化熔断是独有保护。缺的是外围三件套——授权持久化
+        （approve-once 应写回规则）、权限模式档（plan/acceptEdits 类）、OS 级沙箱。三家旗舰已有 classifier/风险分析器做
+        「自动判级」，RuneHarness 仍停留在「每次人工」。headless 下 120s 超时即 deny，等于长任务随时可被无人值守的弹窗杀死。</p>
+
+      <div class="note warn">
+        <div class="nt">建议动作</div>
+        <p><b>应</b>先落地两件低成本高收益项：approve-once 把本次通过的 pattern 写回规则库（先进程内存、后可选落盘），
+          并加 acceptEdits 与 plan 两档模式。<b>可</b>把 OS 沙箱（Seatbelt/Landlock）与自动判级后置到 P2。</p>
+        <p><b>为什么</b>：确认疲劳直接杀死日常使用意愿；模式档是 headless 长任务能跑完的前提，且两项都不动三道闸内核。</p>
+        <p><b>不做会怎样</b>：交互场景用户被重复弹窗淹没；runebot 场景任务在超时边界静默失败——同一个缺口在两个形态上同时放血。</p>
+      </div>
+    </section>
+
+    <!-- ============ 7. 断线续传 ============ -->
+    <section id="dim-resume">
+      <div class="chap">第 7 章 · 维度六</div>
+      <h2>断线续传 / 会话持久化 <span class="badge g2">中</span></h2>
+
+      <h4>RuneHarness 现状</h4>
+      <ul>
+        <li>单文件 SQLite <code>~/.rune/sessions.db</code>：WAL + 单写者 + busy_timeout(5000)，schema 版本 v3
+          （<code>internal/session/sqlite/sqlite.go:1-67</code>）。</li>
+        <li><b>append-only 账本</b>：messages 每行一条（msg/inject/控制行），控制行同表不落视图；
+          辅助表含 blobs/session_state/requests（每次请求水印 + 视图哈希 + 失败 payload）
+          （<code>internal/session/sqlite/sqlite.go:92-103,121-183</code>；<code>internal/session/session.go:76-91</code>）。</li>
+        <li>resume 三入口：<code>--resume &lt;id&gt;</code>、<code>--continue</code>、TUI <code>/resume</code>
+          换绑续写不新建（<code>main.go:52-55,272-318</code>；<code>internal/tui/suggest.go:309-351</code>）。</li>
+        <li>崩溃自愈：读侧 <code>repairDanglingCalls</code> 补悬空 tool_calls 占位（<code>internal/session/view.go:139-193</code>）；
+          <code>runTurn</code> 中断必写 <code>turn_end</code>（<code>internal/runner/slot.go:113-190</code>）。</li>
+        <li>短板：事件账本是<b>内存 ring buffer（2000 条）不落盘</b>（<code>internal/runner/runner.go:75-91,134-160</code>）；
+          <code>session_leases</code> 表已建未接逻辑，会话无写锁（<code>internal/session/sqlite/sqlite.go:121-183</code>）；
+          LLM 调用失败仍整轮报错退出，恢复逻辑是 TODO（<code>internal/agent/agent.go:223-246</code>）。</li>
+      </ul>
+
+      <h4>对标速览</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>承重事实</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><ul>
+              <li><code>/resume</code>（别名 <code>/continue</code>）按 ID/名称恢复 + 会话选择器；<code>/branch</code> 会话内开分支。</li>
+              <li>Checkpointing：<code>/rewind</code> 把代码与对话回滚到检查点；<code>/teleport</code> 云会话拉回本地、<code>/remote-control</code> 远程控制。</li>
+            </ul></td></tr>
+            <tr><td>Codex CLI</td><td><ul>
+              <li><code>codex-thread-store</code>：rollout JSONL 文件 + SQLite state DB；<code>/resume</code>（含 <code>--last</code>）、<code>/fork</code>、<code>/archive</code>。</li>
+              <li>Codex Web 会话云端持久；<code>/app</code> 带入桌面 App；daemon 断线重连。</li>
+            </ul></td></tr>
+            <tr><td>Cursor</td><td><ul>
+              <li>CLI <code>/resume</code>/<code>/fork</code>/<code>/rewind</code>（代码 checkpoint 恢复，独立于 git）。</li>
+              <li>Cloud Agents 云端 VM 持续运行；Agents Window 本地索引全部历史会话（Cmd+K 搜索）。</li>
+            </ul></td></tr>
+            <tr><td>OpenHands</td><td><ul>
+              <li>会话自动存 <code>~/.openhands/conversations/&lt;id&gt;/conversation.json</code>；<code>--resume</code> 列最近 15 条。</li>
+              <li>SDK 支持序列化、Pause &amp; Resume、Fork Conversation；云端 API 全量 CRUD + trajectory 导出。</li>
+            </ul></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>差距评级：<span class="badge g2">中</span></h4>
+      <p>账本模型本身是对标里较强的一档：append-only + 控制行让摘要/卸载/委派全是可回放的「行」，requests 表留证每次真实发送形态，
+        比 JSONL 式持久化更可审计。但三处短板实打实：LLM 失败无恢复（TODO 明列）、会话无写锁（多实例并发写互不感知）、
+        事件账本纯内存（runebot 重启丢未读事件流）。用户侧也缺 checkpoint/分支能力——fork 水印只服务子代理。</p>
+
+      <div class="note warn">
+        <div class="nt">建议动作</div>
+        <p><b>应</b>优先实现 <code>agent.go:223-246</code> 的 TODO：瞬态错误指数退避 + Retry-After、prompt_too_long 走更激进的
+          reactive compact 后重试一次（代码注释已给出方案骨架）；<b>应</b>接通 <code>session_leases</code> 做会话级写租约。
+          事件账本落盘与 checkpoint/分支可排 P2。</p>
+        <p><b>为什么</b>：恢复 TODO 是「headless 能跑长任务」与「多副本」两个目标的共同前置；写租约防的是静默账本损坏。</p>
+        <p><b>不做会怎样</b>：429/断网一次抖动杀死数小时任务；runebot + TUI 同库并发写产生交错时序，事后难排查。</p>
+      </div>
+    </section>
+
+    <!-- ============ 8. 多平台分发 ============ -->
+    <section id="dim-distribution">
+      <div class="chap">第 8 章 · 维度七</div>
+      <h2>多平台分发 <span class="badge g3">大</span></h2>
+
+      <h4>RuneHarness 现状</h4>
+      <ul>
+        <li>两个可执行：TUI（<code>main.go</code>，Bubble Tea）与 headless 网关 <code>cmd/runebot</code>
+          （<code>cmd/runebot/main.go:1-8</code>）；runebot 同一 <code>http.Server</code> 挂 WS <code>/ws</code> 与
+          HTTP/SSE <code>/v1/*</code> 双轨（<code>cmd/runebot/main.go:47-49,243-253</code>；<code>internal/gateway/gateway.go:96-135</code>）。</li>
+        <li>API 面约 15 端点 + 11 种事件帧；<code>Last-Event-ID</code> 续传、忙时 409、<code>POST /stream</code>
+          NDJSON 单请求闭环（<code>internal/gateway/gateway.go:119-135</code>；<code>internal/runner/runner.go:50-64</code>）。</li>
+        <li>认证：<code>RUNE_TOKENS</code> 静态表查表认证，<code>Authenticator</code> 接口留扩展位
+          （<code>internal/gateway/gateway.go:20-74</code>）；跨租户在存储列级拦截
+          （<code>internal/session/sqlite/sqlite.go:34-35,319-329</code>）。</li>
+        <li><b>零分发工程</b>：无 Makefile、无 goreleaser、无 CI workflow、无 Dockerfile、无 install 脚本、无版本号；
+          安装 = 自行 <code>go build</code>。依赖极简（纯 Go、modernc sqlite 无 cgo，<code>go.mod:5-18</code>），跨平台编译门槛低。</li>
+      </ul>
+
+      <h4>对标速览</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>承重事实</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><ul>
+              <li>macOS 13+/Windows/Ubuntu/Alpine，x64+ARM64；install 脚本、Homebrew、WinGet、apt/dnf/apk、npm 五种装法 + 后台自动更新。</li>
+              <li>形态：CLI + Desktop + VS Code/JetBrains + Web + Chrome 扩展 + GitHub App/Actions + Slack App + Agent SDK。</li>
+            </ul></td></tr>
+            <tr><td>Codex CLI</td><td><ul>
+              <li>install.sh/install.ps1、npm <code>@openai/codex</code>（含 win32 平台包）、Homebrew cask、GitHub Releases 二进制。</li>
+              <li>形态：CLI + IDE 扩展 + 桌面 App + Codex Web + TS/Server SDK。</li>
+            </ul></td></tr>
+            <tr><td>Cursor</td><td><ul>
+              <li>桌面 IDE（VS Code fork，主形态）+ CLI（curl 脚本/PowerShell）+ 云 Agents + 移动端 + SDK + GitHub Actions。</li>
+            </ul></td></tr>
+            <tr><td>OpenHands</td><td><ul>
+              <li><code>uv tool install</code>、install.sh、Docker 镜像；Windows 仅 WSL。</li>
+              <li>形态：CLI + GUI Server + Agent Canvas + Cloud + ACP 接入 IDE + GitHub Actions。</li>
+            </ul></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>差距评级：<span class="badge g3">大</span></h4>
+      <p>协议接入面（WS + HTTP/SSE 双轨、15 端点、续传语义）其实不差，runebot 的网关形态已具雏形。但「用户拿到它」这一步
+        完全空白：无版本、无 CI、无二进制、无安装路径。同时 TUI 与 runebot 是两套 <code>main</code>，safe 名单与工具装配
+        需手工同步，已经开始漂移。认证只支持静态 token，无 TLS/限流/CORS 约定——对外暴露面尚不具备生产条件。</p>
+
+      <div class="note warn">
+        <div class="nt">建议动作</div>
+        <p><b>应</b>先做分发三件套：版本号注入（<code>-ldflags</code>）+ goreleaser/GitHub Actions 出 darwin/linux 双架构
+          二进制 + install.sh。<b>宜</b>把两个 <code>main</code> 收敛为同一二进制的子命令（<code>rune tui</code> /
+          <code>rune bot</code>），消掉双份装配的手工同步。</p>
+        <p><b>为什么</b>：依赖面决定了这三件套成本极低；分发是反馈循环的入口，且二进制统一顺带修复配置漂移。</p>
+        <p><b>不做会怎样</b>：任何能力改进都无法触达用户；两份名单漂移越久，TUI 与 runebot 行为差异越难追溯。</p>
+      </div>
+    </section>
+
+    <!-- ============ 9. Roadmap ============ -->
+    <section id="roadmap">
+      <div class="chap">第 9 章 · 路线图</div>
+      <h2>补齐顺序：先堵风险，再追生态，后扩规模</h2>
+      <p class="lede">排序准则：P0 = 阻断真实使用或风险随时间放大的缺口；P1 = 决定体验上限与分发可达性的缺口；
+        P2 = 规模化与远程化的缺口。工作量为粗估人日，仅供相对排序。</p>
+
+      <h3>P0 — 堵风险与通生态的前置</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>对应维度/差距</th><th>预计工作量</th><th>依赖</th><th>价值一句话</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>工具运行时加载点</b>：注册表 + 配置驱动装配，摆脱两处硬编码</td>
+              <td>工具生态 / 大</td><td>5–8 人日</td><td>无</td>
+              <td>MCP 与一切外部工具的挂载点，顺带消掉双 main 装配漂移。</td>
+            </tr>
+            <tr>
+              <td><b>MCP client</b>（stdio 优先，工具名带命名空间，过同一权限闸）</td>
+              <td>工具生态 / 大</td><td>8–13 人日</td><td>上一项（加载点）</td>
+              <td>一次性接通四家旗舰共同基线的外部生态。</td>
+            </tr>
+            <tr>
+              <td><b>LLM 失败分类恢复</b>：指数退避 + Retry-After + prompt_too_long reactive 重试
+                + <code>finish_reason=length</code> 续跑</td>
+              <td>断线续传 / 中→大</td><td>3–5 人日</td><td>无</td>
+              <td>实现 <code>agent.go:223-246</code> 明列 TODO；headless 长任务不再一次抖动全灭。</td>
+            </tr>
+            <tr>
+              <td><b>权限持久化 + 模式档</b>：approve-once 写回规则库；acceptEdits/plan 两档</td>
+              <td>权限审批 / 大</td><td>5–8 人日</td><td>无（与加载点并行）</td>
+              <td>消除确认疲劳；headless 长任务不被 120s Ask 超时杀死。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>P1 — 体验上限与分发可达性</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>对应维度/差距</th><th>预计工作量</th><th>依赖</th><th>价值一句话</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>子代理并行 fan-out</b>：同批 task 并发执行 + 结果按序汇聚</td>
+              <td>子 agent/并行 / 大</td><td>5–8 人日</td><td>宜在 LLM 恢复之后（子 loop 可重试）</td>
+              <td>多任务委派吞吐从 ×N 到并发上限；追平旗舰高频用法。</td>
+            </tr>
+            <tr>
+              <td><b>会话写租约</b>：接通已建未用的 <code>session_leases</code></td>
+              <td>断线续传 / 中</td><td>3–5 人日</td><td>无</td>
+              <td>防多实例并发写坏账本；水平扩展的硬性前置。</td>
+            </tr>
+            <tr>
+              <td><b>分发三件套</b>：版本号 + goreleaser/CI 双架构二进制 + install.sh；两 main 收敛子命令</td>
+              <td>多平台分发 / 大</td><td>3–5 人日</td><td>无</td>
+              <td>用户拿得到；顺带消掉两份名单的手工同步。</td>
+            </tr>
+            <tr>
+              <td><b>结构化 file-edit 工具</b>：edit/patch 原语替代 shell heredoc</td>
+              <td>工具生态 / 大</td><td>3–5 人日</td><td>无</td>
+              <td>写文件离开自由 shell；权限闸可对 edit 做细粒度语义判定。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>P2 — 召回、规模与远程面</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>对应维度/差距</th><th>预计工作量</th><th>依赖</th><th>价值一句话</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>记忆检索</b>：FTS5 落 <code>/svc/search</code> + memory 工具 search + 相关度注入</td>
+              <td>持久记忆 / 小</td><td>5–8 人日</td><td>无</td>
+              <td>记忆从「写入系统」变「召回系统」。</td>
+            </tr>
+            <tr>
+              <td><b>多副本水平扩展</b>：事件账本落盘、slot 外置、checkpoint/分支的用户侧能力</td>
+              <td>断线续传 + 分发 / 中</td><td>8–13 人日</td><td>LLM 恢复 + 写租约</td>
+              <td>runebot 从单机单进程到多副本。</td>
+            </tr>
+            <tr>
+              <td><b>云/远程会话面</b>：远端 resume、web 接入、token 签发/吊销</td>
+              <td>多平台分发 / 大</td><td>8–13 人日</td><td>多副本</td>
+              <td>对标旗舰的云会话/远程控制能力。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <div class="nt">依赖关系要点</div>
+        <p>加载点 → MCP（无挂载点 MCP 无处生根）；LLM 恢复 → 并行子代理与 headless 规模化（并发会放大失败面，
+          先能重试再谈并发）；写租约 → 多副本（账本完整性是扩展的前提）。</p>
+      </div>
+      <div class="note warn">
+        <div class="nt">排序异议</div>
+        <p>分发三件套列在 P1 的前提是「当前用户能自行 <code>go build</code>」——即内部/开发者受众。若目标受众转为外部用户，
+          分发三件套<b>应</b>升入 P0：它是七项差距中修复成本最低、却唯一阻断「被使用」本身的项。</p>
+      </div>
+    </section>
+
+    <!-- ============ 10. 附录 ============ -->
+    <section id="appendix">
+      <div class="chap">附录 · 方法论与信息来源</div>
+      <h2>事实怎么来、信到什么程度</h2>
+
+      <h4>方法论</h4>
+      <ul>
+        <li><b>RuneHarness 侧</b>：通读 <code>/Users/alfredchaos/home/code/RuneHarness</code> 源码（Go，module
+          <code>runeharness</code>，go 1.26.0），所有论断给出 <code>file:line</code> 引用，可逐条复核。审计日期 2026-10-11。</li>
+        <li><b>竞品侧</b>：只记录可验证的具体能力事实，不含营销评价；所有来源 URL 于 2026-10-11 当日访问。
+          文档未说明处一律标「未公开」，不推测竞品内部实现。</li>
+        <li><b>评级口径</b>：无 / 小 / 中 / 大四档，针对 RuneHarness 相对该维度最强对标线的距离；评级只看能力事实，
+          不计工程规模与团队差距。</li>
+      </ul>
+
+      <h4>各竞品一手来源（访问日期均为 2026-10-11）</h4>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>竞品</th><th>主要来源</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td>code.claude.com/docs/en/ 下 context-window、commands.md、sub-agents、memory、permissions、setup.md（页面标注版本至 v2.1.290）。</td></tr>
+            <tr><td>Codex CLI</td><td><b>developers.openai.com 返回 403（Cloudflare 拦截，含浏览器 UA），改用开源仓库一手依据</b>：
+              github.com/openai/codex main 分支 README、codex-rs/tui/src/slash_command.rs、core/src/compact.rs、
+              memories/README.md、thread-store/README.md、cli/src/mcp_cmd.rs、app-server-protocol AskForApproval.ts；
+              registry.npmjs.org/@openai/codex 平台包佐证。</td></tr>
+            <tr><td>Cursor</td><td>cursor.com/docs 下 cli/reference/slash-commands.md、hooks、subagents.md、rules.md、mcp.md、
+              agent/security/run-modes.md、agent/overview.md、cli/installation.md。</td></tr>
+            <tr><td>OpenHands</td><td>docs.openhands.dev 下 sdk/guides/{context-condenser,task-tool-set,persistent-memory,mcp,security}、
+              usage/cli/{installation,resume}、docs 索引各节。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>薄文档维度（结论置信度相应下调）</h4>
+      <ul>
+        <li>Codex：官方文档站不可达；压缩触发阈值、multi-agent 的正式文档与版本状态未公开。</li>
+        <li>Cursor：桌面端自动压缩（阈值/可调性）无独立文档；自动记忆功能在文档索引中未见。</li>
+        <li>OpenHands：CLI/Cloud 默认压缩参数未公开；命令白名单式权限语法未见。</li>
+        <li>Claude Code：auto-compact 默认触发比例以 <code>/autocompact</code> 交互而非数值给出。</li>
+      </ul>
+
+      <h4>数据来源可信度</h4>
+      <p>RuneHarness 事实为 <b>code-verified</b>（源码行级引用，可复核）；竞品事实为 <b>doc-verified</b>
+        （官方文档/开源仓库当日抓取）。两侧证据等级不对称：竞品未公开的细节本文不做推断，相应维度的差距评级
+        可能随其文档更新而改变。</p>
+    </section>
+
+    <footer>
+      RuneHarness · docs/flagship-gap-analysis.html · 2026-10-11 ·
+      输入：rune-inventory.md（源码审计）+ competitors.md（官方文档调研）
+    </footer>
+  </div>
+
+</body>
+
+</html>
