@@ -30,7 +30,14 @@ func (CreateTool) Spec() tools.Spec {
 			"(minute hour day-of-month month day-of-week) evaluated in the given " +
 			"timezone (default: local). \"0 9 * * 1-5\" = weekdays at 9am; " +
 			"\"30 14 28 2 *\" with recurring=false = one-shot on Feb 28 14:30. " +
+			"Wall-clock fields pair with the timezone parameter: the container " +
+			"runs in UTC, so when the user states a local time pass timezone " +
+			"explicitly (e.g. Asia/Shanghai). " +
+			"If the user asks for the reminder to persist, survive restarts, or " +
+			"fire later/daily/recurring, set durable=true explicitly. " +
 			"durable=true persists across restarts (default false = this session only). " +
+			"The ack suffix (session-only vs persisted) is the authoritative " +
+			"schedule state. " +
 			"Fired tasks run a full agent turn with normal permission checks, " +
 			"and only fire while the assistant is idle.",
 		Parameters: map[string]any{
