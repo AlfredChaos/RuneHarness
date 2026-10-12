@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
@@ -68,9 +69,20 @@ func main() {
 	}
 	auth := gateway.StaticAuth(tokens)
 
+	// 部署唯一租户：单租户部署里 RUNE_TOKENS 表的租户即本进程全部用户。
+	// cron 链（调度器点火 scope、通知归属回落）都按它对齐——gwScope 的
+	// "gateway" 是进程内部身份，与 durable 任务落盘时按请求租户打的标
+	// 不一致会让任务永不点火、通知写成任何租户都查不到的孤儿。
+	fallbackTenant := "local"
+	for _, name := range slices.Sorted(maps.Keys(tokens)) {
+		if t := tokens[name].TenantID; t != "" {
+			fallbackTenant = t
+			break
+		}
+	}
+
 	wd, _ := os.Getwd()
 	gwScope := scope.Scope{TenantID: "gateway", Workspace: wd}
-	baseCtx := scope.WithScope(context.Background(), gwScope)
 
 	dbPath := cfg.DBPath
 	if dbPath == "" {
@@ -102,12 +114,20 @@ func main() {
 	cronStore := cron.Open(filepath.Join(filepath.Dir(dbPath), "cron_tasks.json"))
 	var cronSched *cron.Scheduler
 	if cronStore != nil {
-		cronSched = cron.NewScheduler(cronStore, baseCtx, cron.Config{
+		// 调度器以部署唯一租户 + 进程 workspace 看任务（FileTasks/Remove
+		// 都按 scope 过滤），与 durable 任务落盘打标一致才能点火/焚毁。
+		cronCtx := scope.WithScope(context.Background(),
+			scope.Scope{TenantID: fallbackTenant, Workspace: wd})
+		cronSched = cron.NewScheduler(cronStore, cronCtx, cron.Config{
 			LockPath: filepath.Join(filepath.Dir(dbPath), cron.LockFileName(wd)),
 			OnFire: func(ev cron.Event) {
 				t := ev.Task
+				tenant := t.Tenant
+				if tenant == "" {
+					tenant = fallbackTenant // session/遗留任务缺租户：兜底归属
+				}
 				if _, err := store.PushNotification(context.Background(),
-					t.Tenant, "cron", cronNoticeTitle(t), t.Prompt); err != nil {
+					tenant, "cron", cronNoticeTitle(t), t.Prompt); err != nil {
 					slog.Warn("notify: cannot persist cron notification", "task", t.ID, "err", err)
 				}
 			},
@@ -207,7 +227,7 @@ func main() {
 	// AI 命名（ALF-130）：成功轮次结束后异步生成 ≤12 字标题写回 sessions.title。
 	namer := &naming.Namer{Store: store, LLM: model}
 
-	mgr := runner.NewManager(runner.Config{}, runner.Harness{
+	mgr := runner.NewManager(runner.Config{Workspace: wd}, runner.Harness{
 		New: func(slotCtx context.Context, emit func(runner.Event),
 			ask func(agent.ToolCall, string, int, int) <-chan bool) (runner.TurnRunner, error) {
 			a := agent.New(model, registry, maxToolSteps)

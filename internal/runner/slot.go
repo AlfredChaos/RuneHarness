@@ -463,7 +463,7 @@ func (m *Manager) slotFor(ctx context.Context, key ChatKey) (*slot, error) {
 // workspace 给新槽位定工作目录。当前无渠道差异：统一进程 cwd。
 // 渠道级 workspace 归属是 v2 话题（多机器人分目录）。
 func (m *Manager) workspace(key ChatKey) string {
-	return "" // scope.Workspace 空串时下游自行回落 cwd
+	return m.cfg.Workspace // 空串时下游自行回落 cwd
 }
 
 // sessionMeta 组装新 session 的 Meta；渠道与 chat_id 写进 Title 供

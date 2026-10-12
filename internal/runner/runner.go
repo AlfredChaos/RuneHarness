@@ -283,6 +283,11 @@ type Config struct {
 	// DrainInterval 是 bg/cron 通知注入的轮询间隔（TUI 侧是事件驱动，
 	// runner 没有 UI 消息泵，用周期探）。<=0 用默认 3s。
 	DrainInterval time.Duration
+
+	// Workspace 是本进程的 workspace 归属，写进每个新槽位的 scope：
+	// cron durable 打标、/v1/schedules 过滤、通知归属都按它对齐。
+	// 空串维持旧行为（下游自行回落 cwd）。
+	Workspace string
 }
 
 func (c Config) withDefaults() Config {
