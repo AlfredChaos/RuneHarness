@@ -42,6 +42,24 @@ func TestStoreAddSessionOnly(t *testing.T) {
 	}
 }
 
+// session 任务必须带创建方租户：/v1/schedules 的租户双保险过滤按 Tenant
+// 匹配，不打标会被整批滤掉（线上实测：session 任务在端点恒不可见）。
+func TestStoreSessionTenantStamping(t *testing.T) {
+	s, _ := tempStore(t)
+	ctx := scopedCtx(testWorkspace)
+	task, err := s.Add(ctx, Task{Cron: "* * * * *", Prompt: "tick"})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if task.Tenant != "local" || task.Workspace != testWorkspace {
+		t.Fatalf("session task scope stamping wrong: %+v", task)
+	}
+	got := s.List(ctx)
+	if len(got) != 1 || got[0].ID != task.ID || got[0].Tenant != "local" {
+		t.Fatalf("session task must be listed with tenant: %+v", got)
+	}
+}
+
 func TestStoreDurableRoundTrip(t *testing.T) {
 	s, path := tempStore(t)
 	ctx := scopedCtx(testWorkspace)

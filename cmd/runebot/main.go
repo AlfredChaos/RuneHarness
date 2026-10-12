@@ -43,6 +43,10 @@ import (
 	"runeharness/internal/subagent"
 	"runeharness/internal/todo"
 	"runeharness/internal/tools"
+
+	// 容器运行时（alpine）没有 zoneinfo，time.LoadLocation 对任何命名时区
+	// 都报 invalid（cron_create tz 参数实测踩中）；嵌入 tzdata 一劳永逸。
+	_ "time/tzdata"
 )
 
 const maxToolSteps = 50

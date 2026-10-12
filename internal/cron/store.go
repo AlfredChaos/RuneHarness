@@ -213,13 +213,16 @@ func (s *Store) Add(ctx context.Context, t Task) (Task, error) {
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now()
 	}
+	// session 任务同样打标：/v1/schedules 的租户双保险过滤按 Tenant 匹配，
+	// 不打标会让所有 session 任务在端点上不可见（装配方 List 虽返回它们，
+	// handler 全部滤掉）。durable 的 scope 必填校验在上面已做。
+	t.Tenant, t.Workspace = sc.TenantID, sc.Workspace
 	if !t.Durable {
 		s.mu.Lock()
 		s.session = append(s.session, t)
 		s.mu.Unlock()
 		return t, nil
 	}
-	t.Tenant, t.Workspace = sc.TenantID, sc.Workspace
 	err = s.mutate(func(tasks []Task) []Task { return append(tasks, t) })
 	return t, err
 }
