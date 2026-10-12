@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
       - name: runebot
-        image: runebot:mig1
+        image: runebot:alf133
         imagePullPolicy: Never
         ports:
         - containerPort: 18765
