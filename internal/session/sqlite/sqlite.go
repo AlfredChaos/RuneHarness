@@ -22,7 +22,7 @@ import (
 )
 
 // schemaVersion 是当前 schema 版本；结构演进时在 migrate 追加分支并 +1。
-const schemaVersion = 4
+const schemaVersion = 5
 
 // maxForkDepth 限制 fork 链与祖先 blob 查找的层数，防止脏数据成环。
 const maxForkDepth = 8
@@ -194,6 +194,35 @@ func (s *Store) migrate() error {
 		// v4：消息附件（agent.Message.Parts）。沿用 tool_calls 的 JSON 列
 		// 先例：TEXT 列存 JSON 原文，无附件时为空串。老库 ALTER 补列即通。
 		if _, err := s.db.Exec(`ALTER TABLE messages ADD COLUMN parts TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if v < 5 {
+		// v5：通知 outbox（ALF-133）。服务端主动产生的待提醒事件（cron 触发等）
+		// 落库，App 轮询 /v1/notifications 拉取后 ack。acked_at=0 表示未读。
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, q := range []string{
+			`CREATE TABLE IF NOT EXISTS notifications (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				tenant_id TEXT NOT NULL,
+				kind TEXT NOT NULL,
+				title TEXT NOT NULL,
+				body TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL,
+				acked_at INTEGER NOT NULL DEFAULT 0
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_notifications_tenant
+				ON notifications(tenant_id, acked_at, id)`,
+		} {
+			if _, err := tx.Exec(q); err != nil {
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
 			return err
 		}
 	}
@@ -664,10 +693,13 @@ func (s *Store) UpsertBinding(ctx context.Context, tenant, channel, chatID, sess
 // 只读查询，不做租约校验——绑定归属由 Gateway 层 token 保证。
 // count 是绑定 session 内非控制消息条数（口径与 /history 跳过 IsControl
 // 行一致）；控制 kind 词表与 agent.Kind.IsControl 保持同步，空会话为 0。
+// title 来自绑定 session（AI 命名后的可读标题，未命名时是 channel:chatID）。
 func (s *Store) ListByTenant(ctx context.Context, tenant, channel string) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT b.chat_id, b.session_id, b.subject_id, b.created_at, b.last_active,
+		COALESCE(sn.title, '') AS title,
 		COALESCE(SUM(CASE WHEN m.kind NOT IN ('compact_boundary','view_clear','fork','turn_end') THEN 1 ELSE 0 END), 0) AS count
 		FROM chat_bindings b
+		LEFT JOIN sessions sn ON sn.id = b.session_id
 		LEFT JOIN messages m ON m.session_id = b.session_id
 		WHERE b.tenant_id = ? AND b.channel = ?
 		GROUP BY b.tenant_id, b.channel, b.chat_id
@@ -679,15 +711,15 @@ func (s *Store) ListByTenant(ctx context.Context, tenant, channel string) ([]map
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var chatID, sessionID, subjectID string
+		var chatID, sessionID, subjectID, title string
 		var created, active, count int64
-		if err := rows.Scan(&chatID, &sessionID, &subjectID, &created, &active, &count); err != nil {
+		if err := rows.Scan(&chatID, &sessionID, &subjectID, &created, &active, &title, &count); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]any{
 			"chat_id": chatID, "session_id": sessionID,
 			"subject_id": subjectID, "created_at": created, "last_active": active,
-			"count": count,
+			"title": title, "count": count,
 		})
 	}
 	return out, rows.Err()

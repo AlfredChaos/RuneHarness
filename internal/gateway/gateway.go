@@ -12,9 +12,12 @@ import (
 	"strings"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/cron"
 	"runeharness/internal/memory"
+	"runeharness/internal/naming"
 	"runeharness/internal/runner"
 	"runeharness/internal/scope"
+	"runeharness/internal/session/sqlite"
 )
 
 // Token 是 Bearer token 的解析结果；tenant+subject 来自 token 声明，
@@ -93,6 +96,18 @@ type Store interface {
 	ListByTenant(ctx context.Context, tenant, channel string) ([]map[string]any, error)
 }
 
+// Purger 是管理清理能力（*sqlite.Store 满足）：删 keep 之外的 chat 绑定
+// 连带会话数据，返回被清理的 chat_id。
+type Purger interface {
+	PurgeChats(ctx context.Context, tenant, channel string, keep []string) ([]string, error)
+}
+
+// Notifier 是通知 outbox 的读写面（*sqlite.Store 满足）。
+type Notifier interface {
+	ListNotifications(ctx context.Context, tenant string) ([]sqlite.Notification, error)
+	AckNotifications(ctx context.Context, tenant string, ids []int64) (int64, error)
+}
+
 // Server 是网关 HTTP 面：/ws（WS 轨）与 /v1/*（HTTP/SSE 轨）。
 type Server struct {
 	Mgr     *runner.Manager
@@ -101,6 +116,11 @@ type Server struct {
 	Channel string // 本轨道渠道名（"bear"/"http"），落到 ChatKey 与 channel 列
 	// Mem 是记忆查看出口；nil 时 /v1/memory* 一律 503。
 	Mem *memory.Memory
+	// Purger/Notifier/Schedules/Namer 是可选能力面；nil 时对应端点 501。
+	Purger    Purger
+	Notifier  Notifier
+	Schedules func(tenant string) []cron.Task
+	Namer     *naming.Namer
 
 	mux *http.ServeMux
 }
@@ -122,9 +142,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/chats/{id}", s.handleGetChat)
 	s.mux.HandleFunc("GET /v1/chats/{id}/history", s.handleHistory)
 	s.mux.HandleFunc("POST /v1/chats/{id}/messages", s.handlePostMessage)
+	s.mux.HandleFunc("POST /v1/chats/{id}/title", s.handleChatTitle)
 	s.mux.HandleFunc("GET /v1/chats/{id}/events", s.handleSSE)
 	s.mux.HandleFunc("POST /v1/chats/{id}/stream", s.handleStream)
 	s.mux.HandleFunc("POST /v1/chats/{id}/actions", s.handleAction)
+	s.mux.HandleFunc("POST /v1/admin/purge-chats", s.handlePurgeChats)
+	s.mux.HandleFunc("GET /v1/schedules", s.handleSchedules)
+	s.mux.HandleFunc("GET /v1/notifications", s.handleNotifications)
+	s.mux.HandleFunc("POST /v1/notifications/ack", s.handleAckNotifications)
 	s.mux.HandleFunc("GET /v1/memory", s.handleMemoryIndex)
 	s.mux.HandleFunc("GET /v1/memory/{space}", s.handleMemoryList)
 	s.mux.HandleFunc("POST /v1/memory/dream", s.handleMemoryDream)

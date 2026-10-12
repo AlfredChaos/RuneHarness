@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"runeharness/internal/gateway"
 	"runeharness/internal/llm"
 	"runeharness/internal/memory"
+	"runeharness/internal/naming"
 	"runeharness/internal/permission"
 	"runeharness/internal/prompt"
 	"runeharness/internal/runner"
@@ -95,12 +97,20 @@ func main() {
 
 	bgm := bgtask.New(filepath.Join(filepath.Dir(dbPath), "tasks"))
 
-	// cron 持久化任务随 workspace；属主锁同 CLI 语义。
+	// cron 持久化任务随 workspace；属主锁同 CLI 语义。触发时写一条通知
+	// 进 outbox（ALF-133）：空闲 chat 不会被 Drain 唤醒，App 靠轮询弹窗。
 	cronStore := cron.Open(filepath.Join(filepath.Dir(dbPath), "cron_tasks.json"))
 	var cronSched *cron.Scheduler
 	if cronStore != nil {
 		cronSched = cron.NewScheduler(cronStore, baseCtx, cron.Config{
 			LockPath: filepath.Join(filepath.Dir(dbPath), cron.LockFileName(wd)),
+			OnFire: func(ev cron.Event) {
+				t := ev.Task
+				if _, err := store.PushNotification(context.Background(),
+					t.Tenant, "cron", cronNoticeTitle(t), t.Prompt); err != nil {
+					slog.Warn("notify: cannot persist cron notification", "task", t.ID, "err", err)
+				}
+			},
 		})
 		go cronSched.Run(context.Background())
 	}
@@ -194,6 +204,9 @@ func main() {
 	}
 	specsJSON, _ := json.Marshal(registry.Specs())
 
+	// AI 命名（ALF-130）：成功轮次结束后异步生成 ≤12 字标题写回 sessions.title。
+	namer := &naming.Namer{Store: store, LLM: model}
+
 	mgr := runner.NewManager(runner.Config{}, runner.Harness{
 		New: func(slotCtx context.Context, emit func(runner.Event),
 			ask func(agent.ToolCall, string, int, int) <-chan bool) (runner.TurnRunner, error) {
@@ -266,8 +279,23 @@ func main() {
 		},
 	}, store, store)
 
+	// 命名触发链：turn_end(completed) → slot 异步回调 → namer 一次性 completion。
+	mgr.OnTurnComplete = func(key runner.ChatKey, sid string) {
+		namer.NameChat(key.TenantID, key.Channel, key.ChatID, sid)
+	}
+
 	srv := gateway.NewServer(mgr, auth, store, "bear")
 	srv.Mem = mem // nil 时 /v1/memory* 自然 503
+	srv.Namer = namer
+	srv.Purger = store
+	srv.Notifier = store
+	if cronStore != nil {
+		// 按请求租户过滤的任务清单；workspace 口径与调度器点火一致。
+		srv.Schedules = func(tenant string) []cron.Task {
+			ctx := scope.WithScope(context.Background(), scope.Scope{TenantID: tenant, Workspace: wd})
+			return cronStore.List(ctx)
+		}
+	}
 	httpSrv := &http.Server{Addr: *listen, Handler: srv}
 
 	go func() {
@@ -296,4 +324,21 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// cronNoticeTitle 从任务 prompt 提炼通知标题：首个非空行截 24 字，
+// 空 prompt 回落「定时任务」。
+func cronNoticeTitle(t cron.Task) string {
+	for _, line := range strings.Split(t.Prompt, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		r := []rune(line)
+		if len(r) > 24 {
+			return string(r[:24]) + "…"
+		}
+		return line
+	}
+	return "定时任务"
 }

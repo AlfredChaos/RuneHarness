@@ -188,6 +188,15 @@ func (s *slot) finishTurn(turnID string, seq int, started time.Time, status stri
 	s.cancel = nil
 	s.curTurn = ""
 	s.mu.Unlock()
+
+	// 成功轮次收尾钩子（AI 命名等后台任务）：异步执行，不阻塞事件流；
+	// 只挑 completed——interrupted/error 的残轮不构成"完整一轮"。
+	if status == "completed" {
+		if fn := s.manager.OnTurnComplete; fn != nil {
+			key, sid := s.key, s.sessionID
+			go fn(key, sid)
+		}
+	}
 }
 
 // sessionControlRow 生成 turn_end 控制行。复用 session.ControlRow 的语义

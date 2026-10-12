@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -406,6 +407,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-cache")
+	// nginx ingress 默认缓冲响应体，流式帧会攒到结束才下发；显式关掉。
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(200)
 
 	// 先订阅再提交，保证本轮事件不落在订阅窗口之外。
@@ -434,14 +437,34 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return
 	}
+	// 15s 心跳：LLM 首字延迟/工具执行期间连接上没有数据，过中间层
+	// （ingress/客户端空闲看门狗）易被掐。客户端对未知事件安全忽略。
+	// 帧序与事件帧一致走换行分隔；不发 seq——心跳不入账本、不参与续传。
+	heart := time.NewTicker(15 * time.Second)
+	defer heart.Stop()
+	started, frames := time.Now(), 0
+	defer func() {
+		if r.Context().Err() != nil {
+			// 非正常收尾（客户端断开/超时）：留痕排查"流为何提前 closed"。
+			slog.Info("stream: aborted mid-turn", "chat_id", key.ChatID,
+				"frames", frames, "elapsed", time.Since(started).String())
+		}
+	}()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heart.C:
+			frames++
+			if _, err := w.Write([]byte("{\"event\":\"ping\"}\n")); err != nil {
+				return
+			}
+			flusher.Flush()
 		case ev, ok := <-ch:
 			if !ok {
 				return
 			}
+			frames++
 			writeNDJSON(w, ev)
 			flusher.Flush()
 			if ev.Event == runner.EvTurnEnd {

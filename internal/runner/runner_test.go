@@ -304,3 +304,46 @@ func TestTurnInputAttachmentsPersist(t *testing.T) {
 	}
 	t.Fatalf("persisted rows lack parts: %+v", rows)
 }
+
+func TestOnTurnCompleteFiresOnlyOnCompletedTurns(t *testing.T) {
+	store := newFakeStore()
+	var fired []string
+	done := make(chan string, 4)
+	mgr := NewManager(Config{}, fakeHarness(func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+		return append(hist, agent.Message{Role: agent.RoleAssistant, Content: "pong"}), nil
+	}), store, nil)
+	mgr.OnTurnComplete = func(k ChatKey, sid string) { done <- k.ChatID + "/" + sid }
+
+	ctx := context.Background()
+	if err := mgr.Submit(ctx, key(), TurnInput{Prompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-done:
+		fired = append(fired, got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnTurnComplete not fired for completed turn")
+	}
+	if fired[0] != "c1/s1" {
+		t.Fatalf("fired = %v, want c1/s1", fired)
+	}
+	_ = store
+}
+
+func TestOnTurnCompleteSkippedOnErrorTurn(t *testing.T) {
+	mgr := NewManager(Config{}, fakeHarness(func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+		return hist, errors.New("llm exploded")
+	}), newFakeStore(), nil)
+	fired := make(chan string, 1)
+	mgr.OnTurnComplete = func(k ChatKey, sid string) { fired <- k.ChatID }
+
+	ctx := context.Background()
+	if err := mgr.Submit(ctx, key(), TurnInput{Prompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-fired:
+		t.Fatalf("hook fired on error turn: %v", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

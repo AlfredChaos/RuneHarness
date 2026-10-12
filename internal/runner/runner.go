@@ -312,6 +312,11 @@ type Manager struct {
 	store   SessionStore
 	binder  Binder // nil 表示不落 chat_bindings（进程内映射，重启丢）
 
+	// OnTurnComplete 在一轮成功完成（turn_end status=completed）后异步回调，
+	// 入参是本轮的槽位 key 与 session id；nil 可。回调自带 goroutine，
+	// 由装配方保证其自身超时与容错（AI 命名等后台任务挂这里）。
+	OnTurnComplete func(key ChatKey, sessionID string)
+
 	mu    sync.Mutex
 	slots map[ChatKey]*slot
 }
