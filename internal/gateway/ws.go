@@ -92,7 +92,7 @@ func (wc *wsConn) dispatch(ctx context.Context, s *Server, in wsIn) error {
 		if in.ChatID == "" || in.Content == "" {
 			return errors.New("message needs chat_id and content")
 		}
-		atts, err := parseAttachments(in.Attachments)
+		atts, err := parseAttachments(ctx, in.Attachments)
 		if err != nil {
 			return err // 校验失败走协议错误帧，连接不断
 		}

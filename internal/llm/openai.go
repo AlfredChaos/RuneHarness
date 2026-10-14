@@ -147,13 +147,15 @@ func parseLimit(apiErr *openai.Error) int {
 
 // toParams 是发送形态的唯一 marshal 点：按角色选 SDK 便捷构造；带附件
 // 分片的 user 消息改走 content parts 数组（需要 model 做视觉能力门控）。
-// 只有最后一条 user 消息（本轮输入）可以携带 Parts：更早消息里的附件
-// 分片降级为占位文本。持久化的图片 base64 若随历史每轮重放，每次调用
+// 只有最后一条 user 消息（本轮输入）可以携带 Parts：更早消息里的图片
+// 分片降级为占位文本——持久化的 base64 若随历史每轮重放，每次调用
 // 都多扛 ~MB 级上行，视觉端点对大图慢且不稳（真机观测 120s requestTimeout
 // 整轮 error）——"发过一次图之后每轮都超时"的结构性成因，只放行最新
-// 带图消息仍会让图后每轮背着大图（真机复测 ~61s，大图照样撞 120s）。
-// 模型被问到旧图时凭此前的文字描述与占位标记作答，宁可说"看不到原图"
-// 也好过整轮超时。transcript 存储不变，只裁剪发送形态。
+// 一轮；追问图片描述丢失细节，也好过整轮超时。
+//
+// document 分片（PDF 抽出的文字）不剥：纯文本体量小，且后续轮次
+// 「那份文件第 3 页写了什么」的追问仍需要它在场。transcript 存储不变，
+// 只裁剪发送形态。
 func toParams(history []agent.Message, model string) []openai.ChatCompletionMessageParamUnion {
 	lastUser := -1
 	for i, m := range history {
@@ -167,12 +169,24 @@ func toParams(history []agent.Message, model string) []openai.ChatCompletionMess
 		case agent.RoleSystem:
 			out = append(out, openai.SystemMessage(m.Content))
 		case agent.RoleUser:
-			if len(m.Parts) > 0 {
-				if i < lastUser {
-					// 非本轮的带附件历史：parts 全量换占位文本（见函数头注释）
-					m.Parts = nil
+			if i < lastUser && len(m.Parts) > 0 {
+				// 非本轮历史：图片换占位文本，document 文字保留（见函数头注释）。
+				// 换新切片，不改共享的 backing array（runner 仍持有原始历史）。
+				var kept []agent.Part
+				dropped := false
+				for _, p := range m.Parts {
+					if p.Kind == agent.PartDocument {
+						kept = append(kept, p)
+					} else {
+						dropped = true
+					}
+				}
+				m.Parts = kept
+				if dropped {
 					m.Content = joinContent(m.Content, "[attachments omitted: replayed history]")
 				}
+			}
+			if len(m.Parts) > 0 {
 				out = append(out, userParam(m, model))
 			} else {
 				out = append(out, openai.UserMessage(m.Content))
@@ -213,16 +227,20 @@ func userParam(m agent.Message, model string) openai.ChatCompletionMessageParamU
 		parts = append(parts, openai.TextContentPart(m.Content))
 	}
 	for _, p := range m.Parts {
-		if p.Kind != agent.PartImage || !config.ModelVision(model) {
+		switch {
+		case p.Kind == agent.PartDocument && p.Text != "":
+			// 文档分片无条件走文本：不依赖视觉能力；需渲染的页已由 pdfdoc 转 image。
+			parts = append(parts, openai.TextContentPart(p.Text))
+		case p.Kind == agent.PartImage && config.ModelVision(model):
+			image := openai.ChatCompletionContentPartImageImageURLParam{
+				URL: "data:" + p.MediaType + ";base64," + p.DataB64,
+				// SDK 标了 omitzero：空串不会出现在 wire 上
+				Detail: p.Detail,
+			}
+			parts = append(parts, openai.ImageContentPart(image))
+		default:
 			parts = append(parts, openai.TextContentPart(partPlaceholder(p)))
-			continue
 		}
-		image := openai.ChatCompletionContentPartImageImageURLParam{
-			URL: "data:" + p.MediaType + ";base64," + p.DataB64,
-			// SDK 标了 omitzero：空串不会出现在 wire 上
-			Detail: p.Detail,
-		}
-		parts = append(parts, openai.ImageContentPart(image))
 	}
 	return openai.UserMessage(parts)
 }
@@ -230,10 +248,14 @@ func userParam(m agent.Message, model string) openai.ChatCompletionMessageParamU
 // partPlaceholder 把发不出去的分片降级为内联占位文本，文案风格对齐
 // files.go 的 [binary file omitted]。
 func partPlaceholder(p agent.Part) string {
-	if p.Kind != agent.PartImage {
+	switch p.Kind {
+	case agent.PartImage:
+		return "[image omitted: model is text-only]"
+	case agent.PartDocument:
+		return "[document omitted: no extractable text]"
+	default:
 		return "[attachment omitted: unsupported kind " + p.Kind + "]"
 	}
-	return "[image omitted: model is text-only]"
 }
 
 // assistantParam 重建 assistant 消息，保留 tool_calls（模型要求原样回传）。

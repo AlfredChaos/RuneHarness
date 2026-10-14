@@ -186,3 +186,47 @@ func TestToParamsOnlyCurrentTurnKeepsParts(t *testing.T) {
 		t.Errorf("older image still leaked:\n%s", body2)
 	}
 }
+
+// document 分片（PDF 抽出的文字）作为文本 part 上 wire，不受视觉门控；
+// 历史轮次里 document 文字保留、图片仍被剥成占位。
+func TestToParamsDocumentPart(t *testing.T) {
+	doc := agent.Part{Kind: agent.PartDocument, MediaType: "application/pdf",
+		Filename: "report.pdf", Text: "体检报告正文第1页"}
+
+	// 本轮：document → text 分片，请求体没有 image_url
+	body := marshalBody(t, []agent.Message{{Role: agent.RoleUser,
+		Parts: []agent.Part{doc}}}, "minimax-m3")
+	if !strings.Contains(body, "体检报告正文第1页") {
+		t.Errorf("document text must reach the wire:\n%s", body)
+	}
+	if strings.Contains(body, "image_url") || strings.Contains(body, "application/pdf;base64") {
+		t.Errorf("document must never marshal as image_url:\n%s", body)
+	}
+
+	// 纯文本模型同样收到文档文字（门控只作用于 image）
+	body = marshalBody(t, []agent.Message{{Role: agent.RoleUser,
+		Parts: []agent.Part{doc}}}, "deepseek-chat")
+	if !strings.Contains(body, "体检报告正文第1页") {
+		t.Errorf("text-only model must still receive document text:\n%s", body)
+	}
+
+	// 历史轮次：document 文字保留，图片剥成占位，占位只说 attachments omitted
+	hist := []agent.Message{
+		{Role: agent.RoleUser, Content: "看这份", Parts: []agent.Part{
+			doc,
+			{Kind: agent.PartImage, MediaType: "image/jpeg", DataB64: "U0NBTg=="},
+		}},
+		{Role: agent.RoleAssistant, Content: "看完了"},
+		{Role: agent.RoleUser, Content: "第1页写了什么？"},
+	}
+	body = marshalBody(t, hist, "minimax-m3")
+	if !strings.Contains(body, "体检报告正文第1页") {
+		t.Errorf("historical document text must survive replay:\n%s", body)
+	}
+	if strings.Contains(body, "U0NBTg==") {
+		t.Errorf("historical image must still be stripped:\n%s", body)
+	}
+	if !strings.Contains(body, "[attachments omitted: replayed history]") {
+		t.Errorf("stripped image needs the placeholder:\n%s", body)
+	}
+}

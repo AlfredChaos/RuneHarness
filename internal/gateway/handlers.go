@@ -38,7 +38,11 @@ type attachmentIn struct {
 
 // parseAttachments 校验并转换上游附件数组；任何问题都在 Submit 之前拒绝。
 // 空数组返回 nil——与"无附件"零行为一致。
-func parseAttachments(raw []attachmentIn) ([]agent.Part, error) {
+//
+// 一个入站附件可能展开成多个 Part：PDF → 一个 document 分片（抽出的文字）加
+// 零到若干 image 分片（文字层不足的页面渲染图，见 internal/pdfdoc）。校验用入站字节
+// （DoS 防线），落库/上送用处理后的结果。PDF 本身不入库：库里只留文字与渲染图。
+func parseAttachments(ctx context.Context, raw []attachmentIn) ([]agent.Part, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -48,12 +52,19 @@ func parseAttachments(raw []attachmentIn) ([]agent.Part, error) {
 	parts := make([]agent.Part, 0, len(raw))
 	var total int
 	for _, a := range raw {
-		if a.Kind != agent.PartImage {
+		switch a.Kind {
+		case agent.PartImage:
+			if !strings.HasPrefix(a.MediaType, "image/") {
+				return nil, errors.New("attachment media_type must be image/*")
+			}
+		case agent.PartDocument:
+			if a.MediaType != "application/pdf" {
+				return nil, errors.New("document attachments must be application/pdf")
+			}
+		default:
 			return nil, errors.New("unsupported attachment kind")
 		}
-		if !strings.HasPrefix(a.MediaType, "image/") {
-			return nil, errors.New("attachment media_type must be image/*")
-		}
+		isPDF := a.Kind == agent.PartDocument
 		if len(a.Filename) > 255 {
 			return nil, errors.New("attachment filename too long")
 		}
@@ -73,7 +84,14 @@ func parseAttachments(raw []attachmentIn) ([]agent.Part, error) {
 		if total > maxAttachmentsTotal {
 			return nil, errors.New("attachments too large overall")
 		}
-		// 校验用入站字节（DoS 防线），落库/上送用归一化结果（见 imgnorm.go）。
+		if isPDF {
+			docParts, err := expandPDF(ctx, data, a.Filename)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, docParts...)
+			continue
+		}
 		norm, mediaType := normalizeImage(data, a.MediaType)
 		b64 := a.DataB64
 		if len(norm) != len(data) {
@@ -153,7 +171,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad JSON: "+err.Error())
 		return
 	}
-	atts, err := parseAttachments(body.Attachments)
+	atts, err := parseAttachments(r.Context(), body.Attachments)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -398,7 +416,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 校验必须赶在 WriteHeader(200) 之前，坏附件还能以 400 回绝。
-	atts, err := parseAttachments(body.Attachments)
+	atts, err := parseAttachments(r.Context(), body.Attachments)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return

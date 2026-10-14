@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"hash/crc32"
@@ -240,7 +241,7 @@ func TestNormalizeImageRefusesToDecodeHugeDeclaredCanvas(t *testing.T) {
 // 校验（大小/总量）仍按入站字节，归一化只作用于通过校验之后。
 func TestParseAttachmentsNormalizesLargeImage(t *testing.T) {
 	src := encodePNG(t, noiseGray(2400, 1800)) // ≈4.3MB：在 10MB 入站上限内，像素超预算
-	parts, err := parseAttachments([]attachmentIn{{
+	parts, err := parseAttachments(context.Background(), []attachmentIn{{
 		Kind: "image", MediaType: "image/png", DataB64: base64.StdEncoding.EncodeToString(src),
 	}})
 	if err != nil {

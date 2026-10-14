@@ -25,12 +25,19 @@ func Estimate(history []agent.Message, overhead int) int {
 	return (overhead + Rough(history)) * 11 / 10
 }
 
-// Rough 按字符粗估一组消息的 token 数，只算会发给 API 的字段：Content 与
-// tool_calls 的 name/arguments；不含 Thinking（它不回传）。
+// Rough 按字符粗估一组消息的 token 数，只算会发给 API 的字段：Content、
+// document 分片的 Text 与 tool_calls 的 name/arguments；不含 Thinking（它
+// 不回传），也不含 image 分片的 base64——图被转成视觉 token，字符数
+// 不代表其成本，保持既有低估语义。
 func Rough(msgs []agent.Message) int {
 	n := 0
 	for _, m := range msgs {
 		n += msgOverhead + TextTokens(m.Content)
+		for _, p := range m.Parts {
+			if p.Kind == agent.PartDocument {
+				n += TextTokens(p.Text)
+			}
+		}
 		for _, tc := range m.ToolCalls {
 			n += TextTokens(tc.Name) + TextTokens(string(tc.Arguments))
 		}

@@ -342,7 +342,7 @@ func (s *Store) Append(ctx context.Context, msg agent.Message) (int64, error) {
 			if name == "" {
 				name = msg.Parts[0].MediaType
 			}
-			title = truncateRunes("[image: "+name+"]", titleMaxRunes)
+			title = truncateRunes("["+msg.Parts[0].Kind+": "+name+"]", titleMaxRunes)
 		}
 		if _, err = tx.ExecContext(ctx,
 			`UPDATE sessions SET title = ? WHERE id = ? AND title = ''`,

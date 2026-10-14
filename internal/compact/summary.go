@@ -154,15 +154,18 @@ func renderEvent(b *strings.Builder, m agent.Message, toolChars int) {
 		}
 		fmt.Fprintf(b, "[%s]\n%s\n", label, clip(m.Content, toolChars))
 	}
-	// 附件分片只以占位进摘要（§7b 决策）：base64 绝不进摘要提示词，
-	// 摘要只需知道"这里有一张图"。被折叠掉的分片随消息一起离开视图，
-	// 生命周期与 Content 相同。
+	// 附件分片进摘要的形态按 kind 区分：image 只留占位（base64 绝不进摘要
+	// 提示词），document 留裁剪后的文字摘录——否则 PDF 一问就被折叠成
+	// "这里有个文件"，后续追问失去内容。clip 预算与工具结果共用 toolChars。
 	for _, p := range m.Parts {
 		name := p.Filename
 		if name == "" {
 			name = p.MediaType
 		}
-		fmt.Fprintf(b, "[image: %s]\n", name)
+		fmt.Fprintf(b, "[%s: %s]\n", p.Kind, name)
+		if p.Kind == agent.PartDocument && p.Text != "" {
+			fmt.Fprintf(b, "%s\n", clip(p.Text, toolChars))
+		}
 	}
 }
 

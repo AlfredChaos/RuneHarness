@@ -7,3 +7,4 @@ runebot.pid
 .env
 *.db
 tasks/
+tmp_probe/

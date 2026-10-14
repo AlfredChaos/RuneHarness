@@ -498,8 +498,8 @@ data: {"seq":144,…,"event":"turn_end","data":{"status":"completed","turn_seq":
         <table>
           <thead><tr><th>字段</th><th>约束</th></tr></thead>
           <tbody>
-            <tr><td><code>kind</code></td><td>必填，当前只接受 <code>"image"</code>；其余值报 <code>unsupported attachment kind</code></td></tr>
-            <tr><td><code>media_type</code></td><td>必填，须以 <code>image/</code> 为前缀（其余宽松放行）</td></tr>
+            <tr><td><code>kind</code></td><td>必填，<code>"image"</code> 或 <code>"document"</code>（PDF）；其余值报 <code>unsupported attachment kind</code></td></tr>
+            <tr><td><code>media_type</code></td><td>必填，image 须以 <code>image/</code> 为前缀；document 只认 <code>application/pdf</code></td></tr>
             <tr><td><code>filename</code></td><td>可选展示名，≤255 字节</td></tr>
             <tr><td><code>data_b64</code></td><td>必填，标准 base64（不带 <code>data:</code> 前缀）；解码失败报 <code>invalid base64 attachment</code></td></tr>
             <tr><td><code>detail</code></td><td>可选，仅 <code>"" | auto | low | high</code>；<b><code>"default" 不存在</code></b>（SDK 客户端侧校验会拒绝），其余值同样拒绝</td></tr>
@@ -514,6 +514,13 @@ data: {"seq":144,…,"event":"turn_end","data":{"status":"completed","turn_seq":
         <code>attachment too large</code> / <code>attachments too large overall</code>。</p>
       <p class="src">附件分片随 user 消息持久化、随历史与 API 回传；面对纯文本模型时，
         图片分片在发送形态里降级为占位文本 <code>[image omitted: model is text-only]</code>。</p>
+      <div class="lbl">PDF 附件（kind=document）的服务端行为</div>
+      <p>服务端用 poppler 抽取 PDF 文字层：一个入站 PDF 展开成一个 document 分片
+        （抽出全文，按页标注）加零到若干 image 分片——只覆盖<b>文字层不足或位图占比高</b>
+        的页面（扫描件、截图型幻灯片）。纯文字 PDF 不产生图片。页数上限 40、
+        渲染上限 8 页/份、文字上限 8 万字符，超出在分片文字里如实标注。
+        加密/损坏/超时的 PDF 不会 400：消息照常入队，document 分片里带一条
+        「此文件打不开」的说明，由模型转告用户。PDF 原始二进制不入库。</p>
     </section>
 
     <!-- ============ 5. 只读端点 ============ -->

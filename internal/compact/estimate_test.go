@@ -42,3 +42,16 @@ func TestEstimateWithoutAnchor(t *testing.T) {
 		t.Fatalf("Estimate = %d, want %d", got, want)
 	}
 }
+
+// document 分片的 Text 会计入粗估：一整份 PDF（数万字）如果不可见，
+// 首轮带大 PDF 时 autocompact 的预估会漏掉最大头。image 的 DataB64 不计
+// （视觉 token 成本与字符数无关，沿用既有低估语义）。
+func TestRoughCountsDocumentText(t *testing.T) {
+	msgs := []agent.Message{{Role: agent.RoleUser, Content: "hi", Parts: []agent.Part{
+		{Kind: agent.PartDocument, Text: strings.Repeat("a", 800)},
+		{Kind: agent.PartImage, DataB64: strings.Repeat("x", 40000)},
+	}}}
+	if got, want := Rough(msgs), msgOverhead+1+200; got != want {
+		t.Fatalf("Rough = %d, want %d (content + doc text only)", got, want)
+	}
+}

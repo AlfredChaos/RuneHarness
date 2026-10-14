@@ -21,6 +21,7 @@ FROM alpine:3.20
 RUN apk add --no-cache \
         ca-certificates \
         poppler-utils \
+        poppler-data \
         mupdf-tools \
     && adduser -D -u 1000 rune \
     && install -d -o rune -g rune /home/rune/.rune

@@ -20,17 +20,26 @@ type ToolCall struct {
 }
 
 // Part 是消息携带的一个附件内容分片，随消息落库并回传 API；纯文本仍在
-// Content。当前只产 image 一种（kind），其余取值预留。
+// Content。Kind 取值见 PartImage / PartDocument。
 type Part struct {
-	Kind      string // "image"
-	MediaType string // "image/png"
+	Kind      string // PartImage | PartDocument
+	MediaType string // "image/png" | "application/pdf"
 	Filename  string // 展示名，可为空
-	DataB64   string // base64 载荷，不带 data: 前缀
+	DataB64   string // base64 载荷，不带 data: 前缀；document 分片不带载荷
 	Detail    string // 可选 image detail，仅 auto/low/high（SDK marshal 校验）；空 = 不发送（见 llm.toParams 的枚举注释）
+	// Text 是 document 分片从原文件抽出的文本（网关入站时一次性抽好，历史重放不重抽）。
+	// omitempty：image 分片的序列化字节与引入本字段之前逐位一致——Parts 参与
+	// 重放哈希（view.go），多一个恒出现的空字段会让存量图片消息的哈希漂移。
+	Text string `json:"Text,omitempty"`
 }
 
 // Part.Kind 的取值。
-const PartImage = "image"
+const (
+	PartImage = "image"
+	// PartDocument 是文档（目前只有 PDF）的文字分片：Text 是抽出的文字；
+	// 其中图像为主/无文字层的页面另以 PartImage 分片紧随其后（见 internal/pdfdoc）。
+	PartDocument = "document"
+)
 
 // Kind 区分消息行的类型。零值是普通消息；控制行不进发送形态，只记录
 // 压缩决策，读侧组装视图时消费（见 session.Fold）。
