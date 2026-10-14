@@ -147,17 +147,18 @@ func parseLimit(apiErr *openai.Error) int {
 
 // toParams 是发送形态的唯一 marshal 点：按角色选 SDK 便捷构造；带附件
 // 分片的 user 消息改走 content parts 数组（需要 model 做视觉能力门控）。
-//
-// 历史重放只放行最后一条带图消息的真实 Parts：更早的带图消息降级为占位
-// 文本。持久化的图片 base64 每轮随历史重发会让每次调用多扛 ~MB 级上行，
-// 视觉端点对大图慢且不稳（真机观测 120s requestTimeout 整轮 error）——
-// 这是"发过一次图之后每轮都超时"的结构性成因。当前轮的图必在最后一条
-// 带图消息上，语义不受损；更早的图在 transcript 里仍完整，只是不再喂给模型。
+// 只有最后一条 user 消息（本轮输入）可以携带 Parts：更早消息里的附件
+// 分片降级为占位文本。持久化的图片 base64 若随历史每轮重放，每次调用
+// 都多扛 ~MB 级上行，视觉端点对大图慢且不稳（真机观测 120s requestTimeout
+// 整轮 error）——"发过一次图之后每轮都超时"的结构性成因，只放行最新
+// 带图消息仍会让图后每轮背着大图（真机复测 ~61s，大图照样撞 120s）。
+// 模型被问到旧图时凭此前的文字描述与占位标记作答，宁可说"看不到原图"
+// 也好过整轮超时。transcript 存储不变，只裁剪发送形态。
 func toParams(history []agent.Message, model string) []openai.ChatCompletionMessageParamUnion {
-	lastImg := -1
+	lastUser := -1
 	for i, m := range history {
-		if m.Role == agent.RoleUser && hasImagePart(m) {
-			lastImg = i
+		if m.Role == agent.RoleUser {
+			lastUser = i
 		}
 	}
 	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(history))
@@ -167,10 +168,10 @@ func toParams(history []agent.Message, model string) []openai.ChatCompletionMess
 			out = append(out, openai.SystemMessage(m.Content))
 		case agent.RoleUser:
 			if len(m.Parts) > 0 {
-				if i != lastImg && hasImagePart(m) {
-					// 非当前轮的带图历史：parts 全量换占位文本（见函数头注释）
+				if i < lastUser {
+					// 非本轮的带附件历史：parts 全量换占位文本（见函数头注释）
 					m.Parts = nil
-					m.Content = joinContent(m.Content, "[image omitted: replayed history]")
+					m.Content = joinContent(m.Content, "[attachments omitted: replayed history]")
 				}
 				out = append(out, userParam(m, model))
 			} else {
@@ -183,15 +184,6 @@ func toParams(history []agent.Message, model string) []openai.ChatCompletionMess
 		}
 	}
 	return out
-}
-
-func hasImagePart(m agent.Message) bool {
-	for _, p := range m.Parts {
-		if p.Kind == agent.PartImage {
-			return true
-		}
-	}
-	return false
 }
 
 func joinContent(a, b string) string {

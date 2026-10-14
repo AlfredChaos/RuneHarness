@@ -156,25 +156,33 @@ func TestToParamsWithoutPartsUnchanged(t *testing.T) {
 	}
 }
 
-// 历史图片防重放毒化：只有最后一条带图消息的 Parts 上 wire，更早的降级为
-// 占位文本——否则持久化 base64 每轮随行，大图把调用拖到 requestTimeout。
-// 回归现场：真机图片轮后连纯文本轮也 120s context deadline exceeded。
-func TestToParamsOnlyLatestImageKept(t *testing.T) {
+// 历史附件防重放毒化：只有最后一条 user 消息（本轮输入）携带 Parts，
+// 更早的降级为占位文本——持久化 base64 若每轮随行，大图把调用拖到
+// requestTimeout。回归现场：真机图片轮后连纯文本轮也 120s deadline exceeded；
+// 只放行最新带图消息时图后每轮仍 ~61s（仍可能撞线）。
+func TestToParamsOnlyCurrentTurnKeepsParts(t *testing.T) {
 	hist := []agent.Message{
 		{Role: agent.RoleUser, Content: "旧图",
 			Parts: []agent.Part{{Kind: agent.PartImage, MediaType: "image/png", DataB64: "T0xESU1BR0U="}}},
 		{Role: agent.RoleAssistant, Content: "看到了"},
-		{Role: agent.RoleUser, Content: "新图",
-			Parts: []agent.Part{{Kind: agent.PartImage, MediaType: "image/jpeg", DataB64: "TkVXSU1BR0U="}}},
+		{Role: agent.RoleUser, Content: "刚才那张图左边是什么？"}, // 本轮纯文本：旧图必须剥离
 	}
 	body := marshalBody(t, hist, "minimax-m3")
 	if strings.Contains(body, "T0xESU1BR0U=") {
-		t.Errorf("stale image payload leaked into wire:\n%s", body)
+		t.Errorf("historical image payload leaked into wire:\n%s", body)
 	}
-	if !strings.Contains(body, "[image omitted: replayed history]") {
-		t.Errorf("stale image must degrade to placeholder text:\n%s", body)
+	if !strings.Contains(body, "[attachments omitted: replayed history]") {
+		t.Errorf("historical image must degrade to placeholder:\n%s", body)
 	}
-	if !strings.Contains(body, "data:image/jpeg;base64,TkVXSU1BR0U=") {
-		t.Errorf("latest image must keep real parts:\n%s", body)
+
+	// 本轮就是带图消息：Parts 正常上 wire
+	hist2 := append(hist[:2:2], agent.Message{Role: agent.RoleUser, Content: "再看",
+		Parts: []agent.Part{{Kind: agent.PartImage, MediaType: "image/jpeg", DataB64: "TkVXSU1BR0U="}}})
+	body2 := marshalBody(t, hist2, "minimax-m3")
+	if !strings.Contains(body2, "data:image/jpeg;base64,TkVXSU1BR0U=") {
+		t.Errorf("current-turn image must keep real parts:\n%s", body2)
+	}
+	if strings.Contains(body2, "T0xESU1BR0U=") {
+		t.Errorf("older image still leaked:\n%s", body2)
 	}
 }
