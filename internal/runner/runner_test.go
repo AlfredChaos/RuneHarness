@@ -347,3 +347,35 @@ func TestOnTurnCompleteSkippedOnErrorTurn(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// SubscribeLive 是 /stream 的订阅原语：只转发订阅后新事件，绝不回放账本。
+// 回归背景：/stream 此前误用 Subscribe(since=0)（=回放全部缓存），客户端
+// 在旧轮回放的 turn_end 处提前收流。
+func TestSubscribeLiveSkipsLedgerReplay(t *testing.T) {
+	m := NewManager(Config{}, fakeHarness(func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+		return append(hist, agent.Message{Role: agent.RoleAssistant, Content: "ok"}), nil
+	}), newFakeStore(), nil)
+	ctx := context.Background()
+	if err := m.Submit(ctx, key(), TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for m.Active(ctx, key()) {
+		if time.Now().After(deadline) {
+			t.Fatal("turn never finished")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	ch, latest, err := m.SubscribeLive(ctx, key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest < 1 {
+		t.Fatalf("latest = %d, want >= 1", latest)
+	}
+	select {
+	case ev := <-ch:
+		t.Fatalf("live-only subscription replayed %s seq=%d from ledger history", ev.Event, ev.Seq)
+	case <-time.After(120 * time.Millisecond):
+	}
+}

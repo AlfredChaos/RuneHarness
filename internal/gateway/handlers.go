@@ -411,8 +411,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(200)
 
-	// 先订阅再提交，保证本轮事件不落在订阅窗口之外。
-	ch, _, err := s.Mgr.Subscribe(r.Context(), key, 0)
+	// 先订阅再提交，保证本轮事件不落在订阅窗口之外。live-only：不回放
+	// 账本存量——since=0 的全量重放会让客户端在旧轮 turn_end 处提前收流
+	// （回归见 TestStreamCarriesOnlyOwnTurn）。
+	ch, _, err := s.Mgr.SubscribeLive(r.Context(), key)
 	if err != nil {
 		writeNDJSON(w, runner.Event{Event: runner.EvError, ChatID: key.ChatID,
 			At: time.Now().UnixMilli(), Data: mustErrJSON(err.Error())})
@@ -450,6 +452,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				"frames", frames, "elapsed", time.Since(started).String())
 		}
 	}()
+	// 本流只承载本次提交引发的轮次：以首个 turn_start 锚定本轮 turn_id，
+	// 之前的残流帧（如上一轮 turn_end 已 emit、busy 尚未清零的窗口内到达
+	// 的尾帧）与其它轮次的事件一律不转发。QueueDepth=0 下 Submit 被接受后
+	// 不可能有别的轮次插队，首个 turn_start 必属本轮。
+	var turn string
 	for {
 		select {
 		case <-r.Context().Done():
@@ -463,6 +470,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		case ev, ok := <-ch:
 			if !ok {
 				return
+			}
+			if turn == "" {
+				if ev.Event != runner.EvTurnStart {
+					continue
+				}
+				turn = ev.TurnID
+			}
+			if ev.TurnID != turn {
+				continue
 			}
 			frames++
 			writeNDJSON(w, ev)

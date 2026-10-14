@@ -384,6 +384,40 @@ func (m *Manager) Subscribe(ctx context.Context, key ChatKey, since int64) (<-ch
 	return out, latest, nil
 }
 
+// SubscribeLive 只转发订阅建立之后产生的事件，不回放账本存量。
+// 给 /stream 这类“提交+收流”端点用：先订阅再提交，本次请求引发的轮次
+// 必然落在订阅窗口内；订阅早于 Submit 建立也不会引入旧轮重放。
+// （Subscribe 的 since=0 语义是“回放全部缓存”，那是断线续传场景的约定，
+// 混用到 /stream 上会让客户端在旧轮的 turn_end 处提前收流。）
+func (m *Manager) SubscribeLive(ctx context.Context, key ChatKey) (<-chan Event, int64, error) {
+	s, err := m.slotFor(ctx, key)
+	if err != nil {
+		return nil, 0, err
+	}
+	live, unsub := s.ledger.Subscribe()
+	latest := s.ledger.Latest()
+	out := make(chan Event, 256)
+	go func() {
+		defer unsub()
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-live:
+				if !ok {
+					return
+				}
+				select {
+				case out <- ev:
+				default: // 慢消费者丢帧，读端按 seq 间隙自检（与 Subscribe 一致）
+				}
+			}
+		}
+	}()
+	return out, latest, nil
+}
+
 // Active 报告该 chat 是否有在跑或排队的轮次（给 GET /v1/chats 列表用）。
 func (m *Manager) Active(ctx context.Context, key ChatKey) bool {
 	m.mu.Lock()
