@@ -12,6 +12,14 @@
 # 权限注意：镜像 USER rune（uid 1000），而 hostPath /home/ubuntu/runebot-data
 # 现有文件属 root——apply 前 chown -R 1000:1000 /home/ubuntu/runebot-data，
 # 否则进程写 sessions.db/memory.db 报权限错。
+#
+# 模型端点（Secret runebot-env 的 OPENAI_BASE_URL，不入库）：MiniMax 必须用
+# https://api.minimaxi.com/v1，不要用 api.minimax.cn。同一把 key、同一请求，
+# 从 bangkok 实测：.cn 上传 300KB 请求体 34.6s，.com 0.57s（.cn 的 DNS 回国内
+# 5 个 IP，对曼谷是跨境慢链路）。文本请求体几百字节感觉不到，带图（数百 KB～MB 级
+# base64）就整轮撞 120s requestTimeout。切换：kubectl -n nanobot patch secret
+# runebot-env --type merge -p '{"stringData":{"OPENAI_BASE_URL":"..."}}' 后
+# rollout restart（env 只在启动时读）。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,7 +39,7 @@ spec:
     spec:
       containers:
       - name: runebot
-        image: runebot:streamfix4
+        image: runebot:streamfix5
         imagePullPolicy: Never
         ports:
         - containerPort: 18765
