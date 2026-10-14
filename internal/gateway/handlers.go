@@ -73,9 +73,15 @@ func parseAttachments(raw []attachmentIn) ([]agent.Part, error) {
 		if total > maxAttachmentsTotal {
 			return nil, errors.New("attachments too large overall")
 		}
+		// 校验用入站字节（DoS 防线），落库/上送用归一化结果（见 imgnorm.go）。
+		norm, mediaType := normalizeImage(data, a.MediaType)
+		b64 := a.DataB64
+		if len(norm) != len(data) {
+			b64 = base64.StdEncoding.EncodeToString(norm)
+		}
 		parts = append(parts, agent.Part{
-			Kind: a.Kind, MediaType: a.MediaType, Filename: a.Filename,
-			DataB64: a.DataB64, Detail: a.Detail,
+			Kind: a.Kind, MediaType: mediaType, Filename: a.Filename,
+			DataB64: b64, Detail: a.Detail,
 		})
 	}
 	return parts, nil
