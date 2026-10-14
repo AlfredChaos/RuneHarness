@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
       - name: runebot
-        image: runebot:streamfix1
+        image: runebot:streamfix2
         imagePullPolicy: Never
         ports:
         - containerPort: 18765
