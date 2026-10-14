@@ -155,3 +155,26 @@ func TestToParamsWithoutPartsUnchanged(t *testing.T) {
 		t.Errorf("empty Content must not produce an empty text part, got: %s", body)
 	}
 }
+
+// 历史图片防重放毒化：只有最后一条带图消息的 Parts 上 wire，更早的降级为
+// 占位文本——否则持久化 base64 每轮随行，大图把调用拖到 requestTimeout。
+// 回归现场：真机图片轮后连纯文本轮也 120s context deadline exceeded。
+func TestToParamsOnlyLatestImageKept(t *testing.T) {
+	hist := []agent.Message{
+		{Role: agent.RoleUser, Content: "旧图",
+			Parts: []agent.Part{{Kind: agent.PartImage, MediaType: "image/png", DataB64: "T0xESU1BR0U="}}},
+		{Role: agent.RoleAssistant, Content: "看到了"},
+		{Role: agent.RoleUser, Content: "新图",
+			Parts: []agent.Part{{Kind: agent.PartImage, MediaType: "image/jpeg", DataB64: "TkVXSU1BR0U="}}},
+	}
+	body := marshalBody(t, hist, "minimax-m3")
+	if strings.Contains(body, "T0xESU1BR0U=") {
+		t.Errorf("stale image payload leaked into wire:\n%s", body)
+	}
+	if !strings.Contains(body, "[image omitted: replayed history]") {
+		t.Errorf("stale image must degrade to placeholder text:\n%s", body)
+	}
+	if !strings.Contains(body, "data:image/jpeg;base64,TkVXSU1BR0U=") {
+		t.Errorf("latest image must keep real parts:\n%s", body)
+	}
+}
