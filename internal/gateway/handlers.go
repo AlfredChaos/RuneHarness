@@ -147,13 +147,14 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad JSON: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(body.Content) == "" {
-		writeErr(w, 400, "content is empty")
-		return
-	}
 	atts, err := parseAttachments(body.Attachments)
 	if err != nil {
 		writeErr(w, 400, err.Error())
+		return
+	}
+	// 与 /stream 同一规则：带附件允许空正文（纯图片消息），否则仍 400。
+	if strings.TrimSpace(body.Content) == "" && len(atts) == 0 {
+		writeErr(w, 400, "content is empty")
 		return
 	}
 	err = s.Mgr.Submit(r.Context(), key, runner.TurnInput{
@@ -390,14 +391,16 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad JSON: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(body.Content) == "" {
-		writeErr(w, 400, "content is empty")
-		return
-	}
 	// 校验必须赶在 WriteHeader(200) 之前，坏附件还能以 400 回绝。
 	atts, err := parseAttachments(body.Attachments)
 	if err != nil {
 		writeErr(w, 400, err.Error())
+		return
+	}
+	// 正文允许为空，当且仅当带附件：纯图片消息 content 为空是合法形态
+	// （转 multi-part 后首个分片就是 image）；无附件的空提交仍是 400。
+	if strings.TrimSpace(body.Content) == "" && len(atts) == 0 {
+		writeErr(w, 400, "content is empty")
 		return
 	}
 	flusher, ok := w.(http.Flusher)

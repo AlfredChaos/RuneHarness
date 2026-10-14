@@ -9,7 +9,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -88,5 +90,49 @@ func TestStreamCarriesOnlyOwnTurn(t *testing.T) {
 	}
 	if starts != 1 || ends != 1 || deltas == 0 {
 		t.Fatalf("frame counts starts=%d ends=%d deltas=%d, want 1/1/>=1", starts, ends, deltas)
+	}
+}
+
+// 纯图片消息（空正文 + 附件）合法：附件先校验，正文仅在无附件时要求非空。
+func TestEmptyContentAllowedWithAttachments(t *testing.T) {
+	ts, users := newCaptureServer(t)
+	defer ts.Close()
+
+	// /stream：空正文 + 图片附件 → 200 收完本轮，user 消息带 Parts、正文为空
+	resp := postJSON(t, ts.URL+"/v1/chats/demo/stream",
+		`{"content":"","attachments":[{"kind":"image","media_type":"image/jpeg","data_b64":"/9j/wA=="}]}`)
+	sc := bufio.NewScanner(resp.Body)
+	sawEnd := false
+	for sc.Scan() {
+		if strings.Contains(sc.Text(), `"event":"turn_end"`) {
+			sawEnd = true
+			break
+		}
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !sawEnd {
+		t.Fatalf("stream = %d sawEnd=%v, want 200 with turn_end", resp.StatusCode, sawEnd)
+	}
+	got := waitUser(t, users)
+	if got.Content != "" || len(got.Parts) != 1 {
+		t.Fatalf("user msg content=%q parts=%d, want empty content with 1 image part", got.Content, len(got.Parts))
+	}
+
+	// /messages：同一规则
+	resp2 := postJSON(t, ts.URL+"/v1/chats/demo2/messages",
+		`{"content":"","attachments":[{"kind":"image","media_type":"image/png","data_b64":"aGk="}]}`)
+	resp2.Body.Close()
+	if resp2.StatusCode != 202 {
+		t.Fatalf("POST = %d, want 202", resp2.StatusCode)
+	}
+
+	// 无附件的空提交仍是 400（两个入口都验）
+	for _, path := range []string{"/v1/chats/demo/messages", "/v1/chats/demo/stream"} {
+		r := postJSON(t, ts.URL+path, `{"content":"  "}`)
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if r.StatusCode != 400 || !strings.Contains(string(b), "content is empty") {
+			t.Fatalf("%s = %d %s, want 400 content is empty", path, r.StatusCode, b)
+		}
 	}
 }
