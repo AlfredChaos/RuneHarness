@@ -74,6 +74,10 @@ spec:
           value: "high"
         - name: RUNE_MAX_COMPLETION_TOKENS
           value: "8192"
+        # 定时任务开关：RUNE_CRON 修通了 cfg.Cron→调度器点火的链路，
+        # 显式开。secret 里的 RUNE_CRON=false 被 env 段覆盖（同名键 env 优先）。
+        - name: RUNE_CRON
+          value: "true"
         envFrom:
         - secretRef:
             name: runebot-env
