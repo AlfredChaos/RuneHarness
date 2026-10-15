@@ -58,13 +58,13 @@ func parseAttachments(ctx context.Context, raw []attachmentIn) ([]agent.Part, er
 				return nil, errors.New("attachment media_type must be image/*")
 			}
 		case agent.PartDocument:
-			if a.MediaType != "application/pdf" {
-				return nil, errors.New("document attachments must be application/pdf")
+			if !docMediaOK(a.MediaType) {
+				return nil, errors.New("unsupported document media_type")
 			}
 		default:
 			return nil, errors.New("unsupported attachment kind")
 		}
-		isPDF := a.Kind == agent.PartDocument
+		isDoc := a.Kind == agent.PartDocument
 		if len(a.Filename) > 255 {
 			return nil, errors.New("attachment filename too long")
 		}
@@ -84,8 +84,8 @@ func parseAttachments(ctx context.Context, raw []attachmentIn) ([]agent.Part, er
 		if total > maxAttachmentsTotal {
 			return nil, errors.New("attachments too large overall")
 		}
-		if isPDF {
-			docParts, err := expandPDF(ctx, data, a.Filename)
+		if isDoc {
+			docParts, err := expandDocument(ctx, data, a.Filename)
 			if err != nil {
 				return nil, err
 			}

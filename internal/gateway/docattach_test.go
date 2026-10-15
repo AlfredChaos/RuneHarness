@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"runeharness/internal/agent"
+	"runeharness/internal/officedoc"
 	"runeharness/internal/pdfdoc"
 )
 
@@ -54,7 +55,8 @@ func TestParseAttachmentsPDFExpands(t *testing.T) {
 		t.Fatalf("doc part must carry extracted text, got %q", doc.Text)
 	}
 	scan := parts[1]
-	if scan.Kind != agent.PartImage || scan.MediaType != "image/jpeg" || scan.Filename != "report.pdf" {
+	// 渲染页文件名带页码后缀（"report.pdf p.2"），便于模型按页引用。
+	if scan.Kind != agent.PartImage || scan.MediaType != "image/jpeg" || !strings.HasPrefix(scan.Filename, "report.pdf p.") {
 		t.Fatalf("scan part malformed: %+v", scan)
 	}
 	if got := scan.DataB64; got != base64.StdEncoding.EncodeToString([]byte("\xff\xd8jpeg")) {
@@ -86,14 +88,15 @@ func TestParseAttachmentsPDFFailureBecomesNote(t *testing.T) {
 	}
 }
 
-// 校验顺序：document 只认 application/pdf；其它类型、其它 kind 一概拒绝。
+// 校验顺序：document 认文档类 media_type（具体类型由 officedoc 按文件名路由）；
+// 其它 kind、明显非文档的 media_type 一概拒绝。
 func TestParseAttachmentsDocumentValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		in   attachmentIn
 		want string
 	}{
-		{"doc wrong media type", attachmentIn{Kind: agent.PartDocument, MediaType: "application/msword", Filename: "a.doc"}, "application/pdf"},
+		{"doc video type", attachmentIn{Kind: agent.PartDocument, MediaType: "video/mp4", Filename: "a.mp4"}, "document media_type"},
 		{"doc pdf but empty b64", attachmentIn{Kind: agent.PartDocument, MediaType: "application/pdf", Filename: "a.pdf", DataB64: "!!!"}, "invalid base64"},
 		{"unknown kind", attachmentIn{Kind: "video", MediaType: "video/mp4"}, "unsupported"},
 		{"image mislabeled pdf", attachmentIn{Kind: agent.PartImage, MediaType: "application/pdf"}, "image/*"},
@@ -102,6 +105,57 @@ func TestParseAttachmentsDocumentValidation(t *testing.T) {
 			t.Errorf("%s: want error containing %q, got %v", tc.name, tc.want, err)
 		}
 	}
+}
+
+// Office/HTML 走 officedoc：document 分片只带文字，不产图片分片。
+func TestParseAttachmentsOfficeExpands(t *testing.T) {
+	var gotName string
+	old := officeExtract
+	officeExtract = func(_ context.Context, data []byte, name string) (string, error) {
+		gotName = name
+		return "合同正文 88,000 元", nil
+	}
+	t.Cleanup(func() { officeExtract = old })
+	in := attachmentIn{Kind: agent.PartDocument, MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		Filename: "contract.docx", DataB64: base64.StdEncoding.EncodeToString([]byte("PK\x03\x04fake"))}
+	parts, err := parseAttachments(context.Background(), []attachmentIn{in})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotName != "contract.docx" {
+		t.Fatalf("officedoc got name %q", gotName)
+	}
+	if len(parts) != 1 || parts[0].Kind != agent.PartDocument || !strings.Contains(parts[0].Text, "88,000") {
+		t.Fatalf("office part malformed: %+v", parts)
+	}
+	// media_type 缺失时（octet-stream）也放行：类型由 officedoc 按扩展名判
+	in2 := attachmentIn{Kind: agent.PartDocument, MediaType: "application/octet-stream",
+		Filename: "book.xls", DataB64: base64.StdEncoding.EncodeToString(ole2magic())}
+	if _, err := parseAttachments(context.Background(), []attachmentIn{in2}); err != nil {
+		t.Fatalf("octet-stream + .xls must be allowed: %v", err)
+	}
+}
+
+// office 失败同样落成说明分片。
+func TestParseAttachmentsOfficeFailureBecomesNote(t *testing.T) {
+	old := officeExtract
+	officeExtract = func(context.Context, []byte, string) (string, error) {
+		return "", officedoc.ErrInvalid
+	}
+	t.Cleanup(func() { officeExtract = old })
+	in := attachmentIn{Kind: agent.PartDocument, MediaType: "application/octet-stream",
+		Filename: "x.docx", DataB64: base64.StdEncoding.EncodeToString([]byte("PKbad"))}
+	parts, err := parseAttachments(context.Background(), []attachmentIn{in})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 || parts[0].Kind != agent.PartDocument || !strings.Contains(parts[0].Text, "could not be read") {
+		t.Fatalf("office failure must degrade to note: %+v", parts)
+	}
+}
+
+func ole2magic() []byte {
+	return append([]byte("\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"), make([]byte, 128)...)
 }
 
 // 图片路径不受影响：image 走 normalizeImage，不触发抽取器。

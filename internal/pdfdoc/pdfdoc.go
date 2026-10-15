@@ -14,12 +14,10 @@
 package pdfdoc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -27,6 +25,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"runeharness/internal/cmdrun"
 )
 
 // 失败分类。调用方据此渲染面向用户的说明（Note），而不是让整条消息失败：
@@ -34,8 +34,8 @@ import (
 var (
 	ErrInvalid      = errors.New("not a readable PDF")
 	ErrEncrypted    = errors.New("PDF is password-protected or restricts text access")
-	ErrToolsMissing = errors.New("PDF tools are not installed on the server")
-	ErrTimeout      = errors.New("PDF processing timed out")
+	ErrToolsMissing = cmdrun.ErrToolsMissing // 别名：缺 poppler 二进制
+	ErrTimeout      = cmdrun.ErrTimeout      // 别名：整条抽取超时
 )
 
 // Options 是单个文档的处理上限；零值取默认。
@@ -59,11 +59,9 @@ const (
 	renderLongSide = 2000
 	renderQuality  = "85"
 
-	cmdTimeout     = 20 * time.Second
-	totalTimeout   = 60 * time.Second
-	maxTextBytes   = 4 << 20 // pdftotext 标准输出缓冲上限；业务上限是 MaxTextRunes，这只是防失控
-	maxStderrBytes = 8 << 10
-	maxConcurrent  = 2 // 同时处理的文档数：每个 poppler 进程峰值 ~100MB，pod 内存有限
+	cmdTimeout    = 20 * time.Second
+	totalTimeout  = 60 * time.Second
+	maxConcurrent = 2 // 同时处理的文档数：每个 poppler 进程峰值 ~100MB，pod 内存有限
 )
 
 func (o Options) withDefaults() Options {
@@ -93,7 +91,7 @@ type Result struct {
 }
 
 // runFunc 执行外部命令；可注入，测试用假实现。
-type runFunc func(ctx context.Context, name string, args ...string) (stdout []byte, err error)
+type runFunc = cmdrun.RunFunc
 
 // Extractor 持有并发闸与命令执行器。
 type Extractor struct {
@@ -103,7 +101,7 @@ type Extractor struct {
 
 // New 返回用真实 poppler 的 Extractor。
 func New() *Extractor {
-	return &Extractor{run: execRun, sem: make(chan struct{}, maxConcurrent)}
+	return &Extractor{run: cmdrun.Exec, sem: make(chan struct{}, maxConcurrent)}
 }
 
 var defaultExtractor = New()
@@ -440,18 +438,7 @@ func joinInts(ns []int) string {
 	return strings.Join(s, ", ")
 }
 
-// ---- 命令执行 ----
-
-// cmdError 是外部命令的非零退出，带 stderr 以便分类。
-type cmdError struct {
-	name   string
-	code   int
-	stderr string
-}
-
-func (e *cmdError) Error() string {
-	return fmt.Sprintf("%s exited %d: %s", e.name, e.code, strings.TrimSpace(e.stderr))
-}
+// ---- 命令执行：共享实现见 internal/cmdrun ----
 
 // classify 把命令错误映射成哨兵错误。poppler 退出码：1 打开失败、2 输出失败、
 // 3 权限限制（拷贝被禁）、99 其他；加密且需口令时 stderr 含 "Incorrect password"。
@@ -464,48 +451,12 @@ func classify(ctx context.Context, err error) error {
 	case errors.Is(ctx.Err(), context.Canceled):
 		return ctx.Err()
 	}
-	var ce *cmdError
+	var ce *cmdrun.CmdError
 	if errors.As(err, &ce) {
-		if ce.code == 3 || strings.Contains(ce.stderr, "Incorrect password") {
-			return fmt.Errorf("%w: %s", ErrEncrypted, strings.TrimSpace(ce.stderr))
+		if ce.Code == 3 || strings.Contains(ce.Stderr, "Incorrect password") {
+			return fmt.Errorf("%w: %s", ErrEncrypted, strings.TrimSpace(ce.Stderr))
 		}
-		return fmt.Errorf("%w: %s", ErrInvalid, strings.TrimSpace(ce.stderr))
+		return fmt.Errorf("%w: %s", ErrInvalid, strings.TrimSpace(ce.Stderr))
 	}
 	return fmt.Errorf("pdfdoc: %w", err)
-}
-
-// capBuffer 只保留前 max 字节、其余丢弃但照常吞掉（避免子进程写满管道阻塞）。
-type capBuffer struct {
-	buf bytes.Buffer
-	max int
-}
-
-func (c *capBuffer) Write(p []byte) (int, error) {
-	if room := c.max - c.buf.Len(); room > 0 {
-		c.buf.Write(p[:min(len(p), room)])
-	}
-	return len(p), nil
-}
-
-func execRun(ctx context.Context, name string, args ...string) ([]byte, error) {
-	if _, err := exec.LookPath(name); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrToolsMissing, name)
-	}
-	ctx, cancel := context.WithTimeout(ctx, cmdTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, errb := &capBuffer{max: maxTextBytes}, &capBuffer{max: maxStderrBytes}
-	cmd.Stdout, cmd.Stderr = out, errb
-	cmd.WaitDelay = 2 * time.Second // ctx 取消后给管道收尾的时间，避免孙进程占着管道卡死 Wait
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && ctx.Err() == nil {
-			return nil, &cmdError{name: name, code: ee.ExitCode(), stderr: errb.buf.String()}
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, err
-	}
-	return out.buf.Bytes(), nil
 }

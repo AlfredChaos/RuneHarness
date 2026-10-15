@@ -23,6 +23,8 @@ RUN apk add --no-cache \
         poppler-utils \
         poppler-data \
         mupdf-tools \
+    && apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing \
+        catdoc \
     && adduser -D -u 1000 rune \
     && install -d -o rune -g rune /home/rune/.rune
 

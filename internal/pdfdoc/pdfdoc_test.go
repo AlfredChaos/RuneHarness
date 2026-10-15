@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"runeharness/internal/cmdrun"
 )
 
 // fakePoppler 按「命令名 → 响应」应答；记录调用，供断言「没多做事」。
@@ -194,9 +196,9 @@ func TestFailureClassification(t *testing.T) {
 		want error
 		note string
 	}{
-		{"invalid", &cmdError{"pdfinfo", 1, "Syntax Error: Couldn't read xref table"}, ErrInvalid, "damaged"},
-		{"encrypted-by-password", &cmdError{"pdfinfo", 1, "Command Line Error: Incorrect password"}, ErrEncrypted, "password-protected"},
-		{"copy-restricted", &cmdError{"pdfinfo", 3, ""}, ErrEncrypted, "password-protected"},
+		{"invalid", &cmdrun.CmdError{Name: "pdfinfo", Code: 1, Stderr: "Syntax Error: Couldn't read xref table"}, ErrInvalid, "damaged"},
+		{"encrypted-by-password", &cmdrun.CmdError{Name: "pdfinfo", Code: 1, Stderr: "Command Line Error: Incorrect password"}, ErrEncrypted, "password-protected"},
+		{"copy-restricted", &cmdrun.CmdError{Name: "pdfinfo", Code: 3}, ErrEncrypted, "password-protected"},
 		{"tools-missing", ErrToolsMissing, ErrToolsMissing, "no PDF tools"},
 		{"timeout", context.DeadlineExceeded, ErrTimeout, "too long"},
 	}
