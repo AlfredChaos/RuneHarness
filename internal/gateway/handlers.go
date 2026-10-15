@@ -301,6 +301,7 @@ func (s *Server) history(ctx context.Context, key runner.ChatKey, before int64, 
 		}
 		items = append(items, map[string]any{
 			"i": m.ID, "role": m.Role, "content": m.Content,
+			"thinking":  m.Thinking, // 推理链随历史下发：客户端给已完成的回复挂可展开的思考块
 			"timestamp": m.CreatedAt, // unix 毫秒，与 DB created_at 同口径
 		})
 	}
