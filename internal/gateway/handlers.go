@@ -22,8 +22,8 @@ import (
 // 附件上限：三条上行轨（WS message 帧、POST /messages、POST /stream）同一套。
 const (
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 单个附件解码后 ≤10MB
-	maxAttachmentsTotal = 30 << 20 // 单轮合计解码后 ≤30MB
+	maxAttachmentBytes  = 220 << 20 // 单个附件解码后 ≤220MB（用户要求 200MB，含零头冗余）
+	maxAttachmentsTotal = 220 << 20 // 单轮合计解码后 ≤220MB（pod 内存 1Gi 容得下 base64 展开）
 )
 
 // attachmentIn 是上游 JSON 里的一个附件对象；三条上行轨同构，detail 非法值

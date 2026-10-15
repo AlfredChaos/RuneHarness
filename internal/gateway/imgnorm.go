@@ -56,9 +56,9 @@ func normalizeImage(data []byte, mediaType string) ([]byte, string) {
 	}
 	// EXIF 方向：stdlib 解码不应用旋转、重编码又会丢掉 EXIF——对「像素横着、EXIF 说竖着」
 	// 的相机照片，缩放后方向标记没了，模型看到的是躺倒的图。手机相机直出多为此形态。
-	// 只有 JPEG 可能带它；有方向标记就不重编码，原样透传（模型端按 EXIF 处理、
-	// 且 JPEG 原图未超 10MB 上限——入站校验已保证）。
-	if format == "jpeg" && hasExifOrientation(data) {
+	// 只有 JPEG 可能带它；有方向标记就不重编码，原样透传（模型端按 EXIF 处理）。
+	// 字节上限收紧到 8MB：200MB 相机原图带 EXIF 也得重编码，否则上游模型吃不下。
+	if format == "jpeg" && hasExifOrientation(data) && len(data) <= 8<<20 {
 		return data, mediaType
 	}
 	src, _, err := image.Decode(bytes.NewReader(data))

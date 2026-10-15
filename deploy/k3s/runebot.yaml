@@ -91,9 +91,9 @@ spec:
             cpu: 50m
             memory: 128Mi
           limits:
-            # poppler 渲染 PDF 页峰值 ~100-150MB/进程，并发闸限 2；512Mi 太紧。
+            # 附件 220MB base64 body ≈ 300MB 内存驻留 + poppler 渲染 + 常规堆。
             cpu: 500m
-            memory: 1Gi
+            memory: 2Gi
         volumeMounts:
         - name: data
           mountPath: /data
@@ -126,9 +126,10 @@ metadata:
   name: bear-ws
   namespace: nanobot
   annotations:
-    # 图片附件走 base64 JSON 提交：默认 1m 会把真实照片（≈4-8MB/张）拦在
-    # nginx 层，与 runeclient 端 ≤6MB/张 的软上限对不上；放宽到 40m。
-    nginx.ingress.kubernetes.io/proxy-body-size: "40m"
+    # 附件 ≤220MB base64 body ≈ 300MB；旧 40m 会把 200MB 附件拦在 nginx 层。
+    # send-timeout 放宽到 600s：弱网下 nginx → upstream 的 body 推送不能卡 60s。
+    nginx.ingress.kubernetes.io/proxy-body-size: "300m"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
 spec:
   ingressClassName: nginx
   rules:

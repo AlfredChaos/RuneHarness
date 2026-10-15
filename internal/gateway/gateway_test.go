@@ -329,14 +329,13 @@ func TestAttachmentValidation(t *testing.T) {
 			`{"content":"x","attachments":[` + nine + `,` + nine + `,` + nine + `,` + nine + `,` + nine + `,` + nine + `,` + nine + `,` + nine + `,` + nine + `]}`,
 			"too many attachments"},
 		{"single too large",
-			`{"content":"x","attachments":[{"kind":"image","media_type":"image/png","data_b64":"` + b64(10<<20+1) + `"}]}`,
+			`{"content":"x","attachments":[{"kind":"image","media_type":"image/png","data_b64":"` + b64(221<<20) + `"}]}`,
 			"attachment too large"},
 		{"total too large",
 			`{"content":"x","attachments":[` +
-				`{"kind":"image","media_type":"image/png","data_b64":"` + b64(8<<20) + `"},` +
-				`{"kind":"image","media_type":"image/png","data_b64":"` + b64(8<<20) + `"},` +
-				`{"kind":"image","media_type":"image/png","data_b64":"` + b64(8<<20) + `"},` +
-				`{"kind":"image","media_type":"image/png","data_b64":"` + b64(8<<20) + `"}]}`,
+				`{"kind":"image","media_type":"image/png","data_b64":"` + b64(80<<20) + `"},` +
+				`{"kind":"image","media_type":"image/png","data_b64":"` + b64(80<<20) + `"},` +
+				`{"kind":"image","media_type":"image/png","data_b64":"` + b64(80<<20) + `"}]}`,
 			"attachments too large overall"},
 	}
 	for _, tc := range cases {
