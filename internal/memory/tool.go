@@ -28,7 +28,7 @@ func (t memTool) Spec() tools.Spec {
 			"properties": map[string]any{
 				"op": map[string]any{
 					"type": "string",
-					"enum": []string{"save", "forget", "list", "read", "about", "history"},
+					"enum": []string{"save", "forget", "list", "read", "about", "history", "revert"},
 				},
 				"name":        map[string]any{"type": "string", "description": "memory slug, e.g. user-prefers-brief"},
 				"type":        map[string]any{"type": "string", "description": "memory type per the profile dictionary"},
@@ -38,6 +38,7 @@ func (t memTool) Spec() tools.Spec {
 				"related":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"reason":      map[string]any{"type": "string", "description": "why the change is made"},
 				"entity":      map[string]any{"type": "string", "description": "for op=about: entity to aggregate"},
+				"log_id":      map[string]any{"type": "integer", "description": "for op=revert: memory_log id to revert to; 0 = undo latest change"},
 			},
 			"required": []string{"op"},
 		},
@@ -54,6 +55,7 @@ type toolArgs struct {
 	Related  []string `json:"related"`
 	Reason   string   `json:"reason"`
 	Entity   string   `json:"entity"`
+	LogID    int64    `json:"log_id"`
 }
 
 func (t memTool) Run(ctx context.Context, rawArgs json.RawMessage) (string, error) {
@@ -74,6 +76,8 @@ func (t memTool) Run(ctx context.Context, rawArgs json.RawMessage) (string, erro
 		return t.about(ctx, in)
 	case "history":
 		return t.history(ctx, in)
+	case "revert":
+		return t.revert(ctx, in)
 	default:
 		return "", fmt.Errorf("unknown op %q (want save/forget/list/read/about/history)", in.Op)
 	}
@@ -170,8 +174,24 @@ func (t memTool) history(ctx context.Context, in toolArgs) (string, error) {
 	}
 	var b strings.Builder
 	for _, c := range changes {
-		fmt.Fprintf(&b, "- %s %s (%s) %s\n", c.At.Format("2006-01-02 15:04"),
+		fmt.Fprintf(&b, "- #%d %s %s (%s) %s\n", c.ID, c.At.Format("2006-01-02 15:04"),
 			c.Op, c.Sess, c.Reason)
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// revert 回退一条记忆：默认撤最近一次变更；给 log_id 则精确回到那次的
+// 新状态。回退自身也进流水（sess='revert'），可无限互滚。
+func (t memTool) revert(ctx context.Context, in toolArgs) (string, error) {
+	name := CleanName(in.Name)
+	if name == "" {
+		return "", fmt.Errorf("revert needs name")
+	}
+	if err := t.m.store.Revert(ctx, name, in.LogID); err != nil {
+		return "", err
+	}
+	if in.LogID > 0 {
+		return fmt.Sprintf("reverted %s to log #%d", name, in.LogID), nil
+	}
+	return "reverted: " + name + " (one step)", nil
 }

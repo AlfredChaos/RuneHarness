@@ -45,7 +45,8 @@ type Header struct {
 
 // Change 是 memory_log 里的一条变更记录；流水即审计与回放数据源。
 type Change struct {
-	Op      string // upsert | supersede | delete | merge-into
+	ID      int64  // memory_log.id——revert 的精确定位锚点
+	Op      string // upsert | supersede | delete | merge-into | revert
 	Name    string
 	OldBody string
 	NewBody string
@@ -92,6 +93,13 @@ type Store interface {
 	ApplyOps(ctx context.Context, ops []Op, sess string) error
 	// History 返回一条记忆的变更流水（新在前）。
 	History(ctx context.Context, name string) ([]Change, error)
+	// Revert 回退 name 到指定流水状态：logID>0 回到该条记录的新状态；
+	// logID=0 回退一步（最近一次变更前的 old_body）。回退本身落流水，
+	// 可被再次回退——不存在回不去的死路。
+	Revert(ctx context.Context, name string, logID int64) error
+	// LastGood 找 name 在 logID（含）之前最近一条 new_body 非空的记录，
+	// 即"被写坏/删掉前的最后好状态"。
+	LastGood(ctx context.Context, name string, beforeLogID int64) (Change, error)
 	// RecentDeletes 返回近期删除的记忆名（tombstone，防 dream 复活）。
 	RecentDeletes(ctx context.Context, limit int) ([]string, error)
 	// Meta/SetMeta 读写本空间的 KV 状态（游标、锁、熔断计数）。

@@ -309,7 +309,7 @@ func (s *store) History(ctx context.Context, name string) ([]Change, error) {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT op, name, old_body, new_body, reason, sess, created_at
+		`SELECT id, op, name, old_body, new_body, reason, sess, created_at
 		 FROM memory_log WHERE tenant_id=? AND space=? AND name=?
 		 ORDER BY id DESC`, t, sp, name)
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *store) History(ctx context.Context, name string) ([]Change, error) {
 	for rows.Next() {
 		var c Change
 		var at int64
-		if err := rows.Scan(&c.Op, &c.Name, &c.OldBody, &c.NewBody,
+		if err := rows.Scan(&c.ID, &c.Op, &c.Name, &c.OldBody, &c.NewBody,
 			&c.Reason, &c.Sess, &at); err != nil {
 			return nil, err
 		}
@@ -425,3 +425,78 @@ func (s *store) Lock(ctx context.Context, ttl time.Duration) (func() error, bool
 }
 
 func (s *store) Close() error { return s.db.Close() }
+
+// LastGood 返回 name 在 logID（含）之前最近一条有内容的状态（new_body 非空）。
+// 用来找"被 delete/被写坏之前的样子"；没有返回 ErrNotFound。
+func (s *store) LastGood(ctx context.Context, name string, beforeLogID int64) (Change, error) {
+	t, sp, err := s.keyOf(ctx)
+	if err != nil {
+		return Change{}, err
+	}
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, op, old_body, new_body, reason, sess, created_at
+		 FROM memory_log
+		 WHERE tenant_id=? AND space=? AND name=? AND id<=? AND new_body<>''
+		 ORDER BY id DESC LIMIT 1`, t, sp, name, beforeLogID)
+	var c Change
+	var at int64
+	if err := row.Scan(&c.ID, &c.Op, &c.OldBody, &c.NewBody, &c.Reason, &c.Sess, &at); err != nil {
+		return Change{}, err
+	}
+	c.Name = name
+	c.At = time.Unix(at, 0)
+	return c, nil
+}
+
+// Revert 把 name 回退到指定流水（logID 0 = 上一次变更前）的状态：
+// 用 LastGood 找目标 new_body 写回 memories；回退本身也落 memory_log
+// （op='revert'，reason 记来源 logID），所以回退可以再次被回退。
+// 目标状态是空（该记忆当时不存在）则执行 delete——语义等价，不静默。
+func (s *store) Revert(ctx context.Context, name string, logID int64) error {
+	t, sp, err := s.keyOf(ctx)
+	if err != nil {
+		return err
+	}
+	// 找回退点：logID>0 表示回到那条记录的新状态；=0 表示回退一步
+	//（最新一条变更之前的状态）。
+	var target Change
+	var at int64
+	if logID > 0 {
+		row := s.db.QueryRowContext(ctx,
+			`SELECT id, op, old_body, new_body, reason, sess, created_at
+			 FROM memory_log WHERE tenant_id=? AND space=? AND name=? AND id=?`,
+			t, sp, name, logID)
+		if err := row.Scan(&target.ID, &target.Op, &target.OldBody, &target.NewBody,
+			&target.Reason, &target.Sess, &at); err != nil {
+			return fmt.Errorf("memory: no log #%d for %q: %w", logID, name, err)
+		}
+		target.Name = name
+		target.At = time.Unix(at, 0)
+	} else {
+		// 最近一次变更的 old_body 即回退目标
+		row := s.db.QueryRowContext(ctx,
+			`SELECT id, op, old_body, new_body, reason, sess, created_at
+			 FROM memory_log WHERE tenant_id=? AND space=? AND name=?
+			 ORDER BY id DESC LIMIT 1`, t, sp, name)
+		if err := row.Scan(&target.ID, &target.Op, &target.OldBody, &target.NewBody,
+			&target.Reason, &target.Sess, &at); err != nil {
+			return fmt.Errorf("memory: no history for %q: %w", name, err)
+		}
+		target.Name = name
+		target.At = time.Unix(at, 0)
+		// 回退一步：写回 old_body
+		target.NewBody = target.OldBody
+	}
+	if target.NewBody == "" {
+		// 目标态是"不存在"：回退=删除（也落 revert 流水，old_body 留底）。
+		return s.ApplyOps(ctx, []Op{{
+			Kind: "delete", Name: name,
+			Reason: fmt.Sprintf("revert to log #%d (pre-state was absent)", target.ID),
+		}}, "revert")
+	}
+	// 目标态是旧 new_body：upsert 回写，revert 流水记 old_body=当前。
+	return s.ApplyOps(ctx, []Op{{
+		Kind: "upsert", Name: name, Body: target.NewBody,
+		Reason: fmt.Sprintf("revert to log #%d", target.ID),
+	}}, "revert")
+}
