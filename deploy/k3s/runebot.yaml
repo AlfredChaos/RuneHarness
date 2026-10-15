@@ -39,7 +39,7 @@ spec:
     spec:
       containers:
       - name: runebot
-        image: runebot:soul3
+        image: runebot:soul4
         imagePullPolicy: Never
         ports:
         - containerPort: 18765
