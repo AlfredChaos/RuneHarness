@@ -102,7 +102,12 @@ func main() {
 	}
 	defer store.Close()
 
-	model := llm.NewClient(cfg.APIKey, cfg.BaseURL, cfg.Model)
+	model := llm.NewClientTuned(cfg.APIKey, cfg.BaseURL, cfg.Model, llm.Opts{
+		ReasoningEffort:     cfg.ReasoningEffort,
+		Temperature:         cfg.Temperature,
+		TopP:                cfg.TopP,
+		MaxCompletionTokens: cfg.MaxCompletionTokens,
+	})
 	todos := todo.NewManager()
 
 	env := prompt.Env{Workspace: wd, Platform: runtime.GOOS + "/" + runtime.GOARCH}

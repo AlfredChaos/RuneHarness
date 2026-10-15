@@ -27,15 +27,30 @@ const requestTimeout = 120 * time.Second
 type Client struct {
 	sdk   openai.Client
 	model string
+	opts  Opts
+}
+
+// Opts 是发给兼容端点的采样参数；零值字段不下发，由端点默认接管——
+// 保持裸 NewClient 的行为与此前完全一致。
+type Opts struct {
+	ReasoningEffort     string  // low/medium/high/max 等，原样透传 reasoning_effort
+	Temperature         float64 // 0 表示不下发
+	TopP                float64 // 0 表示不下发
+	MaxCompletionTokens int     // 0 表示不下发
 }
 
 // NewClient 创建 OpenAI 兼容端点客户端；baseURL 为空时使用 SDK 默认（官方 API）。
 func NewClient(apiKey, baseURL, model string) Client {
+	return NewClientTuned(apiKey, baseURL, model, Opts{})
+}
+
+// NewClientTuned 带采样参数创建客户端。
+func NewClientTuned(apiKey, baseURL, model string, o Opts) Client {
 	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return Client{sdk: openai.NewClient(opts...), model: model}
+	return Client{sdk: openai.NewClient(opts...), model: model, opts: o}
 }
 
 // Chat 流式发送一轮对话请求：每个 chunk 到达时回调累积快照，
@@ -44,13 +59,26 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	stream := c.sdk.Chat.Completions.NewStreaming(ctx, openai.ChatCompletionNewParams{
+	params := openai.ChatCompletionNewParams{
 		Model:    c.model,
 		Messages: toParams(history, c.model),
 		Tools:    toTools(specs),
 		// 要求流末尾回传 usage，作为上下文估算锚点；不支持的端点忽略该字段。
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
-	})
+	}
+	if c.opts.ReasoningEffort != "" {
+		params.ReasoningEffort = shared.ReasoningEffort(c.opts.ReasoningEffort)
+	}
+	if c.opts.Temperature != 0 {
+		params.Temperature = openai.Float(c.opts.Temperature)
+	}
+	if c.opts.TopP != 0 {
+		params.TopP = openai.Float(c.opts.TopP)
+	}
+	if c.opts.MaxCompletionTokens != 0 {
+		params.MaxCompletionTokens = openai.Int(int64(c.opts.MaxCompletionTokens))
+	}
+	stream := c.sdk.Chat.Completions.NewStreaming(ctx, params)
 	defer func() { _ = stream.Close() }()
 
 	var acc openai.ChatCompletionAccumulator

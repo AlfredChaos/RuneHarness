@@ -53,6 +53,11 @@ type Config struct {
 	// Cron 是定时调度总开关（RUNE_CRON，默认开）。关闭后不建任务存储、
 	// 不注册 cron_* 工具、不跑调度 goroutine。
 	Cron bool
+	// 以下四项是发给兼容端点的采样参数；零值=不下发（端点默认接管）。
+	ReasoningEffort     string  // RUNE_REASONING_EFFORT：low/medium/high/max 等
+	Temperature         float64 // RUNE_TEMPERATURE：0 表示不下发
+	TopP                float64 // RUNE_TOP_P：0 表示不下发
+	MaxCompletionTokens int     // RUNE_MAX_COMPLETION_TOKENS：0 表示不下发
 }
 
 const (
@@ -159,6 +164,12 @@ func Load() (Config, error) {
 	if cfg.MaxOutputTokens, err = envInt("RUNE_MAX_OUTPUT_TOKENS", defaultMaxOutputTokens); err != nil {
 		return Config{}, err
 	}
+	if cfg.MaxCompletionTokens, err = envInt("RUNE_MAX_COMPLETION_TOKENS", 0); err != nil {
+		return Config{}, err
+	}
+	cfg.ReasoningEffort = os.Getenv("RUNE_REASONING_EFFORT")
+	cfg.Temperature = envFloat("RUNE_TEMPERATURE")
+	cfg.TopP = envFloat("RUNE_TOP_P")
 	if cfg.APIKey == "" {
 		return Config{}, errors.New("OPENAI_API_KEY is not set (see .env.example)")
 	}
@@ -200,6 +211,19 @@ func envInt(key string, def int) (int, error) {
 		return 0, fmt.Errorf("%s must be a positive integer, got %q", key, v)
 	}
 	return n, nil
+}
+
+// envFloat 读浮点环境变量；未设置或非法时返回 0（采样参数 0=不下发，端点默认接管）。
+func envFloat(key string) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 // envTrue 把环境变量按布尔解析："1/true/yes/on"（不区分大小写）为真，其余为假。

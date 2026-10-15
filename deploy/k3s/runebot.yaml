@@ -39,7 +39,7 @@ spec:
     spec:
       containers:
       - name: runebot
-        image: runebot:soul1
+        image: runebot:soul2
         imagePullPolicy: Never
         ports:
         - containerPort: 18765
@@ -66,6 +66,14 @@ spec:
         # boundary 四类 AlwaysInject、subject 空间、dream 120min；不设走 generic 不适配。
         - name: RUNE_MEMORY_PROFILE
           value: companion
+        # 采样参数（实验确定）：M3.1-Flash + 高思考、8K 完成预算，压掉 M3 上
+        # 92% 回复把 <think> 内联到正文的问题；温度/top_p 走端点默认。
+        - name: OPENAI_MODEL
+          value: MiniMax-M3.1-Flash-Preview
+        - name: RUNE_REASONING_EFFORT
+          value: "high"
+        - name: RUNE_MAX_COMPLETION_TOKENS
+          value: "8192"
         envFrom:
         - secretRef:
             name: runebot-env
