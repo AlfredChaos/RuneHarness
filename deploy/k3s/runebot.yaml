@@ -39,7 +39,7 @@ spec:
     spec:
       containers:
       - name: runebot
-        image: runebot:soul4
+        image: runebot:soul5
         imagePullPolicy: Never
         ports:
         - containerPort: 18765
@@ -78,6 +78,11 @@ spec:
         # 显式开。secret 里的 RUNE_CRON=false 被 env 段覆盖（同名键 env 优先）。
         - name: RUNE_CRON
           value: "true"
+        # 时区：get_current_time 工具默认 time.Local，slog 时间戳、cron 表达式
+        # 缺省 location 也都吃 TZ。不设 = UTC，模型会回出"11点半"这种对不上
+        # 北京时间的数字。
+        - name: TZ
+          value: Asia/Shanghai
         envFrom:
         - secretRef:
             name: runebot-env

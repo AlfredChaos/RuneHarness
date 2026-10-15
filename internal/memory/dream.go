@@ -62,8 +62,21 @@ func (m *Memory) Dream(ctx context.Context, manual bool) (Stats, error) {
 	if total == 0 {
 		return Stats{Skipped: "no unprocessed rows"}, nil
 	}
-	if !manual && total < m.prof.Dream.MinRows {
-		return Stats{Skipped: fmt.Sprintf("only %d unprocessed rows", total)}, nil
+	if !manual {
+		if total < m.prof.Dream.MinRows {
+			return Stats{Skipped: fmt.Sprintf("only %d unprocessed rows", total)}, nil
+		}
+		// 静默期门：本周期（自上次 dream 或 IntervalMin 窗口）内没有任何
+		// 会话有新消息，就不打扰。活动判断用 session.updated_at——dream
+		// 自己只读不写 session 表，所以 update 一定来自真实对话。
+		if !m.anyActive(ctx, arrears) {
+			return Stats{Skipped: "no active session this cycle"}, nil
+		}
+		// 预判门：正式消化前让 LLM 先扫一遍摘要，判断这批有没有值得
+		// 沉淀的新信息；答 no 就推 cursor 标已消化、跳过完整提取。
+		if skip, why := m.preflight(ctx, arrears); skip {
+			return Stats{Skipped: why}, nil
+		}
 	}
 	var stats Stats
 	for space, group := range arrears {
@@ -485,4 +498,74 @@ func (m *Memory) DreamOnExit(ctx context.Context) {
 		slog.Info("memory: exit dream done",
 			"sessions", st.Sessions, "ops", st.OpsApplied)
 	}
+}
+
+// anyActive 判断本周期内是否有会话活跃：以 last_dream_at（无则回退
+// IntervalMin 窗口）为锚点，任一会话的 updated_at 晚于锚点即算活跃。
+func (m *Memory) anyActive(ctx context.Context, arrears map[string][]arrear) bool {
+	anchor := time.Now().Add(-time.Duration(m.prof.Dream.IntervalMin) * time.Minute)
+	if s, _ := m.store.Meta(ctx, metaLastDream); s != "" {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			anchor = t
+		}
+	}
+	for _, group := range arrears {
+		for _, a := range group {
+			if a.sess.UpdatedAt.After(anchor) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// preflight 是消化前的轻量判断：给 LLM 每条会话前几条 user 消息摘要，
+// 问"这些有没有值得沉淀进长期记忆的新信息"。答 no 就把所有欠账的
+// cursor 推到当前末尾（标已消化），返回跳过——下次新消息来了再评。
+// 只跑一次，省掉全文提取的 token 与延迟。
+func (m *Memory) preflight(ctx context.Context, arrears map[string][]arrear) (bool, string) {
+	var sample strings.Builder
+	for _, group := range arrears {
+		for _, a := range group {
+			// 每个会话取前 3 条 user 消息做预览，足够模型判密度。
+			shown := 0
+			for _, r := range a.rows {
+				if r.Role != agent.RoleUser || shown >= 3 {
+					continue
+				}
+				preview := clip(r.Content, 120)
+				fmt.Fprintf(&sample, "- [%s] %s\n", a.sess.Title, preview)
+				shown++
+			}
+		}
+	}
+	if sample.Len() == 0 {
+		return true, "no user-side content to judge"
+	}
+	resp, err := m.llm.Chat(ctx, []agent.Message{
+		{Role: agent.RoleSystem, Content: `你是记忆策展助理。判断下面这批近期聊天片段里，有没有值得写入长期记忆的新信息（新事实、新偏好、重要决定、情绪转折点、关系里程碑）。只答一个 JSON：{"worth":true|false,"why":"一句话理由"}。日常寒暄、已知信息的复述、纯情绪输出不算值得。`},
+		{Role: agent.RoleUser, Content: "以下是各会话的近期消息预览：\n\n" + sample.String()},
+	}, nil, nil)
+	if err != nil {
+		return false, "" // 预判失败不阻塞消化
+	}
+	var verdict struct {
+		Worth bool   `json:"worth"`
+		Why   string `json:"why"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(resp.Message.Content)), &verdict); err != nil {
+		return false, "" // 解析不出不阻塞
+	}
+	if !verdict.Worth {
+		// 推 cursor：欠账全部标已消化，不留尾巴反复评估同一批。
+		for _, group := range arrears {
+			for _, a := range group {
+				last := a.rows[len(a.rows)-1].ID
+				_ = m.store.SetMeta(scope.WithScope(ctx, a.sc),
+					cursorPrefix+a.sess.ID, strconv.FormatInt(last, 10))
+			}
+		}
+		return true, fmt.Sprintf("preflight: not worth remembering (%s)", verdict.Why)
+	}
+	return false, ""
 }
