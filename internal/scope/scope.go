@@ -21,6 +21,10 @@ type Scope struct {
 	SessionID string
 	Workspace string
 	SubjectID string
+	// System 是特权位：true 时 session/memory 存储层跳过 tenant 过滤。
+	// 只有 SystemScope() 能置位——业务代码和 HTTP 请求路径拿不到这个
+	// 构造器，跨租户遍历被锁在进程装配层。
+	System bool
 }
 
 // ErrMissing 表示 ctx 中没有可用 scope：装配遗漏属于 bug，显式失败好过
@@ -49,4 +53,16 @@ func FromContext(ctx context.Context) (Scope, error) {
 		return Scope{}, ErrMissing
 	}
 	return s, nil
+}
+
+// SystemTenant 是平台后台组件（dream 消化、cron 点火）的保留租户标识。
+// 它不属于任何真实用户：系统组件以 SystemScope 遍历全租户数据，
+// 但落库/通知按数据自带归属回填真实租户。
+const SystemTenant = "system"
+
+// System 是特权标记：session/memory 存储层见到它跳过 tenant 过滤。
+// 只允许进程装配处（main.go 挂后台组件）经 SystemScope() 构造；HTTP 请求
+// 路径拿不到——auth 解析出的 Token 无此字段，隔离边界在类型层成立。
+func SystemScope(workspace string) Scope {
+	return Scope{TenantID: SystemTenant, Workspace: workspace, System: true}
 }

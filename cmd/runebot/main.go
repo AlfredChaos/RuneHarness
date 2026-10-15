@@ -86,7 +86,10 @@ func main() {
 	}
 
 	wd, _ := os.Getwd()
-	gwScope := scope.Scope{TenantID: "gateway", Workspace: wd}
+	// 后台组件（dream/cron 点火）用系统租户 scope：跨租户枚举会话/任务，
+	// 落库与通知按数据自带归属回填真实租户。HTTP 请求路径拿不到
+	// scope.System()——auth 解析出的 Token 没有 System 位。
+	gwScope := scope.SystemScope(wd)
 
 	dbPath := cfg.DBPath
 	if dbPath == "" {
@@ -122,11 +125,12 @@ func main() {
 	// 进 outbox（ALF-133）：空闲 chat 不会被 Drain 唤醒，App 靠轮询弹窗。
 	cronStore := cron.Open(filepath.Join(filepath.Dir(dbPath), "cron_tasks.json"))
 	var cronSched *cron.Scheduler
-	if cronStore != nil {
+	if cfg.Cron && cronStore != nil {
 		// 调度器以部署唯一租户 + 进程 workspace 看任务（FileTasks/Remove
 		// 都按 scope 过滤），与 durable 任务落盘打标一致才能点火/焚毁。
-		cronCtx := scope.WithScope(context.Background(),
-			scope.Scope{TenantID: fallbackTenant, Workspace: wd})
+		// 调度器跑在 system scope：枚举全租户任务，点火时按任务自带
+		// tenant 路由通知；fallbackTenant 只用于任务缺 tenant 的遗留数据。
+		cronCtx := scope.WithScope(context.Background(), gwScope)
 		cronSched = cron.NewScheduler(cronStore, cronCtx, cron.Config{
 			LockPath: filepath.Join(filepath.Dir(dbPath), cron.LockFileName(wd)),
 			OnFire: func(ev cron.Event) {

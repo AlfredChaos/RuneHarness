@@ -168,7 +168,8 @@ func (s *Store) FileTasks(ctx context.Context) []Task {
 	defer s.mu.Unlock()
 	var out []Task
 	for _, t := range s.durable {
-		if t.Tenant == sc.TenantID && t.Workspace == sc.Workspace {
+		// System scope（后台调度器）枚举全租户任务；普通 scope 严格过滤。
+		if sc.System || (t.Tenant == sc.TenantID && t.Workspace == sc.Workspace) {
 			out = append(out, t)
 		}
 	}
@@ -245,7 +246,7 @@ func (s *Store) Remove(ctx context.Context, id string) (bool, error) {
 	err := s.mutate(func(tasks []Task) []Task {
 		out := tasks[:0]
 		for _, t := range tasks {
-			if t.ID == id && t.Tenant == sc.TenantID && t.Workspace == sc.Workspace {
+			if t.ID == id && (sc.System || (t.Tenant == sc.TenantID && t.Workspace == sc.Workspace)) {
 				removed = true
 				continue
 			}

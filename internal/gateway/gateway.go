@@ -175,9 +175,10 @@ func (s *Server) chatKey(r *http.Request, chatID string) (runner.ChatKey, error)
 		return runner.ChatKey{}, err
 	}
 	return runner.ChatKey{
-		TenantID: t.TenantID,
-		Channel:  s.Channel,
-		ChatID:   chatID,
+		TenantID:  t.TenantID,
+		Channel:   s.Channel,
+		ChatID:    chatID,
+		SubjectID: t.SubjectID, // token 声明的 subject 进 ChatKey——session.subject_id/记忆空间归属全靠它
 	}, nil
 }
 

@@ -17,11 +17,12 @@ import (
 // wsConn 是一条已升级的 WS 连接的全部状态：
 // 一个写出口（sendMu 串行化全部下行帧）+ 每 chat 一个订阅泵。
 type wsConn struct {
-	conn   *websocket.Conn
-	sendMu sync.Mutex
-	subs   map[string]context.CancelFunc // chat_id -> cancel
-	subMu  sync.Mutex
-	tenant string
+	conn    *websocket.Conn
+	sendMu  sync.Mutex
+	subs    map[string]context.CancelFunc // chat_id -> cancel
+	subMu   sync.Mutex
+	tenant  string
+	subject string
 }
 
 // 客户端上行帧（type 分发）。
@@ -54,7 +55,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 
-	wc := &wsConn{conn: conn, subs: map[string]context.CancelFunc{}, tenant: t.TenantID}
+	wc := &wsConn{conn: conn, subs: map[string]context.CancelFunc{}, tenant: t.TenantID, subject: t.SubjectID}
 	defer wc.closeAll()
 
 	wc.send(map[string]any{"type": "ready", "timestamp": time.Now().UnixMilli()})
@@ -77,7 +78,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 // dispatch 分发一帧命令；返回的 error 会作为 protocol error 帧回给客户端。
 func (wc *wsConn) dispatch(ctx context.Context, s *Server, in wsIn) error {
-	key := runner.ChatKey{TenantID: wc.tenant, Channel: s.Channel, ChatID: in.ChatID}
+	key := runner.ChatKey{TenantID: wc.tenant, SubjectID: wc.subject, Channel: s.Channel, ChatID: in.ChatID}
 	switch in.Type {
 	case "attach":
 		if in.ChatID == "" {

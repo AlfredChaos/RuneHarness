@@ -65,19 +65,28 @@ func (m *Memory) Dream(ctx context.Context, manual bool) (Stats, error) {
 	if !manual && total < m.prof.Dream.MinRows {
 		return Stats{Skipped: fmt.Sprintf("only %d unprocessed rows", total)}, nil
 	}
-	stats, err := m.digest(ctx, arrears)
-	if err != nil {
-		m.bumpFailures(ctx)
-		return stats, err
+	var stats Stats
+	for space, group := range arrears {
+		// 按归属 space 逐组消化：extract/落库/cursor 都用会话真实 scope，
+		// system 伪租户只负责枚举不负责写。
+		gsc := group[0].sc // 组内所有会话同 space → 同归属 scope
+		gctx := scope.WithScope(ctx, gsc)
+		gs, err := m.digest(gctx, group)
+		stats.Sessions += gs.Sessions
+		stats.Rows += gs.Rows
+		stats.OpsApplied += gs.OpsApplied
+		if err != nil {
+			m.bumpFailures(ctx)
+			return stats, err
+		}
+		m.markDirty(gsc) // 下一条 user 消息重注新索引（按真实归属）
+		if n, _ := m.store.Count(gctx); n >= tidyMinRows || gs.OpsApplied >= tidyMinOps {
+			stats.TidyMerged += m.tidy(gctx)
+		}
+		_ = space // 组键即 spaceKey，仅供诊断阅读
 	}
 	m.clearFailures(ctx)
 	_ = m.store.SetMeta(ctx, metaLastDream, time.Now().Format(time.RFC3339Nano))
-
-	// 整理：量大或本轮改动多时跑一遍合并。
-	if n, _ := m.store.Count(ctx); n >= tidyMinRows || stats.OpsApplied >= tidyMinOps {
-		stats.TidyMerged = m.tidy(ctx)
-	}
-	m.markDirty(sc) // 下一条 user 消息重注新索引
 	if m.OnChange != nil && stats.OpsApplied+stats.TidyMerged > 0 {
 		m.OnChange(stats)
 	}
@@ -100,17 +109,44 @@ func (m *Memory) autoGates(ctx context.Context) (bool, string) {
 	return false, ""
 }
 
-// arrears 汇总本空间全部会话的未消化原始行（游标在 memory_meta）。
-func (m *Memory) arrears(ctx context.Context, sc scope.Scope) (map[string][]agent.Message, int, error) {
+// arrear 是一条会话的欠账：待消化原始行 + 这条会话的记忆归属 scope。
+// System scope 下逐会话枚举得来——digest 用归属 scope 落库，记忆写进
+// 真实用户的空间而不是 system 伪空间。
+type arrear struct {
+	sess session.Session
+	sc   scope.Scope // 会话真实归属（tenant/subject 取自 session 行）
+	rows []agent.Message
+}
+
+// arrears 汇总全部会话的未消化原始行（游标在 memory_meta，按归属 space 分桶）。
+// System scope 时跨租户枚举；普通 scope 只看见本租户。
+func (m *Memory) arrears(ctx context.Context, sc scope.Scope) (map[string][]arrear, int, error) {
 	list, err := m.sess.ListSessions(ctx, 0)
 	if err != nil {
 		return nil, 0, err
 	}
-	want := spaceKey(sc, m.prof)
-	out := map[string][]agent.Message{}
+	out := map[string][]arrear{}
 	total := 0
 	for _, sess := range list {
-		if sess.Kind != session.KindMain || !m.inSpace(sess, want) {
+		if sess.Kind != session.KindMain {
+			continue
+		}
+		// 会话归属：tenant/subject/workspace 取自 session 行本身——
+		// 这样写记忆时落到真实用户空间，与会话来源一致。session 行
+		// 缺 tenant（测试桩/遗留数据）时回落调用方 scope，不致空崩。
+		ssc := scope.Scope{TenantID: sess.TenantID, Workspace: sess.Workspace,
+			SubjectID: sess.SubjectID}
+		if ssc.TenantID == "" {
+			ssc.TenantID = sc.TenantID
+		}
+		if ssc.Workspace == "" {
+			ssc.Workspace = sc.Workspace
+		}
+		want := spaceKey(ssc, m.prof)
+		// workspace 画像严格按目录分桶：非 system 的普通 dream 只消化
+		// 同 workspace 的会话；system scope（后台消化）照常枚举全部。
+		if !sc.System && m.prof.Space != SpaceSubject && m.prof.Space != SpaceTenant &&
+			want != spaceKey(sc, m.prof) {
 			continue
 		}
 		raw, err := m.sess.LoadRawHistory(ctx, sess.ID)
@@ -119,7 +155,8 @@ func (m *Memory) arrears(ctx context.Context, sc scope.Scope) (map[string][]agen
 			slog.Warn("memory: skip unreadable session", "session", sess.ID, "err", err)
 			continue
 		}
-		v, _ := m.store.Meta(ctx, cursorPrefix+sess.ID)
+		sessCtx := scope.WithScope(ctx, ssc)
+		v, _ := m.store.Meta(sessCtx, cursorPrefix+sess.ID)
 		cursor, _ := strconv.ParseInt(v, 10, 64)
 		var rows []agent.Message
 		for _, r := range raw {
@@ -131,39 +168,24 @@ func (m *Memory) arrears(ctx context.Context, sc scope.Scope) (map[string][]agen
 		if len(rows) == 0 {
 			continue
 		}
-		out[sess.ID] = rows
+		out[want] = append(out[want], arrear{sess: sess, sc: ssc, rows: rows})
 		total += len(rows)
 	}
 	return out, total, nil
 }
 
-// inSpace 判定会话是否属于当前记忆空间。
-func (m *Memory) inSpace(s session.Session, want string) bool {
-	switch m.prof.Space {
-	case SpaceSubject, SpaceTenant:
-		// v1：sessions 表无 subject 列，本地单用户下全部会话同属该空间；
-		// 云端需在 session.Meta 记录 SubjectID 后在此过滤。
-		return true
-	default:
-		return "ws/"+CleanName(s.Workspace) == want
-	}
-}
-
 // digest 逐会话逐批消化：side-query 出 ops → 校验 → 事务落库 → 推水位。
 // 单批失败整体返回错误，水位停在最后一个成功批——下次 dream 接着还。
-func (m *Memory) digest(ctx context.Context, arrears map[string][]agent.Message) (Stats, error) {
+func (m *Memory) digest(ctx context.Context, arrears []arrear) (Stats, error) {
 	sys, err := m.dreamSystem(ctx)
 	if err != nil {
 		return Stats{}, err
 	}
 	var stats Stats
-	ids := make([]string, 0, len(arrears))
-	for id := range arrears {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids) // 会话 id 时间有序，消化顺序稳定
-	for _, sid := range ids {
-		rows := arrears[sid]
+	sort.Slice(arrears, func(i, j int) bool { return arrears[i].sess.ID < arrears[j].sess.ID })
+	for _, a := range arrears {
+		sid := a.sess.ID
+		rows := a.rows
 		for len(rows) > 0 {
 			batch := rows
 			if len(batch) > m.prof.Dream.BatchRows {

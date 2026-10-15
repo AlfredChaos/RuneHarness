@@ -365,8 +365,12 @@ func (s *Store) sessionScope(ctx context.Context) (scope.Scope, error) {
 	return sc, s.checkTenant(ctx, sc, sc.SessionID)
 }
 
-// checkTenant 校验会话属于 ctx 的租户。
+// checkTenant 校验会话属于 ctx 的租户；System scope（dream/cron 等后台
+// 组件枚举全租户用）直通——特权位在类型层，HTTP 请求路径拿不到。
 func (s *Store) checkTenant(ctx context.Context, sc scope.Scope, sessionID string) error {
+	if sc.System {
+		return nil
+	}
 	tenant, err := s.tenantOf(ctx, s.db, sessionID)
 	if err != nil {
 		return err
@@ -620,8 +624,14 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 		return nil, err
 	}
 	q := `SELECT id, tenant_id, parent_id, kind, title, model, workspace, depth, subject_id,
-		created_at, updated_at FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC`
-	args := []any{sc.TenantID}
+		created_at, updated_at FROM sessions ORDER BY updated_at DESC`
+	var args []any
+	if !sc.System {
+		// 普通调用按租户过滤；System scope 枚举全量（后台消化用）。
+		q = `SELECT id, tenant_id, parent_id, kind, title, model, workspace, depth, subject_id,
+			created_at, updated_at FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC`
+		args = append(args, sc.TenantID)
+	}
 	if limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, limit)
