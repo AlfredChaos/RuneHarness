@@ -278,10 +278,15 @@ func main() {
 			if err != nil {
 				return nil, err
 			}
-			// 常驻 system（身份/人设/技能/记忆说明）：进程内冻结，每轮 prepend、
-			// 不落库——对齐 CLI（main.go:274 组 sysMsg）；headless 轨此前缺失
-			// 该装配，SOUL/env 从未进入 LLM 请求。
-			sys := agent.Message{Role: agent.RoleSystem, Content: prompt.Build(env)}
+			// 常驻 system：bot 模式走 BuildBot——人设顶到 system 顶层，不背
+			// coding-agent 的 Identity 段；工具/记忆说明首启时冻结进 env。
+			if env.Tools == nil {
+				env.Tools = registry.Specs()
+			}
+			if env.MemoryGuide == "" && mem != nil {
+				env.MemoryGuide = mem.SystemGuide()
+			}
+			sys := agent.Message{Role: agent.RoleSystem, Content: prompt.BuildBot(env)}
 			return runner.TurnRunner(func(turnCtx context.Context, history []agent.Message) ([]agent.Message, error) {
 				// slot 会把上一轮返回的历史原样回传：剥掉旧的 sys 再挂，保证恰好一份。
 				if len(history) > 0 && history[0].Role == agent.RoleSystem {

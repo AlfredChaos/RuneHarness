@@ -109,3 +109,27 @@ func Build(e Env) string {
 	fmt.Fprintf(&b, "\n\n## 工作区\n- 工作目录：%s\n- 平台：%s\n相对路径与 shell 命令均以工作目录为基准。", e.Workspace, e.Platform)
 	return b.String()
 }
+
+// BuildBot 是网关机器人（runebot/headless）的 system prompt 组装：人设就是
+// 身份本身，不再背 coding-agent 的 Identity 段。工具名直接按注册表列一行——
+// bot 也给 runtime 工具（mem/cron/bg 等）留入口，但说明精简到一行列表，
+// 不塞 coding 工程准则。工作区/技能段对 bot 无语义，不注入。
+func BuildBot(e Env) string {
+	var b strings.Builder
+	if e.Soul != "" {
+		b.WriteString(e.Soul)
+	} else {
+		b.WriteString("你是一个在 IM 里陪用户的助手，简短、有温度、像真人。")
+	}
+	if len(e.Tools) > 0 {
+		b.WriteString("\n\n## 工具\n你可用的工具（按 schema 调用）：")
+		for _, s := range e.Tools {
+			fmt.Fprintf(&b, "\n- %s: %s", s.Name, s.Description)
+		}
+	}
+	if e.MemoryGuide != "" {
+		b.WriteString("\n\n## 记忆\n")
+		b.WriteString(e.MemoryGuide)
+	}
+	return b.String()
+}
