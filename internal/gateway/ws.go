@@ -131,13 +131,13 @@ func (wc *wsConn) dispatch(ctx context.Context, s *Server, in wsIn) error {
 		if in.ChatID == "" {
 			return errors.New("history needs chat_id")
 		}
-		items, hasMore, next, err := s.history(ctx, key, in.Before, in.Limit)
+		items, hasMore, next, total, err := s.history(ctx, key, in.Before, in.Limit)
 		if err != nil {
 			return err
 		}
 		wc.sendFrame(in.ChatID, map[string]any{
 			"type": "history", "req_id": in.ReqID,
-			"items": items, "has_more": hasMore, "next_before": next,
+			"items": items, "has_more": hasMore, "next_before": next, "total": total,
 		})
 		return nil
 	case "ping":

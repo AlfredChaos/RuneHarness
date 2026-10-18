@@ -246,36 +246,44 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, hasMore, next, err := s.history(r.Context(), key, before, limit)
+	items, hasMore, next, total, err := s.history(r.Context(), key, before, limit)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{
 		"chat_id": key.ChatID, "items": items,
-		"has_more": hasMore, "next_before": next,
+		"has_more": hasMore, "next_before": next, "total": total,
 	})
 }
 
 // history 取一页历史：chat -> session -> LoadRawHistory 按行 id 倒序，
 // 翻回正序返回。before=0 拉最新一页；limit<=0 或 >200 钳到 50。
-func (s *Server) history(ctx context.Context, key runner.ChatKey, before int64, limit int) ([]map[string]any, bool, int64, error) {
+// total 是该会话非控制行总数（与 /v1/chats 的 count 同口径），
+// 供客户端展示"共同回忆"条数；不用 maxI+1 兜底（rowid 不连续）。
+func (s *Server) history(ctx context.Context, key runner.ChatKey, before int64, limit int) ([]map[string]any, bool, int64, int64, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	sid, err := s.Store.GetBinding(ctx, key.TenantID, key.Channel, key.ChatID)
 	if err != nil {
-		return nil, false, 0, err
+		return nil, false, 0, 0, err
 	}
 	if sid == "" {
-		return []map[string]any{}, false, 0, nil
+		return []map[string]any{}, false, 0, 0, nil
 	}
 	rows, err := s.Store.LoadRawHistory(scope.WithSession(
 		scope.WithScope(ctx, scope.Scope{
 			TenantID: key.TenantID, SubjectID: key.SubjectID,
 		}), sid), sid)
 	if err != nil {
-		return nil, false, 0, err
+		return nil, false, 0, 0, err
+	}
+	var total int64
+	for _, m := range rows {
+		if !m.Kind.IsControl() {
+			total++
+		}
 	}
 	var picked []agent.Message
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -305,7 +313,7 @@ func (s *Server) history(ctx context.Context, key runner.ChatKey, before int64, 
 			"timestamp": m.CreatedAt, // unix 毫秒，与 DB created_at 同口径
 		})
 	}
-	return items, hasMore, nextBefore, nil
+	return items, hasMore, nextBefore, total, nil
 }
 
 // handleSSE 是事件流的 HTTP 等价物：GET + Last-Event-ID 续传。
@@ -383,14 +391,14 @@ func (s *Server) handleSvcHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, hasMore, next, err := s.history(r.Context(), key, before, limit)
+	items, hasMore, next, total, err := s.history(r.Context(), key, before, limit)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{
 		"chat_id": key.ChatID, "items": items,
-		"has_more": hasMore, "next_before": next,
+		"has_more": hasMore, "next_before": next, "total": total,
 	})
 }
 
