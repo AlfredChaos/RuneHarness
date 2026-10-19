@@ -1,0 +1,1604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bot 层解析 — runebot / gateway / runner</title>
+  <style>
+    :root {
+      --bg: #FBFAF7;
+      --paper: #FFFFFF;
+      --ink: #26241F;
+      --ink-2: #5B564E;
+      --ink-3: #9A948A;
+      --line: #E9E6DE;
+      --line-2: #DFDAD0;
+      --teal: #0E7368;
+      --teal-bg: #EDF7F5;
+      --amber: #A85507;
+      --amber-bg: #FCF4E8;
+      --rose: #B4123A;
+      --rose-bg: #FCF0F3;
+      --blue: #2657C4;
+      --blue-bg: #EFF3FC;
+      --violet: #6528C9;
+      --violet-bg: #F4EFFC;
+      --green: #177245;
+      --green-bg: #EEF7F0;
+      --code-bg: #F3F1EB;
+      --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --radius: 12px;
+      --shadow: 0 1px 2px rgba(38, 36, 31, .04), 0 6px 20px rgba(38, 36, 31, .05);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.85;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 28px 140px
+    }
+
+    header {
+      padding: 80px 0 44px;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1.5px;
+      background: var(--teal)
+    }
+
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -.015em;
+      line-height: 1.3;
+      margin-bottom: 16px
+    }
+
+    .subtitle {
+      color: var(--ink-2);
+      font-size: 17px;
+      max-width: 660px
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 26px
+    }
+
+    .meta span {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-2);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 4px 11px;
+      border-radius: 99px
+    }
+
+    .guide {
+      padding: 36px 0 8px
+    }
+
+    .guide .inner {
+      background: var(--teal-bg);
+      border: 1px solid #CFE8E4;
+      border-radius: var(--radius);
+      padding: 22px 26px;
+      font-size: 14.5px
+    }
+
+    .guide b {
+      color: var(--teal)
+    }
+
+    .guide ol {
+      margin: 10px 0 0 20px;
+      color: var(--ink-2)
+    }
+
+    .guide li {
+      margin-bottom: 4px
+    }
+
+    section {
+      padding: 44px 0 8px
+    }
+
+    .chap {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px
+    }
+
+    h2 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      line-height: 1.35;
+      margin-bottom: 14px
+    }
+
+    h3 {
+      font-size: 18px;
+      font-weight: 650;
+      margin: 34px 0 10px;
+      color: var(--ink)
+    }
+
+    h4 {
+      font-size: 15.5px;
+      font-weight: 650;
+      margin: 22px 0 8px;
+      color: var(--ink)
+    }
+
+    p {
+      margin: 12px 0;
+      color: var(--ink-2)
+    }
+
+    p b,
+    li b {
+      color: var(--ink);
+      font-weight: 650
+    }
+
+    .lede {
+      font-size: 17px;
+      color: var(--ink);
+      line-height: 1.8
+    }
+
+    ul,
+    ol {
+      margin: 12px 0 12px 22px;
+      color: var(--ink-2)
+    }
+
+    li {
+      margin-bottom: 7px
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 5px;
+      border: 1px solid var(--line);
+      color: #7A4F1D
+    }
+
+    pre {
+      background: #26241F;
+      color: #E8E4DA;
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.75;
+      margin: 16px 0 22px
+    }
+
+    pre code {
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: 13px
+    }
+
+    pre .cm {
+      color: #8A8578
+    }
+
+    pre .hl {
+      color: #7FD1B9
+    }
+
+    pre .kw {
+      color: #9BB8F0
+    }
+
+    pre .str {
+      color: #E0B873
+    }
+
+    pre .num {
+      color: #D9A0C0
+    }
+
+    .svg-wrap {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 26px;
+      overflow-x: auto;
+      box-shadow: var(--shadow);
+      margin: 18px 0 8px
+    }
+
+    .svg-cap {
+      font-size: 12.5px;
+      color: var(--ink-3);
+      text-align: center;
+      margin-top: 12px;
+      font-family: var(--mono)
+    }
+
+    .scene {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      margin: 18px 0;
+      overflow: hidden
+    }
+
+    .scene-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 20px;
+      background: #F6F5F0;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .scene-tag {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      padding: 3px 9px;
+      border-radius: 99px;
+      background: var(--blue-bg);
+      color: var(--blue)
+    }
+
+    .scene-tag.warn {
+      background: var(--amber-bg);
+      color: var(--amber)
+    }
+
+    .scene-tag.danger {
+      background: var(--rose-bg);
+      color: var(--rose)
+    }
+
+    .scene-tag.ok {
+      background: var(--green-bg);
+      color: var(--green)
+    }
+
+    .scene-tag.violet {
+      background: var(--violet-bg);
+      color: var(--violet)
+    }
+
+    .scene-title {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--ink)
+    }
+
+    .scene-body {
+      padding: 16px 20px;
+      font-size: 14.5px;
+      color: var(--ink-2)
+    }
+
+    .scene-body p {
+      margin: 8px 0
+    }
+
+    .scene-q {
+      font-weight: 650;
+      color: var(--ink)
+    }
+
+    .note {
+      border-left: 3px solid var(--blue);
+      background: var(--blue-bg);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 16px 20px;
+      margin: 18px 0;
+      font-size: 15px
+    }
+
+    .note.warn {
+      border-color: var(--amber);
+      background: var(--amber-bg)
+    }
+
+    .note.danger {
+      border-color: var(--rose);
+      background: var(--rose-bg)
+    }
+
+    .note.ok {
+      border-color: var(--green);
+      background: var(--green-bg)
+    }
+
+    .note.teal {
+      border-color: var(--teal);
+      background: var(--teal-bg)
+    }
+
+    .note .nt {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 6px
+    }
+
+    .note.warn .nt {
+      color: var(--amber)
+    }
+
+    .note.danger .nt {
+      color: var(--rose)
+    }
+
+    .note.ok .nt {
+      color: var(--green)
+    }
+
+    .note.teal .nt {
+      color: var(--teal)
+    }
+
+    .note:not(.warn):not(.danger):not(.ok):not(.teal) .nt {
+      color: var(--blue)
+    }
+
+    .note p {
+      margin-bottom: 8px
+    }
+
+    .note p:last-child {
+      margin-bottom: 0
+    }
+
+    .tbl-wrap {
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow)
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px
+    }
+
+    th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: #F6F5F0;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top
+    }
+
+    tr:last-child td {
+      border-bottom: none
+    }
+
+    td code {
+      font-size: 12px
+    }
+
+    td .dim {
+      color: var(--ink-3);
+      font-size: 13px
+    }
+
+    .steps {
+      margin: 20px 0
+    }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px dashed var(--line)
+    }
+
+    .step:last-child {
+      border-bottom: none
+    }
+
+    .step .n {
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--paper);
+      border: 1.5px solid var(--teal);
+      color: var(--teal);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 3px
+    }
+
+    .step .st {
+      font-size: 15px
+    }
+
+    .step .st b {
+      font-weight: 650
+    }
+
+    .step .sd {
+      font-size: 14px;
+      color: var(--ink-2);
+      margin-top: 3px
+    }
+
+    .src {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--ink-3)
+    }
+
+    .src code {
+      font-size: 11px;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--teal)
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      margin-top: 80px;
+      padding-top: 28px;
+      color: var(--ink-3);
+      font-size: 13px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">代码解析 · RUNEBOT / GATEWAY / RUNNER</div>
+      <h1>Bot 层解析：同一内核的 headless 网关形态</h1>
+      <p class="subtitle"><code>cmd/runebot</code> 把同一套内核（agent / tools / permission / compact /
+        memory / cron）装配成无 TUI 的常驻进程。与 CLI 的差异只在三处：
+        接入面（WS + HTTP 两条轨）、每 chat 一个的执行槽位、权限确认的应答路由。
+        本文覆盖：文件与职责、组件总览、一条消息的完整调用链、槽位状态机、下行事件账本。</p>
+      <div class="meta">
+        <span>范围：cmd/runebot · internal/gateway · internal/runner</span>
+        <span>基线：go 1.2x · OpenAI 兼容端点 · SQLite · coder/websocket</span>
+        <span>配套：runeharness-api.html · runeharness-gateway-plan.html · runeharness-architecture.html</span>
+      </div>
+    </header>
+
+    <div class="guide">
+      <div class="inner">
+        <b>怎么读</b>
+        <ol>
+          <li>建立边界认知 → 第 1、2 章（文件清单 + 架构总览）。</li>
+          <li>改某条链路 → 第 3 章时序图 + 第 4 章状态机。</li>
+          <li>接客户端 / 排障 → 第 5 章事件账本 + 第 6 章旁路。</li>
+          <li>评估风险 → 第 7 章观察项（含两个"已声明未落地"的点）。</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- ============ 1. 定位与文件 ============ -->
+    <section id="files">
+      <div class="chap">第 1 章 · 定位与文件清单</div>
+      <h2>Bot 层 = 一层装配 + 两个新包</h2>
+      <p class="lede">入口是 <code>cmd/runebot/main.go</code>（382 行）。它只做装配，
+        不含业务逻辑——把 <code>internal/*</code> 串成一个常驻 HTTP 进程。
+        真正的新代码是两个包：<code>internal/gateway</code>（接入面）与
+        <code>internal/runner</code>（执行面），合计约 2400 行。
+      </p>
+
+      <p>与 CLI 的对照（同一内核，两套前端）：</p>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>维度</th>
+              <th>CLI（main.go + internal/tui）</th>
+              <th>Bot（cmd/runebot）</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>会话数</td>
+              <td>一进程一会话</td>
+              <td>N 个 chat → N 个 slot</td>
+            </tr>
+            <tr>
+              <td>事件出口</td>
+              <td><code>Program.Send</code> → Bubble Tea</td>
+              <td><code>emit</code> → 每 chat 事件账本 → WS/SSE/NDJSON</td>
+            </tr>
+            <tr>
+              <td>权限确认</td>
+              <td>TUI 弹窗</td>
+              <td><code>ask</code> 事件挂起 → 客户端 answer 帧 / <code>POST /actions</code></td>
+            </tr>
+            <tr>
+              <td>bg/cron 交付</td>
+              <td>TUI 空闲时 drain 注入当前会话</td>
+              <td>cron 写通知 outbox（App 轮询）+ pending 队列在下一轮注入</td>
+            </tr>
+            <tr>
+              <td>system prompt</td>
+              <td><code>prompt.Build</code>（coding agent 身份）</td>
+              <td><code>prompt.BuildBot</code>（SOUL 人设即身份）</td>
+            </tr>
+            <tr>
+              <td>会话标题</td>
+              <td>手动</td>
+              <td><code>OnTurnComplete</code> → naming 自动命名</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>文件清单</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>文件</th>
+              <th>行数</th>
+              <th>职责</th>
+              <th>关键类型 / 函数</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>cmd/runebot/main.go</code></td>
+              <td>382</td>
+              <td>装配：config → auth → store → llm → tools/hooks → scheduler/memory → runner.Manager → gateway.Server →
+                优雅退出</td>
+              <td><code>main</code> · <code>Harness.New</code> 闭包</td>
+            </tr>
+            <tr>
+              <td><code>internal/gateway/gateway.go</code></td>
+              <td>206</td>
+              <td>Bearer 鉴权（RUNE_TOKENS 静态表）、路由表、ChatKey 组装、ctx scope 注入</td>
+              <td><code>Server</code> · <code>Authenticator</code> · <code>chatKey</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/gateway/ws.go</code></td>
+              <td>241</td>
+              <td>WS bear 轨：连接生命周期、7 种上行帧分发、每 chat 事件订阅泵、单写者下行</td>
+              <td><code>wsConn</code> · <code>dispatch</code> · <code>attach</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/gateway/handlers.go</code></td>
+              <td>607</td>
+              <td>HTTP 轨：chats/messages/actions/history/SSE/stream + 附件校验（≤8 个、≤220MB）</td>
+              <td><code>handlePostMessage</code> · <code>handleStream</code> · <code>handleSSE</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/gateway/docattach.go</code></td>
+              <td>100</td>
+              <td>文档附件展开：PDF → 文字 + 扫描页渲染图；Office/HTML → 纯文本；失败降级为可读占位</td>
+              <td><code>expandDocument</code> · <code>docMediaOK</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/gateway/imgnorm.go</code></td>
+              <td>152</td>
+              <td>图片附件规范化（尺寸/格式/编码）</td>
+              <td><code>normalizeImage</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/gateway/handlers_admin.go</code></td>
+              <td>70</td>
+              <td>管理面：purge-chats 清理、手动 title 命名</td>
+              <td><code>handlePurgeChats</code> · <code>handleChatTitle</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/gateway/handlers_notify.go</code></td>
+              <td>103</td>
+              <td>通知 outbox 轮询/ack + cron 任务清单</td>
+              <td><code>handleNotifications</code> · <code>handleSchedules</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/runner/runner.go</code></td>
+              <td>337</td>
+              <td>ChatKey、Event、Ledger（ring buffer + seq）、Manager、Harness 抽象、Config</td>
+              <td><code>Manager</code> · <code>Ledger</code> · <code>Event</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/runner/slot.go</code></td>
+              <td>521</td>
+              <td>slot 生命周期：惰性建槽、串行轮链、ask 路由与超时、订阅回放</td>
+              <td><code>slot</code> · <code>runTurn</code> · <code>routeAsk</code> · <code>slotFor</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/runner/harness.go</code></td>
+              <td>106</td>
+              <td>agent 回调 → 账本事件映射；轮间 bg/cron drain 注入</td>
+              <td><code>AgentHarness</code></td>
+            </tr>
+            <tr>
+              <td><code>internal/naming/naming.go</code></td>
+              <td>164</td>
+              <td>turn_end 后异步生成 ≤12 字会话标题（一次性 completion，非 agent loop）</td>
+              <td><code>Namer</code> · <code>NameChat</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="src">内核复用（非 bot 专属但在链路内）：<code>internal/agent</code>（Run 循环 + Hooks）、
+        <code>internal/compact</code>（压缩）、<code>internal/permission</code>（三道闸）、
+        <code>internal/breaker</code>（熔断）、<code>internal/session/sqlite</code>（持久化）、
+        <code>internal/llm</code>（端点适配）、<code>internal/bgtask</code> · <code>cron</code> ·
+        <code>memory</code> · <code>todo</code> · <code>subagent</code> · <code>prompt</code> · <code>scope</code>。
+      </p>
+    </section>
+
+    <!-- ============ 2. 架构总览 ============ -->
+    <section id="arch">
+      <div class="chap">第 2 章 · 架构总览</div>
+      <h2>三条竖向分层 + 右侧持久层 + 旁路组件</h2>
+      <p class="lede">箭头方向是"数据/调用流向"。三个虚线框是包边界；
+        右列是进程唯一持久层；左列是旁挂组件。</p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 660" width="100%" style="min-width:820px" role="img"
+          aria-labelledby="botarch-title botarch-desc">
+          <title id="botarch-title">Bot 层架构总览</title>
+          <desc id="botarch-desc">客户端经 WS 或 HTTP 接入 gateway，经 ChatKey 路由到 runner 的每 chat 槽位，由 harness 驱动共用的 agent.Run
+            内核；右侧为 SQLite 持久层与 LLM 端点，左列与底部为旁路组件。</desc>
+          <defs>
+            <marker id="bah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+            <marker id="bah-teal" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#0E7368" />
+            </marker>
+            <marker id="bah-violet" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#6528C9" />
+            </marker>
+            <marker id="bah-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#177245" />
+            </marker>
+            <marker id="bah-amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#A85507" />
+            </marker>
+            <marker id="bah-soft" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#9A948A" />
+            </marker>
+          </defs>
+          <g font-size="12" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+
+            <!-- ===== 连线（先画线，后画框） ===== -->
+            <!-- 客户端 → 两轨 -->
+            <line x1="164" y1="76" x2="216" y2="76" stroke="#5B564E" stroke-width="1.3" marker-end="url(#bah)" />
+            <text x="190" y="68" text-anchor="middle" font-size="10.5" fill="#5E5748">WS</text>
+            <line x1="164" y1="134" x2="216" y2="134" stroke="#5B564E" stroke-width="1.3" marker-end="url(#bah)" />
+            <text x="190" y="126" text-anchor="middle" font-size="10.5" fill="#5E5748">HTTP</text>
+
+            <!-- 两轨 → Server -->
+            <line x1="386" y1="74" x2="420" y2="74" stroke="#5B564E" stroke-width="1.3" marker-end="url(#bah)" />
+            <line x1="386" y1="132" x2="420" y2="132" stroke="#5B564E" stroke-width="1.3" marker-end="url(#bah)" />
+
+            <!-- Server → Manager：下-左-下 -->
+            <path d="M480,148 L480,196 L290,196 L290,238" fill="none" stroke="#5B564E" stroke-width="1.3"
+              marker-end="url(#bah)" />
+            <text x="476" y="188" text-anchor="end" font-size="10.5" fill="#5E5748">Submit · Interrupt · Answer ·
+              Subscribe</text>
+
+            <!-- 事件下行（虚线）：slot → Server → bearApp -->
+            <path d="M530,240 L530,148" fill="none" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3"
+              marker-end="url(#bah-soft)" />
+            <text x="540" y="200" font-size="10" fill="#9A948A">emit→Ledger→订阅</text>
+            <path d="M420,102 L176,102 L176,88 L164,88" fill="none" stroke="#9A948A" stroke-width="1.1"
+              stroke-dasharray="4,3" marker-end="url(#bah-soft)" />
+
+            <!-- Manager → slot -->
+            <line x1="376" y1="264" x2="408" y2="264" stroke="#5B564E" stroke-width="1.3" marker-end="url(#bah)" />
+            <text x="392" y="256" text-anchor="middle" font-size="10" fill="#5E5748">slotFor</text>
+
+            <!-- slot → harness -->
+            <line x1="495" y1="304" x2="495" y2="318" stroke="#5B564E" stroke-width="1.3" marker-end="url(#bah)" />
+
+            <!-- harness → agent.Run -->
+            <path d="M495,384 L495,404 L310,404 L310,450" fill="none" stroke="#5B564E" stroke-width="1.3"
+              marker-end="url(#bah)" />
+            <text x="302" y="428" text-anchor="end" font-size="10" fill="#5E5748">TurnRunner(ctx, history)</text>
+
+            <!-- agent → Registry -->
+            <line x1="406" y1="480" x2="428" y2="480" stroke="#5B564E" stroke-width="1.3" marker-end="url(#bah)" />
+
+            <!-- agent → LLM：上-右-上-右 -->
+            <path d="M390,452 L390,416 L596,416 L596,116 L700,116 L700,102" fill="none" stroke="#6528C9"
+              stroke-width="1.3" marker-end="url(#bah-violet)" />
+            <text x="440" y="440" font-size="10.5" fill="#6528C9">llm.Chat（流式）</text>
+
+            <!-- Manager → store（在 x596 处桥跨过 agent→LLM 竖线） -->
+            <path d="M296,238 L296,228 L524,228 Q530,220 536,228 L590,228 Q596,220 602,228 L640,228" fill="none"
+              stroke="#177245" stroke-width="1.2" marker-end="url(#bah-green)" />
+            <text x="405" y="220" text-anchor="middle" font-size="10" fill="#177245">CreateSession · GetBinding ·
+              LoadHistory</text>
+
+            <!-- slot → store -->
+            <line x1="580" y1="272" x2="640" y2="272" stroke="#177245" stroke-width="1.2"
+              marker-end="url(#bah-green)" />
+            <text x="634" y="264" text-anchor="end" font-size="10" fill="#177245">Append</text>
+
+            <!-- agent → store -->
+            <path d="M406,516 L620,516 L620,390 L640,390" fill="none" stroke="#177245" stroke-width="1.2"
+              marker-end="url(#bah-green)" />
+            <text x="512" y="508" text-anchor="middle" font-size="10" fill="#177245">Rec.Append · LogRequest</text>
+
+            <!-- permission+breaker → agent（zone C 内，进 agent 底边） -->
+            <line x1="270" y1="524" x2="270" y2="510" stroke="#5B564E" stroke-width="1.2" marker-end="url(#bah)" />
+            <text x="280" y="518" font-size="10" fill="#5E5748">PreToolUse / PreChat</text>
+
+            <!-- bg / cron → harness（左列横线） -->
+            <line x1="164" y1="332" x2="408" y2="332" stroke="#A85507" stroke-width="1.2" stroke-dasharray="5,3"
+              marker-end="url(#bah-amber)" />
+            <text x="286" y="324" text-anchor="middle" font-size="10" fill="#A85507">轮间 Drain（完成/停滞通知）</text>
+            <line x1="164" y1="376" x2="408" y2="376" stroke="#A85507" stroke-width="1.2" stroke-dasharray="5,3"
+              marker-end="url(#bah-amber)" />
+            <text x="286" y="368" text-anchor="middle" font-size="10" fill="#A85507">轮间 Drain（触发事件）</text>
+
+            <!-- cron → store（outbox，底部走廊） -->
+            <path d="M60,404 L60,592 L880,592 L880,402" fill="none" stroke="#A85507" stroke-width="1.2"
+              marker-end="url(#bah-amber)" />
+            <text x="400" y="584" text-anchor="middle" font-size="10" fill="#A85507">OnFire → PushNotification（通知
+              outbox，App 轮询）</text>
+
+            <!-- naming → store（写回 sessions.title） -->
+            <line x1="725" y1="426" x2="725" y2="402" stroke="#6528C9" stroke-width="1.1" stroke-dasharray="4,3"
+              marker-end="url(#bah-violet)" />
+            <text x="733" y="418" font-size="10" fill="#6528C9">SetTitle</text>
+
+            <!-- ===== 框体 ===== -->
+            <!-- zone A -->
+            <rect x="196" y="24" width="416" height="166" rx="10" fill="none" stroke="#9A948A" stroke-dasharray="4,3" />
+            <text x="212" y="44" font-size="11" fill="#7a8399" letter-spacing=".08em">INTERNAL/GATEWAY · 接入面</text>
+            <!-- zone B -->
+            <rect x="196" y="210" width="416" height="190" rx="10" fill="none" stroke="#9A948A"
+              stroke-dasharray="4,3" />
+            <text x="212" y="392" font-size="11" fill="#7a8399" letter-spacing=".08em">INTERNAL/RUNNER · 执行面</text>
+            <!-- zone C -->
+            <rect x="196" y="420" width="416" height="160" rx="10" fill="none" stroke="#9A948A"
+              stroke-dasharray="4,3" />
+            <text x="212" y="440" font-size="11" fill="#7a8399" letter-spacing=".08em">INTERNAL/AGENT · 内核（与 CLI
+              共用）</text>
+
+            <!-- 客户端 -->
+            <rect x="24" y="56" width="140" height="44" rx="8" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="94" y="74" text-anchor="middle" font-weight="650" fill="#2657C4">bear App / IM</text>
+            <text x="94" y="90" text-anchor="middle" font-size="10" fill="#2657C4">WS 长连客户端</text>
+            <rect x="24" y="116" width="140" height="44" rx="8" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="94" y="134" text-anchor="middle" font-weight="650" fill="#2657C4">HTTP 客户端</text>
+            <text x="94" y="150" text-anchor="middle" font-size="10" fill="#2657C4">App / SDK / curl</text>
+
+            <!-- gateway 节点 -->
+            <rect x="216" y="52" width="170" height="44" rx="8" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="301" y="70" text-anchor="middle" font-weight="650" fill="#0E7368">ws.go · WS 轨</text>
+            <text x="301" y="86" text-anchor="middle" font-size="10" fill="#5E5748">attach·msg·answer·cancel</text>
+            <rect x="216" y="110" width="170" height="44" rx="8" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="301" y="128" text-anchor="middle" font-weight="650" fill="#0E7368">handlers*.go · HTTP 轨</text>
+            <text x="301" y="144" text-anchor="middle" font-size="10" fill="#5E5748">REST · SSE · NDJSON · 附件</text>
+            <rect x="420" y="64" width="160" height="84" rx="8" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="500" y="86" text-anchor="middle" font-weight="700" fill="#0E7368">Server</text>
+            <text x="500" y="103" text-anchor="middle" font-size="10" fill="#5E5748">claims() → ChatKey</text>
+            <text x="500" y="119" text-anchor="middle" font-size="10" fill="#5E5748">{tenant,bear,chat,subject}</text>
+            <text x="500" y="135" text-anchor="middle" font-size="10" fill="#9A948A">错误统一 {error:{...}}</text>
+
+            <!-- runner 节点 -->
+            <rect x="216" y="240" width="160" height="48" rx="8" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="296" y="260" text-anchor="middle" font-weight="700" fill="#0E7368">Manager</text>
+            <text x="296" y="278" text-anchor="middle" font-size="10" fill="#5E5748">slots[ChatKey] · 每 chat 一槽</text>
+            <rect x="410" y="240" width="170" height="64" rx="8" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="495" y="258" text-anchor="middle" font-weight="650" fill="#0E7368">slot × N</text>
+            <text x="495" y="274" text-anchor="middle" font-size="10" fill="#5E5748">queue · Ledger(2000) ·
+              pendingAsk</text>
+            <text x="495" y="290" text-anchor="middle" font-size="10" fill="#5E5748">history · turnSeq · cancel</text>
+            <rect x="410" y="320" width="170" height="64" rx="8" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="495" y="338" text-anchor="middle" font-weight="650" fill="#0E7368">AgentHarness</text>
+            <text x="495" y="354" text-anchor="middle" font-size="10" fill="#5E5748">agent 回调 → 账本事件</text>
+            <text x="495" y="370" text-anchor="middle" font-size="10" fill="#5E5748">轮间 bg/cron drain 注入</text>
+
+            <!-- 内核 -->
+            <rect x="216" y="452" width="190" height="56" rx="8" fill="#F4EFFC" stroke="#6528C9" stroke-width="1.4" />
+            <text x="311" y="474" text-anchor="middle" font-weight="700" fill="#6528C9">agent.Run 循环</text>
+            <text x="311" y="492" text-anchor="middle" font-size="10" fill="#5E5748">五类 hook · Compactor · 工具批</text>
+            <rect x="430" y="452" width="150" height="56" rx="8" fill="#F4EFFC" stroke="#6528C9" />
+            <text x="505" y="474" text-anchor="middle" font-weight="650" fill="#6528C9">tools.Registry</text>
+            <text x="505" y="492" text-anchor="middle" font-size="10" fill="#5E5748">内置 + 运行时工具</text>
+            <rect x="216" y="524" width="150" height="44" rx="8" fill="#F3F1EB" stroke="#9A948A" />
+            <text x="291" y="542" text-anchor="middle" font-weight="650" fill="#5B564E">permission + breaker</text>
+            <text x="291" y="558" text-anchor="middle" font-size="10" fill="#5E5748">三道闸 · 熔断 · nag</text>
+
+            <!-- 右列 -->
+            <rect x="640" y="52" width="256" height="48" rx="8" fill="none" stroke="#6528C9" stroke-dasharray="5,3" />
+            <text x="768" y="72" text-anchor="middle" font-weight="650" fill="#6528C9">OpenAI 兼容端点</text>
+            <text x="768" y="88" text-anchor="middle" font-size="10" fill="#5E5748">ChatCompletions · 流式 ·
+              tool_calls</text>
+
+            <rect x="640" y="140" width="256" height="260" rx="8" fill="#EEF7F0" stroke="#177245" stroke-width="1.4" />
+            <text x="768" y="164" text-anchor="middle" font-weight="700" fill="#177245">internal/session · SQLite</text>
+            <line x1="660" y1="180" x2="876" y2="180" stroke="#DFDAD0" />
+            <text x="660" y="204" font-size="10.5" fill="#5E5748">sessions · messages（append-only）</text>
+            <text x="660" y="226" font-size="10.5" fill="#5E5748">chat_bindings（chat→session）</text>
+            <text x="660" y="248" font-size="10.5" fill="#5E5748">blobs（卸载的工具输出）</text>
+            <text x="660" y="270" font-size="10.5" fill="#5E5748">requests（发送形态留痕）</text>
+            <text x="660" y="292" font-size="10.5" fill="#5E5748">session_state（水印/熔断计数）</text>
+            <line x1="660" y1="306" x2="876" y2="306" stroke="#DFDAD0" />
+            <text x="660" y="328" font-size="10.5" fill="#A85507">notifications ← cron outbox</text>
+            <text x="660" y="348" font-size="10" fill="#9A948A">（App 经 /v1/notifications 轮询）</text>
+            <text x="660" y="380" font-size="10" fill="#9A948A">记忆层独立库 ~/.rune/memory.db</text>
+
+            <!-- naming -->
+            <rect x="640" y="426" width="170" height="56" rx="8" fill="none" stroke="#6528C9" stroke-dasharray="4,3" />
+            <text x="725" y="446" text-anchor="middle" font-weight="650" fill="#6528C9">naming.Namer</text>
+            <text x="725" y="462" text-anchor="middle" font-size="10" fill="#5E5748">首轮 → ≤12 字标题</text>
+            <text x="725" y="478" text-anchor="middle" font-size="10" fill="#9A948A">← OnTurnComplete(completed)</text>
+
+            <!-- 左列旁挂 -->
+            <rect x="24" y="290" width="140" height="44" rx="8" fill="#FCF4E8" stroke="#A85507" />
+            <text x="94" y="308" text-anchor="middle" font-weight="650" fill="#A85507">bgtask.Manager</text>
+            <text x="94" y="324" text-anchor="middle" font-size="10" fill="#5E5748">后台进程 + 通知队列</text>
+            <rect x="24" y="360" width="140" height="44" rx="8" fill="#FCF4E8" stroke="#A85507" />
+            <text x="94" y="378" text-anchor="middle" font-weight="650" fill="#A85507">cron.Scheduler</text>
+            <text x="94" y="394" text-anchor="middle" font-size="10" fill="#5E5748">五段式 · 属主锁 · pending</text>
+
+            <!-- 图例 -->
+            <g font-size="10" fill="#5B564E">
+              <rect x="30" y="622" width="14" height="10" rx="2" fill="#EDF7F5" stroke="#0E7368" />
+              <text x="50" y="631">Bot 新增</text>
+              <rect x="126" y="622" width="14" height="10" rx="2" fill="#F4EFFC" stroke="#6528C9" />
+              <text x="146" y="631">复用内核 / 模型</text>
+              <rect x="252" y="622" width="14" height="10" rx="2" fill="#EEF7F0" stroke="#177245" />
+              <text x="272" y="631">持久层</text>
+              <rect x="336" y="622" width="14" height="10" rx="2" fill="#FCF4E8" stroke="#A85507" />
+              <text x="356" y="631">异步组件</text>
+              <rect x="426" y="622" width="14" height="10" rx="2" fill="#EFF3FC" stroke="#2657C4" />
+              <text x="446" y="631">外部客户端</text>
+              <line x1="540" y1="627" x2="566" y2="627" stroke="#9A948A" stroke-dasharray="4,3" />
+              <text x="574" y="631">异步 / 可选路径</text>
+            </g>
+          </g>
+        </svg>
+        <div class="svg-cap">三层边界各自只说一种话：gateway 只见 ChatKey+TurnInput，runner 只见 TurnRunner，agent 只见 history+hooks</div>
+      </div>
+
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag">设计</span>
+          <span class="scene-title">接口而不是耦合：三层各自只认一种抽象</span>
+        </div>
+        <div class="scene-body">
+          <p><b>gateway 不碰 agent。</b>它只把 HTTP/WS 帧翻译成
+            <code>ChatKey{tenant, channel, chatID, subject}</code> 加
+            <code>TurnInput{prompt, attachments}</code>，调
+            <code>Manager.Submit / Interrupt / Answer / Subscribe</code>。
+          </p>
+          <p><b>runner 不碰 HTTP。</b>slot 只认 <code>TurnRunner</code> 函数签名与
+            <code>emit/ask</code> 两个回调——TUI 若要复用同一执行层，换一个
+            Harness 实现即可。
+          </p>
+          <p><b>agent 不碰渠道。</b>循环内只触发五类 hook 与四个回调
+            （OnPartial/OnToolCall/OnToolResult/OnInject）；bot 特有的事
+            （事件账本、权限路由、bg/cron drain）全部在装配层经回调挂进去。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 3. 调用链 ============ -->
+    <section id="flow">
+      <div class="chap">第 3 章 · 调用链</div>
+      <h2>一条消息从进来到回答：先订阅，再提交，逐行落库</h2>
+      <p class="lede">以 <code>POST /v1/chats/{id}/stream</code> 为例（WS <code>message</code> 帧同路径，
+        只是应答出口不同）。<b>订阅先于提交</b>——本轮事件必然落在订阅窗口内。</p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 770" width="100%" style="min-width:820px" role="img"
+          aria-labelledby="botseq-title botseq-desc">
+          <title id="botseq-title">一条消息的调用链时序</title>
+          <desc id="botseq-desc">客户端经 /stream 或 WS 提交消息，gateway 鉴权寻址后交给 runner 槽位；槽位持久化用户消息并驱动 agent.Run
+            循环，事件经账本下行；轮次结束写 turn_end 并触发异步命名。</desc>
+          <defs>
+            <marker id="sah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+            <marker id="sah-blue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#2657C4" />
+            </marker>
+            <marker id="sah-violet" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#6528C9" />
+            </marker>
+            <marker id="sah-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#177245" />
+            </marker>
+          </defs>
+          <g font-size="12" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+
+            <!-- lifelines -->
+            <line x1="80" y1="44" x2="80" y2="752" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="240" y1="44" x2="240" y2="752" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="400" y1="44" x2="400" y2="752" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="560" y1="44" x2="560" y2="752" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="700" y1="44" x2="700" y2="752" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <line x1="840" y1="44" x2="840" y2="752" stroke="#DFDAD0" stroke-dasharray="3,4" />
+            <text x="80" y="30" text-anchor="middle" font-weight="700" font-size="12.5">客户端</text>
+            <text x="240" y="30" text-anchor="middle" font-weight="700" font-size="12.5">gateway</text>
+            <text x="400" y="30" text-anchor="middle" font-weight="700" font-size="12.5">Manager / slot</text>
+            <text x="560" y="30" text-anchor="middle" font-weight="700" font-size="12.5">harness / Run</text>
+            <text x="700" y="30" text-anchor="middle" font-weight="700" font-size="12.5">Hooks</text>
+            <text x="840" y="30" text-anchor="middle" font-weight="700" font-size="12.5">Store / LLM</text>
+
+            <!-- activation bars -->
+            <rect x="233" y="56" width="10" height="152" fill="#EFF3FC" stroke="#2657C4" stroke-width="0.8" />
+            <rect x="393" y="100" width="10" height="636" fill="#EDF7F5" stroke="#0E7368" stroke-width="0.8" />
+            <rect x="553" y="272" width="10" height="388" fill="#F4EFFC" stroke="#6528C9" stroke-width="0.8" />
+
+            <!-- 1 submit -->
+            <rect x="50" y="52" width="60" height="24" rx="4" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="80" y="69" text-anchor="middle" font-size="10.5" fill="#2657C4">submit</text>
+            <line x1="82" y1="80" x2="236" y2="96" stroke="#2657C4" stroke-width="1.3" marker-end="url(#sah-blue)" />
+            <text x="158" y="90" font-size="10.5" fill="#2657C4">POST /stream（或 WS message 帧）</text>
+
+            <!-- 2 auth -->
+            <text x="248" y="124" font-size="10.5" fill="#5E5748">claims() → 401 ｜ chatKey() → ChatKey</text>
+
+            <!-- 3 subscribe + submit -->
+            <line x1="242" y1="140" x2="396" y2="152" stroke="#5B564E" stroke-width="1.3" marker-end="url(#sah)" />
+            <text x="318" y="140" font-size="10.5" fill="#5E5748">SubscribeLive（先订阅，live-only）</text>
+            <line x1="242" y1="168" x2="396" y2="180" stroke="#5B564E" stroke-width="1.3" marker-end="url(#sah)" />
+            <text x="318" y="166" font-size="10.5" fill="#5E5748">Submit(TurnInput)</text>
+
+            <!-- 4 slotFor -->
+            <line x1="402" y1="200" x2="836" y2="212" stroke="#177245" stroke-width="1.2"
+              marker-end="url(#sah-green)" />
+            <text x="410" y="196" font-size="10.5" fill="#177245">slotFor：GetBinding → CreateSession+Upsert ｜
+              LoadHistory → harness.New</text>
+            <line x1="836" y1="220" x2="402" y2="232" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3"
+              marker-end="url(#sah)" />
+            <text x="430" y="242" font-size="10" fill="#9A948A">session_id + history（慢路径仅首条）</text>
+
+            <!-- busy reject note -->
+            <rect x="404" y="248" width="180" height="24" rx="4" fill="#FCF0F3" stroke="#B4123A" />
+            <text x="494" y="265" text-anchor="middle" font-size="10.5" fill="#B4123A">busy → BusyError → 409 / error
+              帧</text>
+
+            <!-- 5 turn_start -->
+            <line x1="398" y1="292" x2="84" y2="304" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3"
+              marker-end="url(#sah)" />
+            <text x="240" y="294" font-size="10.5" fill="#9A948A">turn_start（emit→Ledger→订阅泵）</text>
+
+            <!-- 6 append user -->
+            <line x1="402" y1="324" x2="836" y2="336" stroke="#177245" stroke-width="1.2"
+              marker-end="url(#sah-green)" />
+            <text x="618" y="326" font-size="10.5" fill="#177245">Append(user 消息) → history 追加</text>
+
+            <!-- 7 TurnRunner -->
+            <line x1="402" y1="356" x2="556" y2="368" stroke="#5B564E" stroke-width="1.3" marker-end="url(#sah)" />
+            <text x="478" y="356" font-size="10.5" fill="#5E5748">TurnRunner(turnCtx, history)</text>
+
+            <!-- 8 UserPromptSubmit hooks -->
+            <line x1="562" y1="384" x2="696" y2="396" stroke="#5B564E" stroke-width="1.2" marker-end="url(#sah)" />
+            <text x="628" y="384" font-size="10" fill="#5E5748">TriggerUserPromptSubmit</text>
+            <text x="628" y="404" font-size="9.5" fill="#9A948A">todos.ResetRounds · mem.InjectOnce</text>
+
+            <!-- BuildBot note -->
+            <rect x="566" y="414" width="240" height="24" rx="4" fill="#F6F5F0" stroke="#9A948A" />
+            <text x="686" y="431" text-anchor="middle" font-size="10" fill="#5E5748">剥旧 sys → 挂 BuildBot
+              system（人设=身份）</text>
+
+            <!-- drain note -->
+            <rect x="566" y="446" width="240" height="24" rx="4" fill="#FCF4E8" stroke="#A85507" />
+            <text x="686" y="463" text-anchor="middle" font-size="10" fill="#A85507">轮间 drain：bg 优先，cron 其次（一次一路）</text>
+
+            <!-- loop box -->
+            <rect x="430" y="482" width="440" height="150" rx="6" fill="none" stroke="#6528C9" stroke-dasharray="5,3" />
+            <text x="442" y="500" font-size="10.5" fill="#6528C9" font-weight="650">agent.Run：每 step（≤50）重复</text>
+
+            <line x1="562" y1="514" x2="696" y2="524" stroke="#5B564E" stroke-width="1.1" marker-end="url(#sah)" />
+            <text x="628" y="512" font-size="10" fill="#5E5748">PreChat（nag/卸载提醒/bg drain）</text>
+            <line x1="562" y1="540" x2="836" y2="550" stroke="#177245" stroke-width="1.1"
+              marker-end="url(#sah-green)" />
+            <text x="700" y="538" font-size="10" fill="#177245">Compactor.Maintain（卸载/摘要）</text>
+            <line x1="562" y1="566" x2="836" y2="576" stroke="#6528C9" stroke-width="1.4"
+              marker-end="url(#sah-violet)" />
+            <text x="570" y="564" font-size="10.5" fill="#6528C9" font-weight="650">llm.Chat（流式；ctx 超限→reactive
+              压缩重试一次）</text>
+            <line x1="560" y1="590" x2="84" y2="600" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3"
+              marker-end="url(#sah)" />
+            <text x="320" y="590" font-size="10" fill="#9A948A">OnPartial → delta 事件下行（每批累积快照）</text>
+            <line x1="562" y1="610" x2="836" y2="618" stroke="#177245" stroke-width="1.1"
+              marker-end="url(#sah-green)" />
+            <text x="570" y="606" font-size="10" fill="#177245">push(assistant) ＋ 工具批</text>
+            <text x="570" y="622" font-size="9.5"
+              fill="#9A948A">逐工具：PreToolUse→Call→PostToolUse→Backfill→push(结果)</text>
+
+            <!-- ask branch -->
+            <line x1="700" y1="640" x2="84" y2="650" stroke="#A85507" stroke-width="1.1" stroke-dasharray="5,3"
+              marker-end="url(#sah)" />
+            <text x="390" y="640" font-size="10" fill="#A85507">判 Ask → EvAsk 挂起 ← 客户端 answer/cancel → resolveAsk（120s
+              超时 deny）</text>
+
+            <!-- Run 返回 → turn_end -->
+            <line x1="556" y1="664" x2="402" y2="672" stroke="#5B564E" stroke-width="1.2" marker-end="url(#sah)" />
+            <text x="478" y="662" font-size="10" fill="#5E5748">返回 history（finish_reason=stop）</text>
+            <line x1="402" y1="692" x2="836" y2="700" stroke="#177245" stroke-width="1.2"
+              marker-end="url(#sah-green)" />
+            <text x="618" y="688" font-size="10" fill="#177245">Append(turn_end 控制行：status·duration·usage)</text>
+            <line x1="398" y1="716" x2="84" y2="724" stroke="#9A948A" stroke-width="1.1" stroke-dasharray="4,3"
+              marker-end="url(#sah)" />
+            <text x="240" y="712" font-size="10" fill="#9A948A">turn_end 事件 → /stream 关流</text>
+            <line x1="402" y1="740" x2="836" y2="748" stroke="#6528C9" stroke-width="1.1" stroke-dasharray="4,3"
+              marker-end="url(#sah-violet)" />
+            <text x="618" y="736" font-size="10" fill="#6528C9">OnTurnComplete → Namer（异步，仅 completed）</text>
+          </g>
+        </svg>
+        <div class="svg-cap">时序压缩了三处展开：工具批（逐个 hook+执行）、ask 回路（事件挂起→客户端应答）、loop 出口（stop → turn_end）</div>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="n">1</div>
+          <div class="st"><b>鉴权与寻址</b>
+            <div class="sd"><code>claims()</code> 把 Bearer token 解析成 <code>{tenant, subject}</code>；
+              <code>chatKey()</code> 拼上渠道名与路径里的 chatID，得到槽位键
+              <code>ChatKey{tenant, "bear", chatID, subject}</code>。
+              subject 进 ChatKey——session.subject_id 与记忆空间归属全靠它。
+              <span class="src"><code>gateway.go:163-183</code></span>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">2</div>
+          <div class="st"><b>先订阅后提交（/stream 特有）</b>
+            <div class="sd"><code>SubscribeLive</code> 只转发订阅建立后的事件、不回放存量——
+              避免在旧轮的 <code>turn_end</code> 处提前收流。随后 <code>Submit</code>，
+              首个 <code>turn_start</code> 锚定本轮 <code>turn_id</code>，其余轮次事件不转发。
+              <span class="src"><code>handlers.go:450-526 · slot.go:392-419</code></span>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">3</div>
+          <div class="st"><b>Submit → slotFor 惰性建槽</b>
+            <div class="sd">首条消息走慢路径：<code>GetBinding</code> 查 <code>chat_bindings</code>，
+              未命中则 <code>CreateSession</code> + <code>UpsertBinding</code>，
+              命中则 <code>LoadHistory</code> 载入视图；然后 <code>newSlot</code> 调
+              <code>Harness.New</code> 装配 agent。槽位 ctx 独立于请求 ctx——HTTP 响应结束不杀槽位。
+              忙时 <code>QueueDepth=0</code> 直接返回 <code>BusyError</code>（HTTP 409 / WS error 帧 / stream 内联 error）。
+              <span class="src"><code>slot.go:281-307, 435-495</code></span>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">4</div>
+          <div class="st"><b>runTurn：记账 → 落库 → 跑轮</b>
+            <div class="sd">turnSeq+1 → 发 <code>turn_start</code> → user 消息先 <code>Append</code> 落库再进 history
+              → 调 <code>TurnRunner</code>。包装层做三件事：剥掉上轮挂的旧 system（保证恰好一份）、
+              触发 <code>UserPromptSubmit</code> 钩子链（todos 轮次归零 + 记忆首条注入）、
+              挂 <code>BuildBot</code> system。<code>AgentHarness</code> 再检查 bg/cron 队列，
+              有则先注入 <code>KindInject</code> 消息，最后才进 <code>a.Run</code>。
+              <span class="src"><code>slot.go:115-165 · main.go:299-315 · harness.go:52-92</code></span>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">5</div>
+          <div class="st"><b>agent.Run 循环（内核，与 CLI 同构）</b>
+            <div class="sd">每 step：PreChat 钩子（breaker nag / bg drain / 压缩提醒 / todo nag）→
+              <code>Compactor.Maintain</code> → <code>llm.Chat</code> 流式（
+              <code>OnPartial</code>→<code>delta</code> 事件）→ push assistant →
+              有 tool_calls 则逐个 PreToolUse（permission 三道闸，判 Ask 时经 slot 的
+              <code>routeAsk</code> 挂起等客户端）→ <code>Registry.Call</code> → PostToolUse →
+              Backfill（超限结果落 blob）→ push 结果 → 下一步。上下文超限做一次 reactive 压缩重试。
+              <span class="src"><code>agent.go:177-385</code></span>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">6</div>
+          <div class="st"><b>turn_end + 异步命名</b>
+            <div class="sd">终态（completed / interrupted / error）写 <code>turn_end</code> 控制行并发事件；
+              /stream 在此关流。status=completed 时 <code>OnTurnComplete</code> 异步触发
+              <code>namer.NameChat</code>——取首轮 user+assistant 各 500 字做一次性 completion，
+              ≤12 字写回 <code>sessions.title</code>；已是非默认标题则跳过。
+              <span class="src"><code>slot.go:168-200 · naming.go:67-111</code></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note warn">
+        <div class="nt">ask 回路（图里虚线支路）</div>
+        <p>permission 判 Ask → slot <code>routeAsk</code> 发 <code>ask</code> 事件（含 ask_id、tool_call、seq/total）、
+          登记 <code>pendingAsk</code>、挂 120s 超时 → 客户端经 WS <code>answer</code> 帧或
+          <code>POST /actions {type:"answer"}</code> 应答 → <code>Mgr.Answer</code> →
+          <code>resolveAsk</code> 写回 reply channel。<b>三条兜底</b>：客户端 answer、
+          120s 超时 deny、slotCtx 取消 deny。<code>AskTimeout</code> 默认 120s。
+          <span class="src"><code>slot.go:232-277, 330-348 · handlers.go:199-238 · ws.go:117-129</code></span>
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ 4. 状态机 ============ -->
+    <section id="state">
+      <div class="chap">第 4 章 · 槽位与轮次状态</div>
+      <h2>槽位状态极简：空闲 ⇄ 轮次中，ask 是轮次内的挂起子态</h2>
+      <p class="lede">并发语义全部收敛在 <code>slot.mu</code> 一把锁里：
+        <code>busy</code> 标志认领轮链、<code>queue</code> 缓冲排队、
+        <code>pendingAsk</code> 单槽挂起、<code>cancel</code> 持有当前轮取消。
+      </p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 330" width="100%" style="min-width:760px" role="img"
+          aria-labelledby="botsm-title botsm-desc">
+          <title id="botsm-title">槽位状态机</title>
+          <desc id="botsm-desc">槽位惰性创建后进入空闲态；Submit 认领 busy 进入轮次中；轮次内可挂起等权限应答；轮次以 turn_end 收束回空闲；忙时新提交被拒。</desc>
+          <defs>
+            <marker id="mah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+            <marker id="mah-amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#A85507" />
+            </marker>
+            <marker id="mah-rose" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#B4123A" />
+            </marker>
+            <marker id="mah-teal" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#0E7368" />
+            </marker>
+          </defs>
+          <g font-size="12" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+
+            <!-- edges first -->
+            <!-- 无槽位 → idle -->
+            <line x1="150" y1="100" x2="208" y2="100" stroke="#5B564E" stroke-width="1.3" marker-end="url(#mah)" />
+            <text x="180" y="90" text-anchor="middle" font-size="10" fill="#5E5748">首条 Submit</text>
+
+            <!-- idle → running -->
+            <path d="M300,86 L340,86 L340,100 L398,100" fill="none" stroke="#0E7368" stroke-width="1.4"
+              marker-end="url(#mah-teal)" />
+            <text x="349" y="76" text-anchor="middle" font-size="10" fill="#0E7368">Submit 认领 busy → runChain</text>
+
+            <!-- running → idle -->
+            <path d="M398,124 L340,124 L340,112 L300,112" fill="none" stroke="#5B564E" stroke-width="1.2"
+              marker-end="url(#mah)" />
+            <text x="349" y="140" text-anchor="middle" font-size="10" fill="#5E5748">turn_end：completed / interrupted /
+              error</text>
+
+            <!-- running → ask -->
+            <path d="M530,86 L560,86 L560,100 L618,100" fill="none" stroke="#A85507" stroke-width="1.3"
+              marker-end="url(#mah-amber)" />
+            <text x="574" y="76" text-anchor="middle" font-size="10" fill="#A85507">PreToolUse=Ask → EvAsk</text>
+
+            <!-- ask → running -->
+            <path d="M618,124 L560,124 L560,112 L530,112" fill="none" stroke="#A85507" stroke-width="1.2"
+              stroke-dasharray="4,3" marker-end="url(#mah-amber)" />
+            <text x="574" y="140" text-anchor="middle" font-size="10" fill="#A85507">answer / 120s 超时 / slotCtx
+              取消</text>
+
+            <!-- running interrupted -->
+            <path d="M500,124 L500,190 L290,190 L290,122" fill="none" stroke="#B4123A" stroke-width="1.1"
+              stroke-dasharray="4,3" marker-end="url(#mah-rose)" />
+            <text x="395" y="182" text-anchor="middle" font-size="10" fill="#B4123A">Interrupt → ctx 取消 →
+              InterruptedError（补占位结果，可续跑）</text>
+
+            <!-- nodes -->
+            <rect x="40" y="80" width="110" height="40" rx="8" fill="none" stroke="#9A948A" stroke-dasharray="4,3" />
+            <text x="95" y="105" text-anchor="middle" font-size="11.5" fill="#9A948A">（无槽位）</text>
+
+            <rect x="210" y="80" width="90" height="40" rx="8" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="255" y="105" text-anchor="middle" font-weight="700" font-size="12" fill="#0E7368">idle 空闲</text>
+
+            <rect x="400" y="80" width="130" height="44" rx="8" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="465" y="99" text-anchor="middle" font-weight="700" font-size="12" fill="#0E7368">running</text>
+            <text x="465" y="114" text-anchor="middle" font-size="9.5" fill="#5E5748">busy=true · 轮链串行</text>
+
+            <rect x="620" y="80" width="130" height="44" rx="8" fill="#FCF4E8" stroke="#A85507" stroke-width="1.4" />
+            <text x="685" y="99" text-anchor="middle" font-weight="700" font-size="12" fill="#A85507">ask 挂起</text>
+            <text x="685" y="114" text-anchor="middle" font-size="9.5" fill="#5E5748">pendingAsk · 等客户端</text>
+
+            <!-- 忙时语义提示 -->
+            <rect x="620" y="170" width="260" height="66" rx="8" fill="#F6F5F0" stroke="#9A948A" />
+            <text x="750" y="190" text-anchor="middle" font-size="10.5" fill="#B4123A">busy 时 Submit → BusyError（409 /
+              error 帧）</text>
+            <text x="750" y="208" text-anchor="middle" font-size="10" fill="#5E5748">当前 QueueDepth=0 忙即拒；</text>
+            <text x="750" y="224" text-anchor="middle" font-size="10" fill="#9A948A">QueueDepth&gt;0 时入队，runChain
+              轮间排空</text>
+
+            <text x="60" y="290" font-size="10.5" fill="#9A948A">注：槽位创建后常驻至进程退出，无空闲回收；crashed / maxsteps
+              在协议里预留但当前代码不写（见第 7 章）。</text>
+          </g>
+        </svg>
+        <div class="svg-cap">锁内三元组：busy 认领、queue 排空、pendingAsk 挂起——竞态只在 Submit/Interrupt/Answer 三个入口收敛</div>
+      </div>
+
+      <div class="scene">
+        <div class="scene-head">
+          <span class="scene-tag warn">并发</span>
+          <span class="scene-title">为什么轮间取队列和释放 busy 在同一把锁内</span>
+        </div>
+        <div class="scene-body">
+          <p class="scene-q">Submit 见 busy=true 而入队成功，那条消息会不会没人收？</p>
+          <p>不会。<code>runChain</code> 每轮跑完在锁内做"取 queue → 空则 busy=false"；
+            <code>Submit</code> 在锁内做"见 busy → 尝试入队"。两个检查互斥：
+            要么入队先于排空检查（消息必然被取走），要么排空先完成（Submit 改走
+            "认领 busy + 起新链"分支）——消息不会留在无人收的 queue 里。
+            <span class="src"><code>slot.go:94-110, 281-307</code></span>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 5. 事件账本 ============ -->
+    <section id="ledger">
+      <div class="chap">第 5 章 · 事件账本与下行轨</div>
+      <h2>一份内存账本，三种消费方式</h2>
+      <p class="lede">每个 chat 一个 <code>Ledger</code>：cap=2000 的 ring buffer，
+        <code>seq</code> 会话内单调递增。<code>Append</code> 即广播；
+        慢消费者丢帧、靠 seq 间隙自检。账本<b>不落盘</b>——历史回放在 SQLite，
+        断线续传用 <code>since</code> 追增量。
+      </p>
+
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 380" width="100%" style="min-width:760px" role="img"
+          aria-labelledby="botled-title botled-desc">
+          <title id="botled-title">事件账本：生产者、账本、三种消费轨</title>
+          <desc id="botled-desc">轮次事件由槽位与 harness 回调写入每 chat 的 ring buffer 账本；WS attach 泵、SSE 与 NDJSON stream 三种轨以 since
+            游标、Last-Event-ID 或 live-only 方式消费。</desc>
+          <defs>
+            <marker id="lah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#5B564E" />
+            </marker>
+            <marker id="lah-teal" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="#0E7368" />
+            </marker>
+          </defs>
+          <g font-size="12" fill="#26241F" font-family="SF Mono, Menlo, monospace">
+
+            <!-- producers → ledger（水平挂点） -->
+            <line x1="230" y1="84" x2="338" y2="84" stroke="#5B564E" stroke-width="1.2" marker-end="url(#lah)" />
+            <line x1="230" y1="152" x2="338" y2="152" stroke="#5B564E" stroke-width="1.2" marker-end="url(#lah)" />
+            <line x1="230" y1="220" x2="338" y2="220" stroke="#5B564E" stroke-width="1.2" marker-end="url(#lah)" />
+            <line x1="230" y1="270" x2="338" y2="270" stroke="#5B564E" stroke-width="1.2" marker-end="url(#lah)" />
+
+            <!-- ledger → consumers（水平挂点） -->
+            <line x1="550" y1="84" x2="668" y2="84" stroke="#0E7368" stroke-width="1.3" marker-end="url(#lah-teal)" />
+            <line x1="550" y1="152" x2="668" y2="152" stroke="#0E7368" stroke-width="1.3" marker-end="url(#lah-teal)" />
+            <line x1="550" y1="228" x2="668" y2="228" stroke="#0E7368" stroke-width="1.3" marker-end="url(#lah-teal)" />
+
+            <!-- producer boxes -->
+            <rect x="30" y="60" width="200" height="48" rx="8" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="130" y="80" text-anchor="middle" font-weight="650" fill="#0E7368">slot.runTurn / finishTurn</text>
+            <text x="130" y="96" text-anchor="middle" font-size="10" fill="#5E5748">turn_start · turn_end ·
+              interrupt</text>
+
+            <rect x="30" y="128" width="200" height="48" rx="8" fill="#EDF7F5" stroke="#0E7368" />
+            <text x="130" y="148" text-anchor="middle" font-weight="650" fill="#0E7368">AgentHarness 回调</text>
+            <text x="130" y="164" text-anchor="middle" font-size="10" fill="#5E5748">delta · tool_call · tool_result ·
+              inject</text>
+
+            <rect x="30" y="196" width="200" height="48" rx="8" fill="#FCF4E8" stroke="#A85507" />
+            <text x="130" y="216" text-anchor="middle" font-weight="650" fill="#A85507">routeAsk / drain 注入</text>
+            <text x="130" y="232" text-anchor="middle" font-size="10" fill="#5E5748">ask · notification</text>
+
+            <rect x="30" y="264" width="200" height="48" rx="8" fill="#F3F1EB" stroke="#9A948A" />
+            <text x="130" y="284" text-anchor="middle" font-weight="650" fill="#5B564E">Manager / ledger 自身</text>
+            <text x="130" y="300" text-anchor="middle" font-size="10" fill="#5E5748">reset（ErrLag） · error（请求级）</text>
+
+            <!-- ledger box -->
+            <rect x="340" y="76" width="210" height="200" rx="10" fill="#EDF7F5" stroke="#0E7368" stroke-width="1.4" />
+            <text x="445" y="102" text-anchor="middle" font-weight="700" fill="#0E7368">Ledger · ring buffer</text>
+            <line x1="360" y1="118" x2="530" y2="118" stroke="#BFDCD6" />
+            <text x="445" y="142" text-anchor="middle" font-size="10.5" fill="#5E5748">cap=2000 · seq 单调递增</text>
+            <text x="445" y="164" text-anchor="middle" font-size="10.5" fill="#5E5748">Append 即广播全部订阅者</text>
+            <text x="445" y="186" text-anchor="middle" font-size="10.5" fill="#5E5748">订阅 cap 256 · 慢消费者丢帧</text>
+            <text x="445" y="208" text-anchor="middle" font-size="10.5" fill="#5E5748">Since(since) 回放存量</text>
+            <text x="445" y="230" text-anchor="middle" font-size="10.5" fill="#5E5748">落后出窗 → ErrLag</text>
+            <text x="445" y="258" text-anchor="middle" font-size="10" fill="#9A948A">纯内存，不落盘</text>
+
+            <!-- consumer boxes -->
+            <rect x="670" y="56" width="220" height="56" rx="8" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="780" y="78" text-anchor="middle" font-weight="650" fill="#2657C4">WS attach 泵</text>
+            <text x="780" y="94" text-anchor="middle" font-size="10" fill="#5E5748">since 续传 · ErrLag→reset 帧</text>
+
+            <rect x="670" y="128" width="220" height="56" rx="8" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="780" y="150" text-anchor="middle" font-weight="650" fill="#2657C4">SSE /v1/chats/:id/events</text>
+            <text x="780" y="166" text-anchor="middle" font-size="10" fill="#5E5748">Last-Event-ID → since+1 · 20s
+              心跳</text>
+
+            <rect x="670" y="200" width="220" height="56" rx="8" fill="#EFF3FC" stroke="#2657C4" />
+            <text x="780" y="222" text-anchor="middle" font-weight="650" fill="#2657C4">NDJSON /stream</text>
+            <text x="780" y="238" text-anchor="middle" font-size="10" fill="#5E5748">live-only · 首个 turn_start
+              锚定本轮</text>
+
+            <text x="445" y="330" text-anchor="middle" font-size="10.5" fill="#9A948A">请求级 error 帧不入账本（不占 seq）；下行帧带
+              seq/chat_id/turn_id/turn_seq/timestamp</text>
+          </g>
+        </svg>
+        <div class="svg-cap">事件只有一种载体：runner.Event{seq, event, turn_id, turn_seq, timestamp, data}——三条轨只是它的三种订阅姿势</div>
+      </div>
+
+      <h3>事件目录（12 种）</h3>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>事件</th>
+              <th>产生方</th>
+              <th>data 载荷</th>
+              <th>说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>turn_start</code></td>
+              <td>slot.runTurn</td>
+              <td><code>{turn_seq}</code></td>
+              <td>轮次开跑；/stream 用它锚定本轮 turn_id</td>
+            </tr>
+            <tr>
+              <td><code>delta</code></td>
+              <td>OnPartial</td>
+              <td><code>{thinking?, content?}</code></td>
+              <td>本轮累积快照（全量替换，不是增量）</td>
+            </tr>
+            <tr>
+              <td><code>reasoning_delta</code></td>
+              <td class="dim">—（预留）</td>
+              <td class="dim">—</td>
+              <td>常量已声明，当前无产出方</td>
+            </tr>
+            <tr>
+              <td><code>tool_call</code></td>
+              <td>OnToolCall</td>
+              <td><code>{id, name, arguments}</code></td>
+              <td>先于执行发射——被 hook 阻止的调用也可见</td>
+            </tr>
+            <tr>
+              <td><code>tool_result</code></td>
+              <td>OnToolResult</td>
+              <td><code>{id, output, is_error, blocked, duration_ms}</code></td>
+              <td>blocked=true 表示被权限闸拦下未执行</td>
+            </tr>
+            <tr>
+              <td><code>inject</code></td>
+              <td>OnInject</td>
+              <td><code>{content}</code></td>
+              <td>hook 注入消息（todo nag、压缩提醒、bg/cron 交付）</td>
+            </tr>
+            <tr>
+              <td><code>ask</code></td>
+              <td>routeAsk</td>
+              <td><code>{ask_id, call, reason, seq, total}</code></td>
+              <td>权限确认挂起；等 answer 或 120s 超时</td>
+            </tr>
+            <tr>
+              <td><code>interrupt</code></td>
+              <td>Mgr.Interrupt</td>
+              <td><code>{reason}</code></td>
+              <td>客户端 cancel 触发</td>
+            </tr>
+            <tr>
+              <td><code>turn_end</code></td>
+              <td>finishTurn</td>
+              <td><code>{status, turn_seq, duration_ms, usage?, error?}</code></td>
+              <td>轮次唯一终结信号；同内容落库为控制行</td>
+            </tr>
+            <tr>
+              <td><code>notification</code></td>
+              <td>harness drain</td>
+              <td><code>{kind: bg|cron, content?, count?}</code></td>
+              <td>旁路输入已注入本轮</td>
+            </tr>
+            <tr>
+              <td><code>reset</code></td>
+              <td>ws attach（ErrLag）</td>
+              <td><code>{reason}</code></td>
+              <td>since 落后出窗；客户端应全量重拉</td>
+            </tr>
+            <tr>
+              <td><code>error</code></td>
+              <td>gateway 各轨</td>
+              <td><code>{message}</code></td>
+              <td>请求级错误帧，不占账本 seq</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 6. 旁路输入与守护 ============ -->
+    <section id="sidecar">
+      <div class="chap">第 6 章 · 旁路输入与守护组件</div>
+      <h2>谁能在没有用户消息时开口，谁管收尾</h2>
+
+      <h3>6.1 cron：双写交付——outbox 通知 + pending 注入</h3>
+      <p>bot 模式下 <code>Scheduler.OnFire</code> 做两件事，不是一件：</p>
+      <ul>
+        <li><b>通知 outbox</b>：<code>store.PushNotification(tenant, "cron", title, prompt)</code>
+          落 <code>notifications</code> 表——App 轮询 <code>GET /v1/notifications</code> 弹窗，
+          不会唤醒空闲 chat（ALF-133）。</li>
+        <li><b>pending 队列</b>：任务同时进调度器 <code>pending</code>，
+          由 <code>AgentHarness</code> 在某次轮次起跑前 <code>Drain</code> 出来、
+          过 UserPromptSubmit 钩子后注入为 <code>KindInject</code> 消息。</li>
+      </ul>
+      <div class="note warn">
+        <div class="nt">注意：Drain 队列是进程全局，不带会话归属</div>
+        <p><code>cron.Scheduler.pending</code> 与 <code>bgtask.Manager.pending</code> 都是进程级队列。
+          多 chat 场景下，一条 bg/cron 通知会注入到"下一个跑轮的槽位"——
+          不一定是发起任务的那个 chat。outbox 通知有 tenant 归属、无此问题；
+          会话内注入的归属语义目前是"先到先得"，不是定向投递。</p>
+      </div>
+
+      <h3>6.2 bg 任务：两个挂点，同一队列</h3>
+      <p><code>bgm.Drain()</code> 挂在两处：turn 起跑前的 harness 轮间检查（注入成一轮的旁路信息），
+        和 <code>PreChat</code> 钩子（轮次中途到达的通知在下个 step 注入）。
+        <code>task_kill</code> 置 notified 抑制完成通知；停滞看门狗发一次性提醒。
+        交付落库失败经 <code>Requeue</code> 归还队首——通知不丢。
+      </p>
+
+      <h3>6.3 memory：首条注入 + dream 后台消化</h3>
+      <p><code>mem.InjectOnce</code> 挂 <code>UserPromptSubmit</code>：每个会话的首条 user 消息
+        注入记忆索引与常驻正文（借 TurnRunner 包装层触发，bg 注入轮不触发）。
+        <code>DreamTicker</code> 按画像节奏跑、<code>DreamOnExit</code> 收尾兜底；
+        dream 可换轻量模型（<code>RUNE_MEMORY_MODEL</code>）。
+        <code>/v1/memory*</code> 三个端点只是查看/手动触发口，<code>Mem=nil</code> 时 503。
+      </p>
+
+      <h3>6.4 naming：turn_end 的一次性收尾</h3>
+      <p><code>mgr.OnTurnComplete</code> 只在 status=completed 时异步触发——
+        interrupted/error 的残轮不构成"完整一轮"。命名脱离调用方生命周期
+        （自建 30s 超时 ctx），任何失败静默只打日志。</p>
+
+      <h3>6.5 优雅退出</h3>
+      <p>SIGINT/SIGTERM → <code>httpSrv.Shutdown(5s)</code> → <code>bgm.Shutdown()</code>
+        （级联 SIGKILL 进程组）→ <code>mem.DreamOnExit</code>（若开 dream）。
+        槽位与账本是纯内存，进程退出即消失；重启后由首条消息惰性重建——
+        历史从 SQLite 回载，但进行中的轮次不会续跑（见第 7 章）。</p>
+    </section>
+
+    <!-- ============ 7. 观察与风险 ============ -->
+    <section id="observations">
+      <div class="chap">第 7 章 · 观察与风险</div>
+      <h2>读代码时值得知道的七个事实</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>事实</th>
+              <th>影响 / 依据</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td><code>runner.Config.DrainInterval</code>（默认 3s）已定义但<b>无消费者</b></td>
+              <td>死配置字段。注入实际是轮次边界驱动（harness 轮间 + PreChat），不是周期探。
+                <code>runner.go:283-301</code>
+              </td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td><code>turn_end.status</code> 协议含 <code>crashed</code>，DB 文档还提 <code>maxsteps</code>；
+                当前代码只写 <code>completed | interrupted | error</code></td>
+              <td>进程崩溃的接管修复（Fold 补悬空 call + 补记 crashed）是
+                gateway-plan §5.2 的规划项，未落地；MaxStepsError 归并为 error。</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>bg/cron 的 <code>pending</code> 队列进程全局、无会话归属</td>
+              <td>多 chat 下通知落到"下一个跑轮的槽位"；cron 另有 outbox 通道兜底触达（见 6.1）。</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>槽位无空闲回收：slots map 常驻至进程退出</td>
+              <td>每槽含 history 全量视图 + 2000 容量账本；长进程+多 chat 会累积内存。
+                目前无 LRU/idle reaper。</td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td>忙时语义是"拒"，不是"排"</td>
+              <td><code>QueueDepth=0</code>：HTTP 409、WS error 帧、stream 内联 error。
+                串行责任在客户端（等 turn_end 再发下一条）——这是明确的协议边界。</td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td>槽位生命周期独立于请求 ctx</td>
+              <td><code>slotFor</code> 用 <code>context.Background()</code> 建槽；
+                HTTP/WS 请求结束不会杀掉跑着的轮次。Interrupt 是唯一停轮手段。</td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td>附件三道轨同构校验，文档附件"失败不拒消息"</td>
+              <td>≤8 个、单个/合计 ≤220MB；PDF/Office 抽取失败降级为
+                "打不开"占位分片交给模型如实回答——只有 ctx 取消才返回错误。
+                <code>docattach.go:44-69</code>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note teal">
+        <div class="nt">一句话总结</div>
+        <p>Bot 层的全部新意是"<b>把隐式的单会话前提显式化</b>"：ChatKey 路由、每 chat 槽位、
+          事件账本、ask 回话通道。内核（agent loop、hooks、压缩、权限、记忆）一行未改——
+          这验证了"装配层"这条架构线的成立。</p>
+      </div>
+    </section>
+
+    <footer>
+      <p>docs/runeharness-bot-layer.html · 基于当前代码（cmd/runebot + internal/gateway + internal/runner）解析 ·
+        与 runeharness-architecture.html / runeharness-gateway-plan.html / runeharness-api.html 配套</p>
+    </footer>
+  </div>
+</body>
+
+</html>

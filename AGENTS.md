@@ -68,12 +68,18 @@ go test . ./internal/...
 - 画像（Profile）决定空间维度/类型辞典/写工具/dream 节奏：
   `RUNE_MEMORY_PROFILE=coding|companion|generic`（coding 冷却 60min、
   companion 120min，退出收尾与 12min 心跳兜底欠账）。
-- 读路径：UserPromptSubmit hook（`InjectOnce`）把索引+常驻正文注入首条
-  user 消息（Fold 首部常驻）；写路径：`memory` 工具（safe 名单内）
-  + dream 消化（手动 /dream、定时、退出收尾三触发器）。
+- 读路径两条：TUI 走 UserPromptSubmit hook（`InjectOnce`）把索引+常驻
+  正文注入首条 user 消息；runebot 走 system 常驻——`mem.Render` 每轮
+  比对 memory_log 版本、变了重建 system（例外已记录在 prompt.go
+  包注释，理由见 docs/runeharness-bot-style-plan.md 第 2 阶段）。
+  写路径：`memory` 工具（safe 名单内）+ dream 消化（手动 /dream、
+  定时、退出收尾三触发器）。
 - 凭据两道闸：提示词 DoNot + `LooksLikeSecret` 代码层扫描，写入一律过。
 - 相关 env：RUNE_MEMORY（总开关）、RUNE_MEMORY_DB、RUNE_MEMORY_PROFILE、
   RUNE_MEMORY_DREAM、RUNE_MEMORY_MODEL（dream 提取可换轻量模型）。
+- MiniMax 思考参数：`RUNE_THINKING`（thinking.type：M3 用 "adaptive"，M3.1
+  也只有 adaptive 可选）与 `RUNE_REASONING_SPLIT`（思考分进
+  reasoning_content，正文不再夹 <think>）走 extra-body 下发，SDK 未建模。
 
 ### 后台任务（internal/bgtask，对齐 learn.shareai.run s13 / CC LocalShellTask）
 
