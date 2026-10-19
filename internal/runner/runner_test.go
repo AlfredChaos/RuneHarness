@@ -379,3 +379,145 @@ func TestSubscribeLiveSkipsLedgerReplay(t *testing.T) {
 	case <-time.After(120 * time.Millisecond):
 	}
 }
+
+// ── 空闲压缩（plan §1.5）──
+
+// 触发条件：槽位静默满 IdleAfter 且 IdleCompact 挂上了 → 后台执行，
+// 返回的新视图成为槽位 history。
+func TestIdleCompactFires(t *testing.T) {
+	fired := make(chan struct{}, 1)
+	h := fakeHarness(func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+		return hist, nil
+	})
+	h.IdleCompact = func(ctx context.Context, hist []agent.Message) []agent.Message {
+		fired <- struct{}{}
+		return append(hist, agent.Message{Role: agent.RoleAssistant, Content: "compacted"})
+	}
+	mgr := NewManager(Config{IdleAfter: time.Millisecond}, h, newFakeStore(), nil)
+	if err := mgr.Submit(context.Background(), key(), TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	// 等轮次结束（lastActive 更新）再扫。
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mgr.sweepIdle()
+		select {
+		case <-fired:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	t.Fatal("idle compact did not fire")
+}
+
+// 取消语义：压缩进行中来了新消息，ctx 被取消、轮次照常跑。
+func TestIdleCompactCancelledBySubmit(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	h := fakeHarness(func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+		return hist, nil
+	})
+	h.IdleCompact = func(ctx context.Context, hist []agent.Message) []agent.Message {
+		close(started)
+		select {
+		case <-ctx.Done():
+			return nil // 被取消：无新视图
+		case <-release:
+			return hist
+		}
+	}
+	mgr := NewManager(Config{IdleAfter: time.Millisecond}, h, newFakeStore(), nil)
+	k := key()
+	if err := mgr.Submit(context.Background(), k, TurnInput{Prompt: "warm up"}); err != nil {
+		t.Fatal(err)
+	}
+	// 先等压缩跑起来，再在压缩期间提交 → 应取消压缩、跑新轮次。
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mgr.sweepIdle()
+		select {
+		case <-started:
+			goto compactRunning
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	t.Fatal("idle compact did not start")
+compactRunning:
+	if err := mgr.Submit(context.Background(), k, TurnInput{Prompt: "new msg"}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	// 轮次能跑完（不被压缩挡住）：订阅收 turn_end。
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !mgr.Active(context.Background(), k) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("turn did not finish after idle compact was cancelled")
+}
+
+// 静默未满不触发：IdleAfter 很大时 sweep 不动。
+func TestIdleCompactNeedsIdle(t *testing.T) {
+	fired := make(chan struct{}, 1)
+	h := fakeHarness(func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+		return hist, nil
+	})
+	h.IdleCompact = func(ctx context.Context, hist []agent.Message) []agent.Message {
+		fired <- struct{}{}
+		return hist
+	}
+	mgr := NewManager(Config{IdleAfter: time.Hour}, h, newFakeStore(), nil)
+	if err := mgr.Submit(context.Background(), key(), TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	mgr.sweepIdle()
+	select {
+	case <-fired:
+		t.Fatal("compact fired before idle threshold")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// turn_end 控制行带 prompt_tokens/system_bytes（plan §4.3）：读侧向后兼容。
+func TestTurnEndCarriesUsageFields(t *testing.T) {
+	h := fakeHarness(func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+		return []agent.Message{
+			{Role: agent.RoleSystem, Content: "system prompt body"},
+			{Role: agent.RoleAssistant, Content: "ok",
+				Usage: &agent.Usage{Prompt: 12345, Completion: 6}},
+		}, nil
+	})
+	mgr := NewManager(Config{}, h, newFakeStore(), nil)
+	k := key()
+	ch, _, err := mgr.Subscribe(context.Background(), k, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Submit(context.Background(), k, TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Event != EvTurnEnd {
+				continue
+			}
+			var out TurnOutcome
+			if err := json.Unmarshal(ev.Data, &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.PromptTokens != 12345 {
+				t.Fatalf("prompt_tokens = %d, want 12345", out.PromptTokens)
+			}
+			if out.SystemBytes != len("system prompt body") {
+				t.Fatalf("system_bytes = %d, want %d", out.SystemBytes, len("system prompt body"))
+			}
+			return
+		case <-deadline:
+			t.Fatal("no turn_end event")
+		}
+	}
+}

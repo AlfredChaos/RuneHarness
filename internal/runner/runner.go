@@ -40,27 +40,27 @@ func (k ChatKey) String() string {
 type Event struct {
 	Seq     int64           `json:"seq"`
 	ChatID  string          `json:"chat_id"`
-	Event   string          `json:"event"`            // delta | tool_call | tool_result | inject | ask | interrupt | turn_start | turn_end | reset | error | notification
-	TurnID  string          `json:"turn_id"`          // 该事件归属的轮次；跨轮次事件为空
-	TurnSeq int             `json:"turn_seq"`         // 轮次序号（1 起，queued -> running 每次 +1）
-	At      int64           `json:"timestamp"`        // unix 毫秒；服务端产生该事件的时刻
-	Data    json.RawMessage `json:"data"`             // 事件专有载荷
+	Event   string          `json:"event"`     // delta | tool_call | tool_result | inject | ask | interrupt | turn_start | turn_end | reset | error | notification
+	TurnID  string          `json:"turn_id"`   // 该事件归属的轮次；跨轮次事件为空
+	TurnSeq int             `json:"turn_seq"`  // 轮次序号（1 起，queued -> running 每次 +1）
+	At      int64           `json:"timestamp"` // unix 毫秒；服务端产生该事件的时刻
+	Data    json.RawMessage `json:"data"`      // 事件专有载荷
 }
 
 // 事件名常量。data 字段的 JSON 结构在 docs/runeharness-api.html §6 定义。
 const (
-	EvDelta       = "delta"        // {thinking?, content?}：本轮累积快照（全量替换，不是增量）
-	EvReasoning   = "reasoning_delta"
-	EvToolCall    = "tool_call"    // {id, name, arguments}：一次工具调用分发
-	EvToolResult  = "tool_result"  // {id, output, is_error, blocked, duration_ms}
-	EvInject      = "inject"       // {content}：hook 注入的消息（todo nag、压缩提醒等）
-	EvAsk         = "ask"          // {ask_id, call:{...}, reason, seq, total}：权限确认挂起
-	EvInterrupt   = "interrupt"    // {reason?}：本轮被打断
-	EvTurnStart   = "turn_start"   // {turn_seq, queued_from?}：轮次开跑
-	EvTurnEnd     = "turn_end"     // {status, turn_seq, usage?}：轮次终局
-	EvReset       = "reset"        // {reason}：会话边界后移（压缩等），since 前序作废
-	EvError       = "error"        // {message}：轮次内非致命异常
-	EvNotification= "notification" // {kind: bg|cron|missed, task_id?, prompt?}：旁路输入已注入
+	EvDelta        = "delta" // {thinking?, content?}：本轮累积快照（全量替换，不是增量）
+	EvReasoning    = "reasoning_delta"
+	EvToolCall     = "tool_call"    // {id, name, arguments}：一次工具调用分发
+	EvToolResult   = "tool_result"  // {id, output, is_error, blocked, duration_ms}
+	EvInject       = "inject"       // {content}：hook 注入的消息（todo nag、压缩提醒等）
+	EvAsk          = "ask"          // {ask_id, call:{...}, reason, seq, total}：权限确认挂起
+	EvInterrupt    = "interrupt"    // {reason?}：本轮被打断
+	EvTurnStart    = "turn_start"   // {turn_seq, queued_from?}：轮次开跑
+	EvTurnEnd      = "turn_end"     // {status, turn_seq, usage?}：轮次终局
+	EvReset        = "reset"        // {reason}：会话边界后移（压缩等），since 前序作废
+	EvError        = "error"        // {message}：轮次内非致命异常
+	EvNotification = "notification" // {kind: bg|cron|missed, task_id?, prompt?}：旁路输入已注入
 )
 
 // ErrLag 表示订阅者 since 已落后出 buffer 上界，无法无丢失续传。
@@ -224,13 +224,14 @@ type TurnInput struct {
 
 // TurnOutcome 是轮次终局，由 turn_end 事件的 data 携带。
 type TurnOutcome struct {
-	Status   string  `json:"status"`             // completed | interrupted | error | crashed
-	TurnSeq  int     `json:"turn_seq"`
-	Duration int64   `json:"duration_ms"`
-	Usage    *agent.Usage `json:"usage,omitempty"`
-	Error    string  `json:"error,omitempty"`
+	Status       string       `json:"status"` // completed | interrupted | error | crashed
+	TurnSeq      int          `json:"turn_seq"`
+	Duration     int64        `json:"duration_ms"`
+	Usage        *agent.Usage `json:"usage,omitempty"`
+	PromptTokens int          `json:"prompt_tokens,omitempty"` // 最近一条 assistant usage 的 prompt 计数
+	SystemBytes  int          `json:"system_bytes,omitempty"`  // 视图首条 system 消息的字节数
+	Error        string       `json:"error,omitempty"`
 }
-
 
 // Binder 解析 (channel,chat_id) -> session_id 的持久映射。
 type Binder interface {
@@ -264,6 +265,14 @@ type Harness struct {
 
 	// OnSlotClose 在槽位关闭时回调（清理 goroutine、释放租约等）；nil 可。
 	OnSlotClose func()
+
+	// IdleCompact 是可选的空闲压缩通道（plan §1.5）：Manager 周期检查，
+	// 槽位空闲满 IdleAfter 且无进行中轮次时调用它；返回 nil 表示本次没做
+	// 压缩（用量不过线等），非 nil 切片成为槽位新视图——落库治理由
+	// Compact 内部负责（boundary/摘要行写库）。ctx 在用户新消息到达或
+	// 槽位关闭时取消；实现方应像 Compact 一样尊重取消。
+	// nil 则整个机制关闭（TUI 路径不挂）。
+	IdleCompact func(ctx context.Context, history []agent.Message) []agent.Message
 }
 
 // Config 是 Manager 的行为参数。
@@ -288,6 +297,13 @@ type Config struct {
 	// cron durable 打标、/v1/schedules 过滤、通知归属都按它对齐。
 	// 空串维持旧行为（下游自行回落 cwd）。
 	Workspace string
+
+	// IdleAfter 是空闲压缩的静默阈值：槽位最后一次轮次结束满该时长后
+	// 才有触发资格；<=0 用默认 15min。仅当 Harness.IdleCompact 非 nil 生效。
+	IdleAfter time.Duration
+
+	// IdleEvery 是空闲压缩的检查周期；<=0 用默认 1min。
+	IdleEvery time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -299,6 +315,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.DrainInterval <= 0 {
 		c.DrainInterval = 3 * time.Second
+	}
+	if c.IdleAfter <= 0 {
+		c.IdleAfter = 15 * time.Minute
+	}
+	if c.IdleEvery <= 0 {
+		c.IdleEvery = time.Minute
 	}
 	return c
 }
@@ -333,5 +355,37 @@ func NewManager(cfg Config, h Harness, store SessionStore, binder Binder) *Manag
 		store:   store,
 		binder:  binder,
 		slots:   map[ChatKey]*slot{},
+	}
+}
+
+// WatchIdle 是空闲压缩的检查循环（plan §1.5）：每 IdleEvery 扫一遍槽位，
+// 空闲满 IdleAfter 且无进行中轮次的槽位获得一次后台压缩机会。仅在
+// Harness.IdleCompact 非 nil 时有意义；阻塞运行，由调用方 go 出去。
+func (m *Manager) WatchIdle(ctx context.Context) {
+	if m.harness.IdleCompact == nil {
+		return
+	}
+	t := time.NewTicker(m.cfg.IdleEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.sweepIdle()
+		}
+	}
+}
+
+// sweepIdle 扫一遍槽位，给满足条件的槽位发一次空闲压缩。
+func (m *Manager) sweepIdle() {
+	m.mu.Lock()
+	slots := make([]*slot, 0, len(m.slots))
+	for _, s := range m.slots {
+		slots = append(slots, s)
+	}
+	m.mu.Unlock()
+	for _, s := range slots {
+		s.maybeIdleCompact()
 	}
 }

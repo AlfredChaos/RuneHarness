@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -65,6 +66,13 @@ func main() {
 		cfg.MemoryProfile = *profile
 	}
 
+	// 日志级别：RUNE_LOG_LEVEL 默认 info，debug 打开内部打点（plan §4）。
+	lvl := slog.LevelInfo
+	if strings.EqualFold(os.Getenv("RUNE_LOG_LEVEL"), "debug") {
+		lvl = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
+
 	// 认证：RUNE_TOKENS 静态表，格式 "tk1=tenant:subject,tk2=tenant2:"。
 	tokens, err := gateway.StaticTokens(os.Getenv("RUNE_TOKENS"))
 	if err != nil {
@@ -105,12 +113,15 @@ func main() {
 	}
 	defer store.Close()
 
-	model := llm.NewClientTuned(cfg.APIKey, cfg.BaseURL, cfg.Model, llm.Opts{
+	opts := llm.Opts{
 		ReasoningEffort:     cfg.ReasoningEffort,
+		ThinkingType:        cfg.ThinkingType,
+		ReasoningSplit:      cfg.ReasoningSplit,
 		Temperature:         cfg.Temperature,
 		TopP:                cfg.TopP,
 		MaxCompletionTokens: cfg.MaxCompletionTokens,
-	})
+	}
+	model := llm.NewClientTuned(cfg.APIKey, cfg.BaseURL, cfg.Model, opts)
 	todos := todo.NewManager()
 
 	env := prompt.Env{Workspace: wd, Platform: runtime.GOOS + "/" + runtime.GOARCH}
@@ -161,7 +172,9 @@ func main() {
 		_ = os.MkdirAll(filepath.Dir(mdbPath), 0o755)
 		var memLLM agent.LLM = model
 		if cfg.MemoryModel != "" {
-			memLLM = llm.NewClient(cfg.APIKey, cfg.BaseURL, cfg.MemoryModel)
+			// dream 复用同一组采样参数：reasoning_split 让思考不进正文，
+			// 否则 <think> 会污染 ops 的 JSON 输出契约。
+			memLLM = llm.NewClientTuned(cfg.APIKey, cfg.BaseURL, cfg.MemoryModel, opts)
 		}
 		if mem, err = memory.New(store, memLLM, memory.Config{
 			DBPath:  mdbPath,
@@ -237,24 +250,64 @@ func main() {
 	}
 	specsJSON, _ := json.Marshal(registry.Specs())
 
+	// 启动配置一览：本次排查只能靠 kubectl+数据库反推生效配置，启动行
+	// 把模型/窗口/思考/记忆/灵魂/工具钉在日志里。不打正文与凭据。
+	slog.Info("runebot config",
+		"model", cfg.Model,
+		"reasoning_effort", cfg.ReasoningEffort,
+		"thinking", cfg.ThinkingType,
+		"reasoning_split", cfg.ReasoningSplit,
+		"context_window", cfg.ContextTokens,
+		"window_source", windowSource(),
+		"memory_profile", cfg.MemoryProfile,
+		"memory_model", envOr("MEMORY_MODEL", cfg.Model),
+		"memory_db", envOr("MEMORY_DB", "~/.rune/memory.db"),
+		"soul", soulInfo(),
+		"tools", toolNames(registry),
+		"auto_compact", cfg.AutoCompact,
+	)
+
 	// AI 命名（ALF-130）：成功轮次结束后异步生成 ≤12 字标题写回 sessions.title。
 	namer := &naming.Namer{Store: store, LLM: model}
 
+	// 压缩器全进程共享一个实例：compact 是会话无关的（熔断/游标全在
+	// session_state，key 按 ctx 里的 session id），槽位间复用安全。
+	comp, err := compact.New(model, store, compact.Config{
+		Window: cfg.ContextTokens, MaxOutput: cfg.MaxOutputTokens,
+		Auto:         cfg.AutoCompact,
+		Overhead:     compact.TextTokens(string(specsJSON)),
+		Reattach:     todos.Snapshot,
+		CompactFrac:  0.5,                     // 占用过半就压缩（bot 决策 2026-10-19）
+		HeadMessages: -1,                      // bot 会话首部是旧寒暄，不钉
+		Prompt:       compact.CompanionPrompt, // 纠正优先、带标签的陪伴版
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
 	mgr := runner.NewManager(runner.Config{Workspace: wd}, runner.Harness{
+		// 空闲压缩：槽位静默 15min 且估算用量过提醒线时后台 Compact。
+		// 用户消息到达即取消（runner 管互斥与取消）。
+		IdleCompact: func(ctx context.Context, history []agent.Message) []agent.Message {
+			est := compact.Estimate(history, compact.TextTokens(string(specsJSON)))
+			if est < comp.Config().ReminderLine() {
+				return nil
+			}
+			next, err := comp.Compact(ctx, history, "idle")
+			if err != nil {
+				slog.Warn("runner: idle compact failed", "err", err)
+			}
+			return next
+		},
 		New: func(slotCtx context.Context, emit func(runner.Event),
 			ask func(agent.ToolCall, string, int, int) <-chan bool) (runner.TurnRunner, error) {
 			a := agent.New(model, registry, maxToolSteps)
 			a.Rec, a.Requests = store, store
-			comp, err := compact.New(model, store, compact.Config{
-				Window: cfg.ContextTokens, MaxOutput: cfg.MaxOutputTokens,
-				Auto:     cfg.AutoCompact,
-				Overhead: compact.TextTokens(string(specsJSON)),
-				Reattach: todos.Snapshot,
-			})
-			if err != nil {
-				return nil, err
-			}
 			a.Compactor = comp
+			// 请求级运行时上下文：当前时间 + 距上一条消息的间隔；
+			// 只进发送形态，不落库、不进返回的 history。
+			a.Decorate = runtimeDecorate
 
 			// 权限：本槽位的 ask 走 runner 路由（客户端弹确认）。
 			a.Hooks.OnPreToolUse(permission.NewHook(desk, ask).Check)
@@ -269,9 +322,6 @@ func main() {
 				todos.ResetRounds()
 				return "", ""
 			})
-			if mem != nil {
-				a.Hooks.OnUserPromptSubmit(mem.InjectOnce)
-			}
 			// 子代理复用同一权限闸：slot 的 ask 通道对子代理同样生效。
 			if taskTool != nil {
 				taskTool.Wire = func(sub *agent.Agent, depth int) {
@@ -295,14 +345,54 @@ func main() {
 			if env.MemoryGuide == "" && mem != nil {
 				env.MemoryGuide = mem.SystemGuide()
 			}
-			sys := agent.Message{Role: agent.RoleSystem, Content: prompt.BuildBot(env)}
+			// 记忆常驻：每轮比对 memory_log 版本，变了才用 Render 的新块
+			// 重建 system——dream 写完规则下一轮生效，位置固定在最前。
+			// env 跨槽位共享且 MemoryBody 因 subject 而异：重建走本地副本，
+			// 避免本槽记忆泄漏到别的 chat 的 system。
+			var mu sync.Mutex
+			sysVer := int64(-1)
+			var sys agent.Message
+			rebuild := func(ctx context.Context) agent.Message {
+				mu.Lock()
+				defer mu.Unlock()
+				first := sys.Role == ""
+				if first {
+					sys = agent.Message{Role: agent.RoleSystem, Content: prompt.BuildBot(env)}
+				}
+				if mem == nil {
+					return sys
+				}
+				v, err := mem.Version(ctx)
+				if err != nil || v == sysVer {
+					return sys
+				}
+				r, err := mem.Render(ctx)
+				if err != nil {
+					slog.Warn("memory render failed", "err", err)
+					return sys
+				}
+				slotEnv := env
+				slotEnv.MemoryBody = r.Text
+				reason := "version-change"
+				if first {
+					reason = "first"
+				}
+				sc, _ := scope.FromContext(ctx)
+				slog.Info("memory: injected", "session", sc.SessionID,
+					"space", sc.TenantID+"/"+sc.SubjectID,
+					"index_bytes", r.IndexBytes, "body_bytes", r.BodyBytes,
+					"version", r.Version, "reason", reason)
+				sysVer = v
+				sys = agent.Message{Role: agent.RoleSystem, Content: prompt.BuildBot(slotEnv)}
+				return sys
+			}
 			return runner.TurnRunner(func(turnCtx context.Context, history []agent.Message) ([]agent.Message, error) {
 				// slot 会把上一轮返回的历史原样回传：剥掉旧的 sys 再挂，保证恰好一份。
 				if len(history) > 0 && history[0].Role == agent.RoleSystem {
 					history = history[1:]
 				}
 				// 用户消息过 UserPromptSubmit 钩子链（对齐 TUI model.go:524）：
-				// memory InjectOnce 借此注入；cron/bg 注入行是 KindInject，不会重复触发。
+				// cron/bg 注入行是 KindInject，不会重复触发。
 				if n := len(history); n > 0 && history[n-1].Role == agent.RoleUser && history[n-1].Kind == agent.KindMessage {
 					replace, blocked := a.Hooks.TriggerUserPromptSubmit(turnCtx, history[n-1].Content)
 					if blocked != "" {
@@ -312,10 +402,13 @@ func main() {
 						history[n-1].Content = replace
 					}
 				}
-				return tr(turnCtx, append([]agent.Message{sys}, history...))
+				return tr(turnCtx, append([]agent.Message{rebuild(turnCtx)}, history...))
 			}), nil
 		},
 	}, store, store)
+
+	// 空闲压缩巡视：槽位静默满 15min 且用量过提醒线时后台 Compact（plan §1.5）。
+	go mgr.WatchIdle(context.Background())
 
 	// 命名触发链：turn_end(completed) → slot 异步回调 → namer 一次性 completion。
 	mgr.OnTurnComplete = func(key runner.ChatKey, sid string) {
@@ -379,4 +472,96 @@ func cronNoticeTitle(t cron.Task) string {
 		return line
 	}
 	return "定时任务"
+}
+
+// runtimeDecorate 是当前用户消息的请求级装饰：在末尾追加
+// <runtime-context> 块（当前时间 + 距上一条用户消息的间隔）。
+// 只改写发送副本——history 与落库行不带这块（agent.Agent.Decorate）。
+func runtimeDecorate(_ context.Context, view []agent.Message) []agent.Message {
+	if len(view) == 0 {
+		return view
+	}
+	last := -1
+	for i := len(view) - 1; i >= 0; i-- {
+		if view[i].Role == agent.RoleUser && view[i].Kind == agent.KindMessage {
+			last = i
+			break
+		}
+	}
+	if last < 0 {
+		return view
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n\n<runtime-context>当前时间 %s", shanghaiNow().Format("2006-01-02 15:04 (MST)"))
+	if gap := lastUserGap(view[:last]); gap > 0 {
+		fmt.Fprintf(&b, "；距上一条消息 %s", formatGap(gap))
+	}
+	b.WriteString("</runtime-context>")
+	out := slices.Clone(view)
+	out[last].Content += b.String()
+	return out
+}
+
+// lastUserGap 返回最近一条真实用户消息距现在的时长；无时间信息时为 0。
+func lastUserGap(view []agent.Message) time.Duration {
+	for i := len(view) - 1; i >= 0; i-- {
+		m := view[i]
+		if m.Role == agent.RoleUser && m.Kind == agent.KindMessage && m.CreatedAt > 0 {
+			return time.Since(time.UnixMilli(m.CreatedAt))
+		}
+	}
+	return 0
+}
+
+// formatGap 把间隔压成口语量级："3 分钟" / "5 小时" / "3 天"。
+func formatGap(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%d 分钟", max(1, int(d.Minutes())))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d 小时", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d 天", int(d.Hours()/24))
+	}
+}
+
+var shanghai = func() *time.Location {
+	l, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*3600)
+	}
+	return l
+}()
+
+func shanghaiNow() time.Time { return time.Now().In(shanghai) }
+
+// windowSource 报告上下文窗口的取值来源，便于排查窗口错配。
+func windowSource() string {
+	if os.Getenv("RUNE_CONTEXT_TOKENS") != "" {
+		return "env"
+	}
+	return "model-table-or-default"
+}
+
+// soulInfo 返回灵魂文件的路径+字节数+mtime；未配置时返回 "none"。
+func soulInfo() string {
+	p := os.Getenv("RUNE_SOUL")
+	if p == "" {
+		return "none"
+	}
+	if st, err := os.Stat(p); err == nil {
+		return fmt.Sprintf("%s (%dB, mtime %s)", p, st.Size(),
+			st.ModTime().Format("2006-01-02"))
+	}
+	return p + " (missing)"
+}
+
+// toolNames 返回注册表里的工具名清单（启动配置日志用）。
+func toolNames(reg *tools.Registry) string {
+	specs := reg.Specs()
+	names := make([]string, len(specs))
+	for i, s := range specs {
+		names[i] = s.Name
+	}
+	return strings.Join(names, ",")
 }

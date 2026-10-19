@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime"
 	"sync"
 	"time"
 
@@ -40,16 +42,62 @@ type slot struct {
 	runner    TurnRunner
 
 	// 运行态（mu 保护）。
-	mu      sync.Mutex
-	turnSeq int             // 已开始的轮次序号；turn_start 时 +1
-	busy    bool           // 有 goroutine 在跑轮链（当前轮 + 队列）
-	history []agent.Message // 当前视图（含中断占位）；新建时从 store 载入
-	queue   chan TurnInput  // 排队队列；cap = cfg.QueueDepth
-	pendingAsk *askReq    // 当前挂起的权限确认；nil = 无
-	cancel   context.CancelFunc // 当前轮的取消；nil = 空闲
-	curTurn  string             // 当前轮的 turnID；emit 从这里取归属
+	mu         sync.Mutex
+	turnSeq    int                // 已开始的轮次序号；turn_start 时 +1
+	busy       bool               // 有 goroutine 在跑轮链（当前轮 + 队列）
+	history    []agent.Message    // 当前视图（含中断占位）；新建时从 store 载入
+	queue      chan TurnInput     // 排队队列；cap = cfg.QueueDepth
+	pendingAsk *askReq            // 当前挂起的权限确认；nil = 无
+	cancel     context.CancelFunc // 当前轮的取消；nil = 空闲
+	curTurn    string             // 当前轮的 turnID；emit 从这里取归属
+	lastActive time.Time          // 最近一次轮次结束时刻；空闲压缩的静默锚点
+
+	// 空闲压缩（plan §1.5）：idleRunning 期间用户消息到达即取消，
+	// 与 Interrupt 同路径——压缩不是轮次，不占 busy/queue。
+	idleRunning bool
+	idleCancel  context.CancelFunc
 
 	slotCtx context.Context // 槽位级生命周期（管理器释放或进程退出时取消）
+}
+
+// maybeIdleCompact 检查本槽位是否达到空闲压缩条件（静默满 IdleAfter、
+// 无进行中轮次/压缩、装配了 IdleCompact 通道），满足则后台执行。
+// 条件与执行在同一锁里认领：并发扫描与 Submit 都会先抢到锁，
+// 不会出现两个压缩同时在跑。
+func (s *slot) maybeIdleCompact() {
+	fn := s.manager.harness.IdleCompact
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.busy || s.idleRunning || time.Since(s.lastActive) < s.manager.cfg.IdleAfter {
+		s.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(scope.WithSession(s.slotCtx, s.sessionID))
+	s.idleRunning = true
+	s.idleCancel = cancel
+	history := s.history
+	idleFor := time.Since(s.lastActive)
+	s.mu.Unlock()
+	slog.Info("runner: idle compact", "session", s.sessionID,
+		"idle_minutes", int(idleFor.Minutes()), "messages", len(history))
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.idleRunning = false
+			s.idleCancel = nil
+			s.mu.Unlock()
+			cancel()
+		}()
+		next := fn(ctx, history)
+		if next == nil {
+			return
+		}
+		s.mu.Lock()
+		s.history = next
+		s.mu.Unlock()
+	}()
 }
 
 // askReq 是一次挂起的权限确认。
@@ -62,12 +110,13 @@ type askReq struct {
 // newSlot 建槽并启动派发 goroutine。sessionID/subjectID 由调用方先解析。
 func (m *Manager) newSlot(ctx context.Context, key ChatKey, sessionID, subjectID string, history []agent.Message) (*slot, error) {
 	s := &slot{
-		key:       key,
-		manager:   m,
-		sessionID: sessionID,
-		subjectID: subjectID,
-		ledger:    NewLedger(m.cfg.LedgerCap),
-		history:   history,
+		key:        key,
+		manager:    m,
+		sessionID:  sessionID,
+		subjectID:  subjectID,
+		ledger:     NewLedger(m.cfg.LedgerCap),
+		history:    history,
+		lastActive: time.Now(),
 	}
 	s.slotCtx = ctx
 	q := m.cfg.QueueDepth
@@ -108,7 +157,6 @@ func (s *slot) runChain(in TurnInput) {
 		return
 	}
 }
-
 
 // runTurn 执行一轮：注入 user 消息、调 runner、写 turn_end 控制行、发事件。
 // 出错也照常发 turn_end（status=error），不让订阅者看到"半轮"。
@@ -171,6 +219,18 @@ func (s *slot) finishTurn(turnID string, seq int, started time.Time, status stri
 		TurnSeq:  seq,
 		Duration: time.Since(started).Milliseconds(),
 	}
+	// 用量与 system 尺寸从最终视图取：下次排查不必再翻 usage_json。
+	s.mu.Lock()
+	if len(s.history) > 0 && s.history[0].Role == agent.RoleSystem {
+		outcome.SystemBytes = len(s.history[0].Content)
+	}
+	for i := len(s.history) - 1; i >= 0; i-- {
+		if u := s.history[i].Usage; u != nil {
+			outcome.PromptTokens = u.Prompt
+			break
+		}
+	}
+	s.mu.Unlock()
 	if err != nil {
 		outcome.Error = err.Error()
 	}
@@ -187,6 +247,7 @@ func (s *slot) finishTurn(turnID string, seq int, started time.Time, status stri
 	s.mu.Lock()
 	s.cancel = nil
 	s.curTurn = ""
+	s.lastActive = time.Now()
 	s.mu.Unlock()
 
 	// 成功轮次收尾钩子（AI 命名等后台任务）：异步执行，不阻塞事件流；
@@ -283,7 +344,18 @@ func (m *Manager) Submit(ctx context.Context, key ChatKey, in TurnInput) error {
 	if err != nil {
 		return err
 	}
+	// 空闲压缩与轮次互斥：新消息到达即取消压缩（与 Interrupt 同语义），
+	// 等它让出 history 再认领 busy——压缩中途写的视图不能被轮次覆盖。
 	s.mu.Lock()
+	for s.idleRunning {
+		cancel := s.idleCancel
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		runtime.Gosched()
+		s.mu.Lock()
+	}
 	if !s.busy {
 		// 空闲：认领 busy 并起链；不经 queue，无起跑竞态。
 		s.busy = true
