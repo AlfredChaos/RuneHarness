@@ -39,7 +39,7 @@ spec:
     spec:
       containers:
       - name: runebot
-        image: runebot:soul5
+        image: runebot:m3
         imagePullPolicy: Never
         ports:
         - containerPort: 18765
@@ -66,14 +66,23 @@ spec:
         # boundary 四类 AlwaysInject、subject 空间、dream 120min；不设走 generic 不适配。
         - name: RUNE_MEMORY_PROFILE
           value: companion
-        # 采样参数（实验确定）：M3.1-Flash + 高思考、8K 完成预算，压掉 M3 上
-        # 92% 回复把 <think> 内联到正文的问题；温度/top_p 走端点默认。
+        # 模型口径（2026-10-19 决策，plan §3 第 5 阶段）：切回 MiniMax-M3 +
+        # adaptive 思考 + 1M 窗口 + 128K 完成预算，对齐历史 nanobot M3 配置
+        # （reasoning_effort 对 M3 无效，思考开关走 thinking.type）。
         - name: OPENAI_MODEL
-          value: MiniMax-M3.1-Flash-Preview
-        - name: RUNE_REASONING_EFFORT
-          value: "high"
+          value: MiniMax-M3
+        - name: RUNE_THINKING
+          value: adaptive
+        - name: RUNE_REASONING_SPLIT
+          value: "true"
         - name: RUNE_MAX_COMPLETION_TOKENS
-          value: "8192"
+          value: "131072"
+        - name: RUNE_CONTEXT_TOKENS
+          value: "1000000"
+        # dream 提取显式固定 M3（随主模型回落也不漂）：secret 无此键，
+        # 靠 env 段钉死；secret 的 OPENAI_MODEL 同名键被本段覆盖。
+        - name: RUNE_MEMORY_MODEL
+          value: MiniMax-M3
         # 定时任务开关：RUNE_CRON 修通了 cfg.Cron→调度器点火的链路，
         # 显式开。secret 里的 RUNE_CRON=false 被 env 段覆盖（同名键 env 优先）。
         - name: RUNE_CRON
