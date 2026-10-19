@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openai/openai-go/v3"
@@ -28,12 +30,28 @@ type Client struct {
 	sdk   openai.Client
 	model string
 	opts  Opts
+	// 推理缺失告警（plan §4.2）：设了 ReasoningEffort 却连续
+	// thinkingWarnAt 条回复无 Thinking 时打一次 Warn——Flash 61/61
+	// 无推理是人工翻库才发现的。指针字段：Chat 是值接收者。
+	wd *thinkWatchdog
 }
+
+// thinkWatchdog 计连续无 Thinking 的回复数；设了 ReasoningEffort 才有意义。
+type thinkWatchdog struct {
+	mu     sync.Mutex
+	streak int
+	warned bool
+}
+
+// thinkingWarnAt 是连续无推理的告警阈值。
+const thinkingWarnAt = 20
 
 // Opts 是发给兼容端点的采样参数；零值字段不下发，由端点默认接管——
 // 保持裸 NewClient 的行为与此前完全一致。
 type Opts struct {
 	ReasoningEffort     string  // low/medium/high/max 等，原样透传 reasoning_effort
+	ThinkingType        string  // "adaptive"/"disabled"：MiniMax thinking.type，空串不下发
+	ReasoningSplit      bool    // true 时端点把思考放进 reasoning_content 字段（M3 口径）
 	Temperature         float64 // 0 表示不下发
 	TopP                float64 // 0 表示不下发
 	MaxCompletionTokens int     // 0 表示不下发
@@ -50,7 +68,7 @@ func NewClientTuned(apiKey, baseURL, model string, o Opts) Client {
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
-	return Client{sdk: openai.NewClient(opts...), model: model, opts: o}
+	return Client{sdk: openai.NewClient(opts...), model: model, opts: o, wd: &thinkWatchdog{}}
 }
 
 // Chat 流式发送一轮对话请求：每个 chunk 到达时回调累积快照，
@@ -58,6 +76,54 @@ func NewClientTuned(apiKey, baseURL, model string, o Opts) Client {
 func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools.Spec, onPartial func(agent.Partial)) (agent.Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	started := time.Now()
+	resp, err := c.chat(ctx, history, specs, onPartial)
+	// 请求级日志：只打计数与耗时，不打正文与凭据（plan §4.1 隐私口径）。
+	attrs := []any{"model", c.model, "duration_ms", time.Since(started).Milliseconds()}
+	if resp.Message.Usage != nil {
+		u := resp.Message.Usage
+		attrs = append(attrs, "prompt_tokens", u.Prompt, "completion_tokens", u.Completion,
+			"cache_hit", u.Cached)
+	}
+	if err != nil {
+		attrs = append(attrs, "err", err)
+		slog.Warn("llm: error", attrs...)
+	} else {
+		attrs = append(attrs, "thinking_len", len(resp.Message.Thinking),
+			"finish_reason", resp.FinishReason)
+		slog.Info("llm: response", attrs...)
+		c.watchThinking(resp.Message.Thinking)
+	}
+	return resp, err
+}
+
+// watchThinking 维护连续无推理计数；达到告警线打一次 Warn。
+// 门：`reasoning_effort` 或 `thinking.type` 任一启用才计数。注意 adaptive
+// 下"选择不思考"是合法行为，告警只表示比例异常，需人工对照会话判断。
+func (c Client) watchThinking(thinking string) {
+	if c.opts.ReasoningEffort == "" && c.opts.ThinkingType == "" {
+		return
+	}
+	if c.wd == nil {
+		return
+	}
+	c.wd.mu.Lock()
+	defer c.wd.mu.Unlock()
+	if thinking == "" {
+		c.wd.streak++
+	} else {
+		c.wd.streak = 0
+	}
+	if c.wd.streak >= thinkingWarnAt && !c.wd.warned {
+		c.wd.warned = true
+		slog.Warn("llm: thinking missing",
+			"model", c.model, "effort", c.opts.ReasoningEffort,
+			"thinking", c.opts.ThinkingType, "streak", c.wd.streak)
+	}
+}
+
+// chat 是实际的流式请求体（日志壳分离出来方便计数）。
+func (c Client) chat(ctx context.Context, history []agent.Message, specs []tools.Spec, onPartial func(agent.Partial)) (agent.Response, error) {
 
 	params := openai.ChatCompletionNewParams{
 		Model:    c.model,
@@ -69,6 +135,16 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 	if c.opts.ReasoningEffort != "" {
 		params.ReasoningEffort = shared.ReasoningEffort(c.opts.ReasoningEffort)
 	}
+	// SDK 未建模的 MiniMax 字段走 extra-body：thinking.type（M3 adaptive）
+	// 与 reasoning_split（思考分离到 reasoning_content）。
+	reqOpts := []option.RequestOption{}
+	if c.opts.ThinkingType != "" {
+		reqOpts = append(reqOpts, option.WithJSONSet("thinking",
+			map[string]string{"type": c.opts.ThinkingType}))
+	}
+	if c.opts.ReasoningSplit {
+		reqOpts = append(reqOpts, option.WithJSONSet("reasoning_split", true))
+	}
 	if c.opts.Temperature != 0 {
 		params.Temperature = openai.Float(c.opts.Temperature)
 	}
@@ -78,11 +154,11 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 	if c.opts.MaxCompletionTokens != 0 {
 		params.MaxCompletionTokens = openai.Int(int64(c.opts.MaxCompletionTokens))
 	}
-	stream := c.sdk.Chat.Completions.NewStreaming(ctx, params)
+	stream := c.sdk.Chat.Completions.NewStreaming(ctx, params, reqOpts...)
 	defer func() { _ = stream.Close() }()
-
 	var acc openai.ChatCompletionAccumulator
 	var raw strings.Builder
+	var reasoning strings.Builder // reasoning_split 模式下思考走独立字段
 	// usage 取最后一个带 usage 的 chunk，不用 accumulator 的累加值：
 	// 部分兼容端点每个 chunk 都回传累计 usage，累加会重复计数。
 	var usage *agent.Usage
@@ -96,8 +172,20 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 				Cached:     int(chunk.Usage.PromptTokensDetails.CachedTokens),
 			}
 		}
+		if len(chunk.Choices) > 0 {
+			delta := chunk.Choices[0].Delta
+			raw.WriteString(delta.Content)
+			// reasoning_split=true 时增量思考在 delta.reasoning_content：
+			// SDK 未建模该字段，从 ExtraFields 补读（Flash 61/61 无推理的
+			// 盲区根因——它一直发，只是我们没接）。
+			if f, ok := delta.JSON.ExtraFields["reasoning_content"]; ok {
+				var s string
+				if json.Unmarshal([]byte(f.Raw()), &s) == nil {
+					reasoning.WriteString(s)
+				}
+			}
+		}
 		if onPartial != nil && len(chunk.Choices) > 0 {
-			raw.WriteString(chunk.Choices[0].Delta.Content)
 			// 对累积文本整体重切：<think> 标签可能被拆到多个 chunk。
 			// 尾部若是半个标签先扣住，避免 "<thi" 这类碎片闪现在正文里。
 			display := raw.String()
@@ -105,6 +193,9 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 				display = display[:len(display)-n]
 			}
 			thinking, body := splitThinking(display)
+			if thinking == "" {
+				thinking = reasoning.String()
+			}
 			onPartial(agent.Partial{Thinking: thinking, Content: body})
 		}
 	}
@@ -116,6 +207,15 @@ func (c Client) Chat(ctx context.Context, history []agent.Message, specs []tools
 	}
 	choice := acc.Choices[0]
 	msg := fromMessage(choice.Message)
+	// reasoning_content 优先于 <think> 内嵌：split 模式下正文不再夹思考。
+	if thinking := strings.TrimSpace(reasoning.String()); thinking != "" {
+		msg.Thinking = thinking
+	} else if f, ok := choice.Message.JSON.ExtraFields["reasoning_content"]; ok {
+		var s string
+		if json.Unmarshal([]byte(f.Raw()), &s) == nil {
+			msg.Thinking = strings.TrimSpace(s)
+		}
+	}
 	msg.Usage = usage
 	return agent.Response{
 		Message:      msg,

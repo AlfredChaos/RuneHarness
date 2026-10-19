@@ -55,6 +55,8 @@ type Config struct {
 	Cron bool
 	// 以下四项是发给兼容端点的采样参数；零值=不下发（端点默认接管）。
 	ReasoningEffort     string  // RUNE_REASONING_EFFORT：low/medium/high/max 等
+	ThinkingType        string  // RUNE_THINKING：MiniMax thinking.type（"adaptive"/"disabled"），空串不下发
+	ReasoningSplit      bool    // RUNE_REASONING_SPLIT：端点把思考分进 reasoning_content（M3 口径）
 	Temperature         float64 // RUNE_TEMPERATURE：0 表示不下发
 	TopP                float64 // RUNE_TOP_P：0 表示不下发
 	MaxCompletionTokens int     // RUNE_MAX_COMPLETION_TOKENS：0 表示不下发
@@ -168,8 +170,8 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.ReasoningEffort = os.Getenv("RUNE_REASONING_EFFORT")
-	cfg.Temperature = envFloat("RUNE_TEMPERATURE")
-	cfg.TopP = envFloat("RUNE_TOP_P")
+	cfg.ThinkingType = os.Getenv("RUNE_THINKING")
+	cfg.ReasoningSplit = envTrue("RUNE_REASONING_SPLIT")
 	if cfg.APIKey == "" {
 		return Config{}, errors.New("OPENAI_API_KEY is not set (see .env.example)")
 	}
