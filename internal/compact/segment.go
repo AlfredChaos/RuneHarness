@@ -43,7 +43,7 @@ func (c *Compactor) segment(view []agent.Message, floor bool) segments {
 	}
 
 	headTok := 0
-	for j := i; j < len(view) && len(s.head) < headMessages; j++ {
+	for j := i; j < len(view) && len(s.head) < c.cfg.headLimit(); j++ {
 		if !realUser(view[j]) {
 			continue
 		}

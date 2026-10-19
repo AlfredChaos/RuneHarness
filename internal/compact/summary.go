@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"runeharness/internal/agent"
 	"runeharness/internal/session"
@@ -25,9 +27,10 @@ const (
 	renderArgsChars  = 500
 )
 
-// summarize 对中段做一次滚动增量摘要：输入 = 旧摘要 + 新进入中段的消息，
-// 输出替换旧摘要。成功时写 boundary 与 summary 两行，返回
-// system + 首部 + 摘要 + 尾部 的新视图。
+// summarize 对中段做滚动增量摘要：输入 = 旧摘要 + 新进入中段的消息，
+// 输出替换旧摘要。中段超出摘要调用可容纳的量时按时间切块，逐块滚动
+// （上一块的产出作为下一块的 EXISTING SUMMARY），不再静默丢头部事件。
+// 成功时写 boundary 与 summary 两行，返回 system + 首部 + 摘要 + 尾部 的新视图。
 func (c *Compactor) summarize(ctx context.Context, view []agent.Message, seg segments, reason, extra string) ([]agent.Message, error) {
 	var oldSummary string
 	var events []agent.Message
@@ -42,20 +45,27 @@ func (c *Compactor) summarize(ctx context.Context, view []agent.Message, seg seg
 		return nil, errNothingToShrink
 	}
 
-	input, err := c.renderInput(oldSummary, events)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.llm.Chat(ctx, []agent.Message{
-		{Role: agent.RoleSystem, Content: systemPrompt(extra)},
-		{Role: agent.RoleUser, Content: input},
-	}, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errSummaryCall, err)
-	}
-	text, ok := parseSummary(resp.Message.Content)
-	if !ok {
-		return nil, errUnparsable
+	started := time.Now()
+	var chunks int
+	text := oldSummary
+	for _, chunk := range c.splitEvents(events) {
+		input, err := c.renderInput(text, chunk)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.llm.Chat(ctx, []agent.Message{
+			{Role: agent.RoleSystem, Content: c.systemPrompt(extra)},
+			{Role: agent.RoleUser, Content: input},
+		}, nil, nil)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errSummaryCall, err)
+		}
+		s, ok := parseSummary(resp.Message.Content)
+		if !ok {
+			return nil, errUnparsable
+		}
+		text = s
+		chunks++
 	}
 	if c.cfg.Reattach != nil {
 		if r := c.cfg.Reattach(); r != "" {
@@ -76,6 +86,8 @@ func (c *Compactor) summarize(ctx context.Context, view []agent.Message, seg seg
 	if post >= c.cfg.CompactLine() {
 		return nil, fmt.Errorf("%w: %d tokens after compaction, line is %d", errIneffective, post, c.cfg.CompactLine())
 	}
+	midTok := Rough(events)
+	tailTok := Rough(pick(view, seg.tail))
 
 	// 摘要行先于 boundary 落库：进程若死在两者之间，留下的只是一条不被
 	// 引用的孤儿摘要（fold 无 boundary 时把它当普通行展示），而不是悬空
@@ -100,15 +112,24 @@ func (c *Compactor) summarize(ctx context.Context, view []agent.Message, seg seg
 		return nil, fmt.Errorf("record boundary: %w", err)
 	}
 	next[tailStart-1].ID = id
+	slog.Info("context summarized", "session", sessionOf(ctx),
+		"head_tokens", Rough(pick(view, seg.head)), "mid_tokens", midTok,
+		"tail_tokens", tailTok, "chunks", chunks,
+		"duration_ms", time.Since(started).Milliseconds())
 	return next, nil
 }
 
-// renderInput 把旧摘要与新事件渲染成摘要调用的输入。超过窗口可承受的量时
-// 先缩短工具预览，仍超出就从头部砍掉一半事件，最多砍两次（CC group-halving）。
+// inputLimit 是摘要调用输入的 token 上限：窗口扣掉摘要输出预留、system 提示与余量。
+func (c *Compactor) inputLimit() int {
+	return c.cfg.Window - reserveSummary - TextTokens(c.systemPrompt("")) - 1_000
+}
+
+// renderInput 把旧摘要与一批新事件渲染成摘要调用的输入。超出上限时先把
+// 工具结果预览缩到最短；仍超出（旧摘要本身已接近上限、或单条事件过大）
+// 就对成品文本做尾部裁剪——裁剪只在兜底路径发生，正常输入不丢内容。
 func (c *Compactor) renderInput(oldSummary string, events []agent.Message) (string, error) {
-	limit := c.cfg.Window - reserveSummary - TextTokens(systemPrompt("")) - 1_000
-	toolChars := renderToolChars
-	for attempt := 0; attempt < 4; attempt++ {
+	limit := c.inputLimit()
+	for _, toolChars := range []int{renderToolChars, renderShortChars} {
 		var b strings.Builder
 		b.WriteString("EXISTING SUMMARY:\n")
 		if oldSummary == "" {
@@ -120,16 +141,61 @@ func (c *Compactor) renderInput(oldSummary string, events []agent.Message) (stri
 		for _, m := range events {
 			renderEvent(&b, m, toolChars)
 		}
-		if TextTokens(b.String()) <= limit {
-			return b.String(), nil
+		if s := b.String(); TextTokens(s) <= limit {
+			return s, nil
+		} else if toolChars == renderShortChars {
+			return clipToTokens(s, limit), nil
 		}
-		if attempt == 0 {
-			toolChars = renderShortChars
-			continue
-		}
-		events = events[len(events)/2:]
 	}
 	return "", fmt.Errorf("%w: summary input does not fit the context window", errSummaryCall)
+}
+
+// splitEvents 把中段事件按输入预算切成有序块：每块连同 EXISTING SUMMARY
+//（按 summaryBudget 预留）渲染后不超过 inputLimit。单条超限事件独占一块，
+// 由 renderInput 的兜底裁剪处理。
+func (c *Compactor) splitEvents(events []agent.Message) [][]agent.Message {
+	// 事件按摘要格式渲染后的 token 合计加上 EXISTING SUMMARY 段的开销。
+	budget := c.inputLimit() - summaryBudget - 64
+	if budget < 1 {
+		budget = 1
+	}
+	var out [][]agent.Message
+	var cur []agent.Message
+	acc := 0
+	for _, m := range events {
+		var b strings.Builder
+		renderEvent(&b, m, renderToolChars)
+		tok := TextTokens(b.String())
+		if len(cur) > 0 && acc+tok > budget {
+			out = append(out, cur)
+			cur, acc = nil, 0
+		}
+		cur = append(cur, m)
+		acc += tok
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// clipToTokens 按 token 预算裁剪文本：保住头部，尾部之外替换为省略标记。
+// 只服务 renderInput 的兜底路径。
+func clipToTokens(s string, budget int) string {
+	if TextTokens(s) <= budget {
+		return s
+	}
+	r := []rune(s)
+	cut := len(r)
+	for cut > 0 && TextTokens(string(r[:cut])) > budget {
+		// 二分之外的最朴素步进：rune 数按预算比例缩放后线性收缩。
+		step := max(len(r)/64, 8)
+		cut -= step
+	}
+	if cut < 0 {
+		cut = 0
+	}
+	return string(r[:cut]) + "\n…[truncated to fit window]"
 }
 
 func renderEvent(b *strings.Builder, m agent.Message, toolChars int) {

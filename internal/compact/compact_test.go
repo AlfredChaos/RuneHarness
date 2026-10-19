@@ -130,8 +130,9 @@ func TestMaintainSummarizesAndRolls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if llm.calls() != 2 || !strings.Contains(llm.inputs[1], "summary #1") {
-		t.Fatalf("second summary input must contain the old summary")
+	if llm.calls() < 2 || !strings.Contains(llm.inputs[1], "summary #1") {
+		t.Fatalf("second summary's first chunk must carry the old summary, calls=%d inputs=%v",
+			llm.calls(), llm.inputs)
 	}
 	if !slices.Equal(viewContents(next2)[:4], viewContents(next)[:4]) {
 		t.Fatal("system + head must stay byte-identical across compactions")
