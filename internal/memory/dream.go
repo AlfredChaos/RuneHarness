@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,13 +22,16 @@ const (
 	metaLastDream = "last_dream_at"  // 上次 dream 完成时刻（RFC3339Nano）
 	cursorPrefix  = "cursor:"        // 每会话消化水位：cursor:<sessionID>
 
-	maxConsecFail  = 3
-	lockTTL        = 90 * time.Second
-	tickerEvery    = 12 * time.Minute // 心跳：只管检查欠账，节奏由门决定
-	exitTimeout    = 30 * time.Second
-	tidyMinRows    = 30 // 记忆条数达到此值后 dream 附整理阶段
-	tidyMinOps     = 10 // 单次 dream 改动量达到此值也触发整理
-	tombstoneLimit = 50 // dream 输入携带的近期删除清单长度
+	maxConsecFail   = 3
+	lockTTL         = 90 * time.Second
+	tickerEvery     = 12 * time.Minute // 心跳：只管检查欠账，节奏由门决定
+	exitTimeout     = 30 * time.Second
+	tidyMinRows     = 30 // 记忆条数达到此值后 dream 附整理阶段
+	tidyMinOps      = 10 // 单次 dream 改动量达到此值也触发整理
+	tombstoneLimit  = 50 // dream 输入携带的近期删除清单长度
+	shrinkDenyPct   = 80 // 常驻条目 upsert 收缩守卫阈值：新正文不得低于旧正文 80%
+	idleDreamMin    = 15 // 空闲触发 dream：所有欠账会话静默满该分钟数
+	idleCooldownMin = 30 // 空闲路径把冷却从 IntervalMin 降到该分钟数
 )
 
 // Dream 消化本空间的记忆欠账（全部会话里尚未消化的原始行）。
@@ -50,11 +54,6 @@ func (m *Memory) Dream(ctx context.Context, manual bool) (Stats, error) {
 	}
 	defer unlock()
 
-	if !manual {
-		if skip, why := m.autoGates(ctx); skip {
-			return Stats{Skipped: why}, nil
-		}
-	}
 	arrears, total, err := m.arrears(ctx, sc)
 	if err != nil {
 		return Stats{}, err
@@ -63,19 +62,26 @@ func (m *Memory) Dream(ctx context.Context, manual bool) (Stats, error) {
 		return Stats{Skipped: "no unprocessed rows"}, nil
 	}
 	if !manual {
-		if total < m.prof.Dream.MinRows {
-			return Stats{Skipped: fmt.Sprintf("only %d unprocessed rows", total)}, nil
+		// 空闲路径：欠账会话全部静默满 idleDreamMin 时，冷却降到
+		// idleCooldownMin 且免 MinRows——她纠正完去洗澡，15-30 分钟内
+		// 规则就该进 system，而不是等满 2 小时（plan §3.6）。
+		// 活跃度门不再需要：非空闲本身就意味着有会话在近期活跃。
+		idleFor := m.idleDuration(arrears)
+		idle := idleFor >= time.Duration(idleDreamMin)*time.Minute
+		if skip, why := m.autoGates(ctx, idle); skip {
+			return Stats{Skipped: why}, nil
 		}
-		// 静默期门：本周期（自上次 dream 或 IntervalMin 窗口）内没有任何
-		// 会话有新消息，就不打扰。活动判断用 session.updated_at——dream
-		// 自己只读不写 session 表，所以 update 一定来自真实对话。
-		if !m.anyActive(ctx, arrears) {
-			return Stats{Skipped: "no active session this cycle"}, nil
+		if !idle && total < m.prof.Dream.MinRows {
+			return Stats{Skipped: fmt.Sprintf("only %d unprocessed rows", total)}, nil
 		}
 		// 预判门：正式消化前让 LLM 先扫一遍摘要，判断这批有没有值得
 		// 沉淀的新信息；答 no 就推 cursor 标已消化、跳过完整提取。
 		if skip, why := m.preflight(ctx, arrears); skip {
 			return Stats{Skipped: why}, nil
+		}
+		if idle {
+			slog.Info("memory: idle dream", "rows", total,
+				"idle_minutes", int(idleFor.Minutes()))
 		}
 	}
 	var stats Stats
@@ -107,19 +113,37 @@ func (m *Memory) Dream(ctx context.Context, manual bool) (Stats, error) {
 }
 
 // autoGates 是自动 dream 的前两道门（锁已由调用方检查）：熔断与冷却。
-func (m *Memory) autoGates(ctx context.Context) (bool, string) {
+// idle 时冷却?从 IntervalMin 降到 idleCooldownMin。
+func (m *Memory) autoGates(ctx context.Context, idle bool) (bool, string) {
 	if s, _ := m.store.Meta(ctx, metaFailures); s != "" {
 		if n, _ := strconv.Atoi(s); n >= maxConsecFail {
 			return true, "breaker open after consecutive failures"
 		}
 	}
+	cooldown := time.Duration(m.prof.Dream.IntervalMin) * time.Minute
+	if idle {
+		cooldown = time.Duration(idleCooldownMin) * time.Minute
+	}
 	if s, _ := m.store.Meta(ctx, metaLastDream); s != "" {
-		if t, err := time.Parse(time.RFC3339Nano, s); err == nil &&
-			time.Since(t) < time.Duration(m.prof.Dream.IntervalMin)*time.Minute {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil && time.Since(t) < cooldown {
 			return true, "cooldown"
 		}
 	}
 	return false, ""
+}
+
+// idleDuration 返回欠账涉及的会话中最短静默时长——任何一条还在进行的
+// 会话都会压低它，让 dream 走常规门。
+func (m *Memory) idleDuration(arrears map[string][]arrear) time.Duration {
+	min := time.Duration(math.MaxInt64)
+	for _, group := range arrears {
+		for _, a := range group {
+			if d := time.Since(a.sess.UpdatedAt); d < min {
+				min = d
+			}
+		}
+	}
+	return min
 }
 
 // arrear 是一条会话的欠账：待消化原始行 + 这条会话的记忆归属 scope。
@@ -211,10 +235,22 @@ func (m *Memory) digest(ctx context.Context, arrears []arrear) (Stats, error) {
 			}
 			ops = m.validateOps(ctx, ops)
 			if len(ops) > 0 {
+				// 先取旧尺寸再落库：op 应用日志带 old→new 字节，整条替换
+				// 丢规则的事故（memory_log id 33/43）靠这行日志排查。
+				oldLen := map[string]int{}
+				if bodies, e := m.store.BodiesOf(ctx, nil); e == nil {
+					for _, r := range bodies {
+						oldLen[r.Name] = len(r.Body)
+					}
+				}
 				if err := m.store.ApplyOps(ctx, ops, sid); err != nil {
 					return stats, err
 				}
 				stats.OpsApplied += len(ops)
+				for _, op := range ops {
+					slog.Info("memory: op applied", "op", op.Kind, "name", op.Name,
+						"session", sid, "old_bytes", oldLen[op.Name], "new_bytes", len(op.Body))
+				}
 			}
 			stats.Rows += len(batch)
 			_ = m.store.SetMeta(ctx, cursorPrefix+sid,
@@ -271,7 +307,11 @@ func (m *Memory) dreamSystem(ctx context.Context) (string, error) {
 	b.WriteString(opsContract)
 	b.WriteString("\n- 先对照下方已有记忆清单判重判矛盾：覆盖同一主题但陈述冲突的，用 supersede 更替；\n")
 	b.WriteString("  完全重复的陈述不必再写；已有记忆与新信息互补的，upsert 更新同名条目。\n")
-
+	// 纠正闭环两句（plan §3.2）：常驻规则只许增量生长，说话方式纠正必落辞典。
+	b.WriteString("- upsert 已有条目时，正文应保留旧正文中仍有效的全部规则。\n")
+	if m.prof.ValidType("expression") && m.prof.ValidType("boundary") {
+		b.WriteString("- 用户对说话方式的纠正，一律写入 expression 或 boundary。\n")
+	}
 	heads, err := m.store.List(ctx)
 	if err != nil {
 		return "", err
@@ -337,12 +377,20 @@ func capContent(op *Op) (bool, string) {
 }
 
 // validateOps 在落库前过一遍模型产出的 op：类型在辞典内、目标存在、
-// 理由非空、内容不像密钥。非法 op 丢弃并留日志，不拖垮整批。
+// 理由非空、内容不像密钥，且 AlwaysInject 条目不许无因收缩。
+// 非法 op 丢弃并留日志，不拖垮整批。
 func (m *Memory) validateOps(ctx context.Context, ops []Op) []Op {
 	heads, _ := m.store.List(ctx)
 	exists := map[string]bool{}
 	for _, h := range heads {
 		exists[h.Name] = true
+	}
+	// 旧正文字节数：收缩守卫的基准（整条覆盖丢规则的事故防护）。
+	oldBodies := map[string]int{}
+	if rows, err := m.store.BodiesOf(ctx, nil); err == nil {
+		for _, r := range rows {
+			oldBodies[r.Name] = len(r.Body)
+		}
 	}
 	var out []Op
 	reject := func(op Op, why string) {
@@ -397,6 +445,17 @@ func (m *Memory) validateOps(ctx context.Context, ops []Op) []Op {
 		if LooksLikeSecret(op.Descr) || LooksLikeSecret(op.Body) {
 			reject(op, "content looks like a credential")
 			continue
+		}
+		// 收缩守卫：AlwaysInject 条目（常驻规则）upsert 的新正文短于
+		// 旧正文 80% 即拒收——规则更新只允许增量；真要删规则必须走
+		// supersede 并写 reason（对齐 ADR-2026-001 的"失效不删"）。
+		if op.Kind == "upsert" && m.prof.Types[op.Type].AlwaysInject {
+			if old, ok := oldBodies[op.Name]; ok && old > 0 && len(op.Body) < old*shrinkDenyPct/100 {
+				slog.Warn("memory: upsert rejected", "name", op.Name,
+					"old_bytes", old, "new_bytes", len(op.Body),
+					"ratio", fmt.Sprintf("%.2f", float64(len(op.Body))/float64(old)))
+				continue
+			}
 		}
 		out = append(out, op)
 		switch op.Kind {
@@ -500,25 +559,6 @@ func (m *Memory) DreamOnExit(ctx context.Context) {
 	}
 }
 
-// anyActive 判断本周期内是否有会话活跃：以 last_dream_at（无则回退
-// IntervalMin 窗口）为锚点，任一会话的 updated_at 晚于锚点即算活跃。
-func (m *Memory) anyActive(ctx context.Context, arrears map[string][]arrear) bool {
-	anchor := time.Now().Add(-time.Duration(m.prof.Dream.IntervalMin) * time.Minute)
-	if s, _ := m.store.Meta(ctx, metaLastDream); s != "" {
-		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-			anchor = t
-		}
-	}
-	for _, group := range arrears {
-		for _, a := range group {
-			if a.sess.UpdatedAt.After(anchor) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // preflight 是消化前的轻量判断：给 LLM 每条会话前几条 user 消息摘要，
 // 问"这些有没有值得沉淀进长期记忆的新信息"。答 no 就把所有欠账的
 // cursor 推到当前末尾（标已消化），返回跳过——下次新消息来了再评。
@@ -543,7 +583,7 @@ func (m *Memory) preflight(ctx context.Context, arrears map[string][]arrear) (bo
 		return true, "no user-side content to judge"
 	}
 	resp, err := m.llm.Chat(ctx, []agent.Message{
-		{Role: agent.RoleSystem, Content: `你是记忆策展助理。判断下面这批近期聊天片段里，有没有值得写入长期记忆的新信息（新事实、新偏好、重要决定、情绪转折点、关系里程碑）。只答一个 JSON：{"worth":true|false,"why":"一句话理由"}。日常寒暄、已知信息的复述、纯情绪输出不算值得。`},
+		{Role: agent.RoleSystem, Content: `你是记忆策展助理。判断下面这批近期聊天片段里，有没有值得写入长期记忆的新信息（新事实、新偏好、重要决定、情绪转折点、关系里程碑）。用户对助手说话方式的纠正一律值得沉淀。只答一个 JSON：{"worth":true|false,"why":"一句话理由"}。日常寒暄、已知信息的复述、纯情绪输出不算值得。`},
 		{Role: agent.RoleUser, Content: "以下是各会话的近期消息预览：\n\n" + sample.String()},
 	}, nil, nil)
 	if err != nil {

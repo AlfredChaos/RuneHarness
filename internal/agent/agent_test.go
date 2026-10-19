@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"runeharness/internal/tools"
@@ -229,5 +230,37 @@ func TestLLMErrorStillFatal(t *testing.T) {
 	}
 	if hist != nil {
 		t.Fatalf("history = %+v, want nil on fatal error", hist)
+	}
+}
+
+// Decorate 只改发给 LLM 的请求副本：请求里能看到装饰文本，
+// 返回的 history 与落库行都不含它。
+func TestDecorateAffectsRequestOnly(t *testing.T) {
+	llm := &stubLLM{script: []Response{stopResp("done")}}
+	a := New(llm, tools.NewRegistry(), 10)
+	rec := &spyRecorder{}
+	a.Rec = rec
+	a.Decorate = func(_ context.Context, view []Message) []Message {
+		out := append([]Message(nil), view...)
+		out[len(out)-1].Content += "\n<runtime-context>now</runtime-context>"
+		return out
+	}
+
+	hist, err := a.Run(context.Background(), userHistory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(llm.histories[0][0].Content, "<runtime-context>") {
+		t.Fatalf("request view should carry the decoration: %q", llm.histories[0][0].Content)
+	}
+	for i, m := range hist {
+		if strings.Contains(m.Content, "runtime-context") {
+			t.Fatalf("history[%d] must not carry the decoration", i)
+		}
+	}
+	for _, m := range rec.msgs {
+		if strings.Contains(m.Content, "runtime-context") {
+			t.Fatal("recorded rows must not carry the decoration")
+		}
 	}
 }

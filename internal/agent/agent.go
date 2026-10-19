@@ -67,6 +67,11 @@ type Agent struct {
 	// Compactor 是上下文压缩能力（internal/compact 实现）；nil 表示不压缩。
 	Compactor Compactor
 
+	// Decorate 在每次 Chat 前改写发给 LLM 的请求副本（如追加运行时上下文）。
+	// 只作用于发送形态：Run 返回的 history 与落库行都不含装饰；nil 可。
+	// 实现方应 clone 而非原地改——入参切片与 history 共享元素。
+	Decorate func(ctx context.Context, view []Message) []Message
+
 	// Requests 记录每次 Chat 的发送留痕（水印 + 视图哈希，出错时含完整
 	// 发送形态）；nil 表示不记录。写失败按 fail the turn 处理。
 	Requests RequestLogger
@@ -386,16 +391,21 @@ func (a *Agent) Run(ctx context.Context, history []Message) ([]Message, error) {
 
 // chat 发起一次 LLM 调用并写请求留痕：成功记水印与视图哈希，失败另附
 // 完整发送形态与错误原文，作为排查 API 错误的现场证据（plan §5.3）。
+// Decorate 只改写发送形态；history 与落库行保持原样。
 func (a *Agent) chat(ctx context.Context, history []Message) (Response, error) {
-	resp, err := a.llm.Chat(ctx, history, a.registry.Specs(), a.OnPartial)
+	view := history
+	if a.Decorate != nil {
+		view = a.Decorate(ctx, history)
+	}
+	resp, err := a.llm.Chat(ctx, view, a.registry.Specs(), a.OnPartial)
 	if a.Requests == nil {
 		return resp, err
 	}
 	// 消息水印由 LogRequest 在落库时取 MAX(messages.id)：随请求发送的形态
 	// 由消息行与压缩控制行共同决定，水位必须连控制行一起覆盖。
-	r := RequestLog{ViewHash: ViewHash(history)}
+	r := RequestLog{ViewHash: ViewHash(view)}
 	if err != nil {
-		r.Payload, r.Error = ViewPayload(history), err.Error()
+		r.Payload, r.Error = ViewPayload(view), err.Error()
 	}
 	if lerr := a.Requests.LogRequest(context.WithoutCancel(ctx), r); lerr != nil {
 		return resp, errors.Join(err, fmt.Errorf("log request: %w", lerr))

@@ -7,15 +7,15 @@ import (
 	"time"
 
 	"runeharness/internal/agent"
-	"runeharness/internal/session"
 	"runeharness/internal/scope"
+	"runeharness/internal/session"
 )
 
-// ── 门：静默期不跑 ──
-func TestDreamSkipsInactiveCycle(t *testing.T) {
-	old := time.Now().Add(-3 * time.Hour) // 超出 companion IntervalMin=120 窗口
+// ── 空闲门：会话静默 ≥15min 时欠账照常消化（免 MinRows/活跃门）──
+func TestDreamIdleStillDigests(t *testing.T) {
+	old := time.Now().Add(-3 * time.Hour) // 远超 idleDreamMin=15
 	sess := &fakeSess{
-		sessions: []session.Session{{ID: "s1", Kind: session.KindMain, UpdatedAt: old}},
+		sessions: []session.Session{{ID: "s1", Kind: session.KindMain, TenantID: "bear", SubjectID: "app", UpdatedAt: old}},
 		rows: map[string][]agent.Message{
 			"s1": {
 				{ID: 1, Role: agent.RoleUser, Content: "hi"},
@@ -28,8 +28,54 @@ func TestDreamSkipsInactiveCycle(t *testing.T) {
 	m, _ := New(sess, &fakeLLM{}, Config{DBPath: ":memory:", Profile: Lookup("companion")})
 	defer m.Close()
 	st, err := m.Dream(ctxSub("bear", "app", ""), false)
-	if err != nil || st.Skipped != "no active session this cycle" {
-		t.Fatalf("expected inactive skip, got %+v err=%v", st, err)
+	if err != nil || st.Skipped != "" || st.Rows != 4 {
+		t.Fatalf("idle path should digest arrears, got %+v err=%v", st, err)
+	}
+}
+
+// ── 空闲门：idle + 已过 30min 冷却 → 放行；仍在 30min 内 → 拦截 ──
+func TestDreamIdleCooldownShortened(t *testing.T) {
+	old := time.Now().Add(-2 * time.Hour)
+	mk := func() (*Memory, context.Context) {
+		sess := &fakeSess{
+			sessions: []session.Session{{ID: "s1", Kind: session.KindMain, TenantID: "bear", SubjectID: "app", UpdatedAt: old}},
+			rows:     map[string][]agent.Message{"s1": {{ID: 1, Role: agent.RoleUser, Content: "hi"}}},
+		}
+		mem, _ := New(sess, &fakeLLM{}, Config{DBPath: ":memory:", Profile: Lookup("companion")})
+		return mem, ctxSub("bear", "app", "")
+	}
+	// last_dream 45min 前：超过空闲冷却 30min → 放行（免 MinRows）。
+	m, ctx := mk()
+	defer m.Close()
+	_ = m.store.SetMeta(ctx, metaLastDream, time.Now().Add(-45*time.Minute).Format(time.RFC3339Nano))
+	st, err := m.Dream(ctx, false)
+	if err != nil || st.Skipped != "" {
+		t.Fatalf("idle + past idle-cooldown should digest, got %+v err=%v", st, err)
+	}
+	// last_dream 10min 前：仍在空闲冷却内 → 拦截。
+	m2, ctx2 := mk()
+	defer m2.Close()
+	_ = m2.store.SetMeta(ctx2, metaLastDream, time.Now().Add(-10*time.Minute).Format(time.RFC3339Nano))
+	st, _ = m2.Dream(ctx2, false)
+	if st.Skipped != "cooldown" {
+		t.Fatalf("idle + within idle-cooldown should skip, got %+v", st)
+	}
+}
+
+// ── 活跃门：会话近期有更新 → 常规冷却（IntervalMin）仍然生效 ──
+func TestDreamActiveFullCooldown(t *testing.T) {
+	sess := &fakeSess{
+		sessions: []session.Session{{ID: "s1", Kind: session.KindMain, TenantID: "bear", SubjectID: "app", UpdatedAt: time.Now()}},
+		rows:     map[string][]agent.Message{"s1": {{ID: 1, Role: agent.RoleUser, Content: "hi"}}},
+	}
+	m, _ := New(sess, &fakeLLM{}, Config{DBPath: ":memory:", Profile: Lookup("companion")})
+	defer m.Close()
+	ctx := ctxSub("bear", "app", "")
+	// last_dream 45min 前：空闲路径会放行，但会话活跃 → 常规 120min 冷却拦截。
+	_ = m.store.SetMeta(ctx, metaLastDream, time.Now().Add(-45*time.Minute).Format(time.RFC3339Nano))
+	st, _ := m.Dream(ctx, false)
+	if st.Skipped != "cooldown" {
+		t.Fatalf("active + within full cooldown should skip, got %+v", st)
 	}
 }
 

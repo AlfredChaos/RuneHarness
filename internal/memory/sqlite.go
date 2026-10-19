@@ -400,6 +400,17 @@ func (s *store) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
+func (s *store) Version(ctx context.Context) (int64, error) {
+	t, sp, err := s.keyOf(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(id),0) FROM memory_log WHERE tenant_id=? AND space=?`, t, sp).Scan(&n)
+	return n, err
+}
+
 // lockMetaKey 是 dream 互斥锁在 memory_meta 里的键。
 const lockMetaKey = "dream_lock"
 

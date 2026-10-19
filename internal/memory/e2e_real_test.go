@@ -188,7 +188,7 @@ A: 健康第一，那我以后不拿这个举例了
 	}
 
 	// ── 场景三：注入渲染 ──
-	block, err := m.renderInject(ctx)
+	block, _, _, err := m.renderInject(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

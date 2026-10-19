@@ -148,7 +148,7 @@ func TestInjectIndexTruncation(t *testing.T) {
 	if err := m.store.ApplyOps(ctx, ops, "s1"); err != nil {
 		t.Fatal(err)
 	}
-	block, err := m.renderInject(ctx)
+	block, _, _, err := m.renderInject(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestInjectBodyBudget(t *testing.T) {
 	// 5 条 user 型（AlwaysInject），每条 4000B：预算 16384 只放得下 4 条。
 	// 同批 updated_at 相同，命中哪 4 条不定——只断言块数。
 	_ = m.store.ApplyOps(ctx, upsertOps("big", 5, "user", strings.Repeat("x", 4000)), "s1")
-	block, _ := m.renderInject(ctx)
+	block, _, _, _ := m.renderInject(ctx)
 	if n := strings.Count(block, "<memory name="); n != 4 {
 		t.Fatalf("body budget should fit exactly 4 blocks, got %d", n)
 	}
@@ -175,7 +175,7 @@ func TestInjectUnknownTypeFallback(t *testing.T) {
 	_ = m.store.ApplyOps(ctx, []Op{
 		{Kind: "upsert", Name: "exotic", Type: "legacy", Descr: "d", Body: "b"},
 	}, "s1")
-	block, _ := m.renderInject(ctx)
+	block, _, _, _ := m.renderInject(ctx)
 	if !strings.Contains(block, "[legacy] exotic") {
 		t.Fatalf("unknown-type memory should still appear in index: %q", block)
 	}
@@ -204,8 +204,10 @@ func seedSession(sessID string, n int) *fakeSess {
 }
 
 // 自动 dream 的三道门：冷却、熔断、物料；手动只过锁。
+// 测试用活跃会话（UpdatedAt=now）走常规门——空闲路径另有专项测试。
 func TestDreamGates(t *testing.T) {
 	sess := seedSession("s1", 12)
+	sess.sessions[0].UpdatedAt = time.Now() // 活跃：走 IntervalMin 冷却 + MinRows
 	llm := &fakeLLM{replies: []string{`[]`}}
 	m, err := New(sess, llm, Config{DBPath: ":memory:", Profile: Lookup("coding")})
 	if err != nil {
@@ -219,33 +221,25 @@ func TestDreamGates(t *testing.T) {
 	if st, _ := m.Dream(ctx, false); st.Skipped != "cooldown" {
 		t.Fatalf("cooldown gate: %+v", st)
 	}
-	// 手动绕过冷却与物料
-	if st, err := m.Dream(ctx, true); err != nil || st.Skipped != "" {
-		t.Fatalf("manual should pass gates: %+v err=%v", st, err)
-	}
-
-	// 熔断：连续失败 3 次后自动路径被拦；手动仍可跑。
-	// 注意语义：欠账为空时提前返回不算"成功"，不清熔断计数——
-	// 所以先补行再验证清零。
+	// 熔断：连续失败 3 次后自动路径被拦（行仍在，欠账非空）。
 	_ = m.store.SetMeta(ctx, metaFailures, "3")
 	if st, _ := m.Dream(ctx, false); !strings.Contains(st.Skipped, "breaker") {
 		t.Fatalf("breaker gate: %+v", st)
 	}
-	for i := 13; i <= 16; i++ {
-		sess.rows["s1"] = append(sess.rows["s1"],
-			agent.Message{ID: int64(i), Role: agent.RoleUser, Content: "more"})
-	}
-	if _, err := m.Dream(ctx, true); err != nil {
-		t.Fatal(err)
+	// 手动绕过冷却、熔断与物料；成功后熔断计数清零。
+	if st, err := m.Dream(ctx, true); err != nil || st.Skipped != "" {
+		t.Fatalf("manual should pass gates: %+v err=%v", st, err)
 	}
 	if v, _ := m.store.Meta(ctx, metaFailures); v != "" {
 		t.Fatalf("success should reset failures, got %q", v)
 	}
 }
 
-// 物料门：欠账不足 MinRows 时自动跳过，手动照常。
+// 物料门：活跃会话欠账不足 MinRows 时自动跳过，手动照常；
+// 空闲路径免此门（见 TestDreamIdleStillDigests）。
 func TestDreamMinRowsGate(t *testing.T) {
 	sess := seedSession("s1", 3) // coding MinRows=8，3 行不够
+	sess.sessions[0].UpdatedAt = time.Now()
 	m, err := New(sess, &fakeLLM{replies: []string{`[]`}},
 		Config{DBPath: ":memory:", Profile: Lookup("coding")})
 	if err != nil {
@@ -619,5 +613,94 @@ func TestContentCaps(t *testing.T) {
 		Descr: long, Body: "b"}})
 	if len(ops) != 1 || len([]rune(ops[0].Descr)) != maxDescrRunes {
 		t.Fatalf("descr should be truncated to %d runes", maxDescrRunes)
+	}
+}
+
+// ── 收缩守卫：常驻条目不许无因缩水（plan §3.1）──
+// 旧正文仿线上 memory_log id 33/43 的整覆盖事故形态：规则清单被改写成一句话。
+func TestUpsertShrinkGuard(t *testing.T) {
+	sess := &fakeSess{}
+	m, err := New(sess, nil, Config{DBPath: ":memory:", Profile: Lookup("companion")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	ctx := ctxSub("bear", "app", "")
+	oldBody := "称呼：叫「大大熊」。\n2026-10-15 校准：回复不要以问句结尾。\n" +
+		"2026-10-18 校准：不夹英文单词。\n2026-10-18 校准：讲故事不换角色名。"
+	if err := m.store.ApplyOps(ctx, []Op{
+		{Kind: "upsert", Name: "reply-style", Type: "expression", Descr: "回复风格", Body: oldBody},
+		{Kind: "upsert", Name: "home-city", Type: "persona", Descr: "居住地", Body: "住在曼谷，来自成都。"},
+	}, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	// 常驻 expression 条目缩水到 20%（仿 id 33/43 的整覆盖）→ 拒。
+	ops := m.validateOps(ctx, []Op{
+		{Kind: "upsert", Name: "reply-style", Type: "expression", Descr: "回复风格", Body: "说话温柔一点。"},
+	})
+	if len(ops) != 0 {
+		t.Fatal("shrink upsert on AlwaysInject entry must be rejected")
+	}
+	// 正常增量（变长）→ 收。
+	ops = m.validateOps(ctx, []Op{
+		{Kind: "upsert", Name: "reply-style", Type: "expression", Descr: "回复风格", Body: oldBody + "\n2026-10-19 校准：多用语气词。"},
+	})
+	if len(ops) != 1 {
+		t.Fatal("growing upsert must be accepted")
+	}
+	// 非常驻条目（persona 也带 AlwaysInject；换无该标记的类型验证）——
+	// bond 也是常驻，用 delete 验证守卫只管 upsert。
+	ops = m.validateOps(ctx, []Op{
+		{Kind: "delete", Name: "reply-style", Reason: "用户要求忘掉"},
+	})
+	if len(ops) != 1 {
+		t.Fatal("delete is not bound by the shrink guard")
+	}
+	// supersede 是合法的整覆盖通道：reason 非空即可，不受守卫。
+	ops = m.validateOps(ctx, []Op{
+		{Kind: "supersede", Name: "reply-style", Type: "expression", Descr: "回复风格",
+			Body: "说话温柔一点。", Reason: "用户要求重写整条规则"},
+	})
+	if len(ops) != 1 {
+		t.Fatal("supersede with reason must bypass the guard")
+	}
+}
+
+// ── renderRows 时间前缀：CreatedAt>0 的行带 [YYYY-MM-DD HH:MM] ──
+func TestRenderRowsTimestamp(t *testing.T) {
+	at := time.Date(2026, 10, 18, 23, 24, 0, 0, time.Local).UnixMilli()
+	out := renderRows([]agent.Message{
+		{Role: agent.RoleUser, Content: "不要一直质问", CreatedAt: at},
+		{Role: agent.RoleUser, Content: "没有时间戳的"}, // CreatedAt=0 → 无前缀
+	})
+	if !strings.Contains(out, "[user 2026-10-18 23:24]") {
+		t.Fatalf("expected timestamped label, got:\n%s", out)
+	}
+	if strings.Count(out, "2026-") != 1 {
+		t.Fatalf("zero CreatedAt must not get a timestamp, got:\n%s", out)
+	}
+}
+
+// ── dreamSystem 纠正闭环两句 + 类型辞典含规则清单口径（plan §3.2）──
+func TestDreamSystemCorrectionClauses(t *testing.T) {
+	sess := &fakeSess{}
+	m, err := New(sess, nil, Config{DBPath: ":memory:", Profile: Lookup("companion")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	sys, err := m.dreamSystem(ctxSub("bear", "app", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"upsert 已有条目时，正文应保留旧正文中仍有效的全部规则",
+		"用户对说话方式的纠正，一律写入 expression 或 boundary",
+		"YYYY-MM-DD 校准",
+		"归 expression/boundary", // bond.Save 的规则排除口径
+	} {
+		if !strings.Contains(sys, want) {
+			t.Fatalf("dreamSystem missing %q", want)
+		}
 	}
 }

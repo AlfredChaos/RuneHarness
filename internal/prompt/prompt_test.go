@@ -35,3 +35,24 @@ func TestBuildOmitsEmptySkills(t *testing.T) {
 		t.Fatalf("empty skills should omit section:\n%s", got)
 	}
 }
+
+// bot prompt：人设即身份（不背 Identity 段），MemoryBody 进入 ## 记忆 段。
+func TestBuildBotCarriesMemoryBody(t *testing.T) {
+	out := BuildBot(Env{
+		Soul:        "大大熊人格",
+		Tools:       []tools.Spec{{Name: "memory", Description: "操作记忆"}},
+		MemoryGuide: "记忆由系统整理，不需手动维护。",
+		MemoryBody:  "<memory-index>...</memory-index>\n<memory name=\"reply-style\">温柔回复</memory>",
+	})
+	if strings.Contains(out, "coding agent") || strings.Contains(out, "<约定>") {
+		t.Fatal("bot prompt must not carry the coding-agent Identity")
+	}
+	for _, want := range []string{"大大熊人格", "记忆由系统整理", "reply-style"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "reply-style") < strings.Index(out, "## 记忆") {
+		t.Fatal("memory body must sit inside the 记忆 section")
+	}
+}

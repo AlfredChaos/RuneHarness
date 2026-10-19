@@ -2,6 +2,11 @@
 // 只收录进程生命周期内不变的段落：identity（常量）、tools（注册表）、
 // skills（启动扫描）、workspace（启动目录）。memory / AGENTS.md 等会话内
 // 可变内容不进这里——它们应作为 user 消息注入，避免打碎前缀缓存。
+//
+// 例外（ADR-2026-001 式记录）：BuildBot 允许 Env.MemoryBody——runebot 的
+// 记忆块每轮重建进 system。前缀缓存在 dream 写入后失效一次，一天数次，
+// 换来纠正规则在下一轮立即生效、位置固定不随历史漂移（见
+// docs/runeharness-bot-style-plan.md 第 2 阶段）。
 package prompt
 
 import (
@@ -75,6 +80,7 @@ type Env struct {
 	Tools       []tools.Spec // 已注册工具
 	Skills      string       // skill.Catalog 渲染结果；空串则省略该段
 	MemoryGuide string       // 记忆层说明段（画像固定，进程内不变）；空串则省略
+	MemoryBody  string       // 记忆块全文（可变的规则/画像正文）；仅 BuildBot 使用
 	Soul        string       // 人设契约（SOUL.md，启动读一次冻结）；空串则省略该段
 	Workspace   string       // 进程启动时的工作目录
 	Platform    string       // 如 darwin/arm64
@@ -127,9 +133,17 @@ func BuildBot(e Env) string {
 			fmt.Fprintf(&b, "\n- %s: %s", s.Name, s.Description)
 		}
 	}
-	if e.MemoryGuide != "" {
+	if e.MemoryGuide != "" || e.MemoryBody != "" {
 		b.WriteString("\n\n## 记忆\n")
-		b.WriteString(e.MemoryGuide)
+		if e.MemoryGuide != "" {
+			b.WriteString(e.MemoryGuide)
+		}
+		if e.MemoryBody != "" {
+			if e.MemoryGuide != "" {
+				b.WriteString("\n\n")
+			}
+			b.WriteString(e.MemoryBody)
+		}
 	}
 	return b.String()
 }

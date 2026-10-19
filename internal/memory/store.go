@@ -105,6 +105,10 @@ type Store interface {
 	// Meta/SetMeta 读写本空间的 KV 状态（游标、锁、熔断计数）。
 	Meta(ctx context.Context, key string) (string, error)
 	SetMeta(ctx context.Context, key, val string) error
+	// Version 返回本空间记忆的最新变更序号（memory_log 最大 id）；
+	// 无变更时为 0。用作"记忆是否变了"的轻量判据——读侧每轮比价，
+	// 变了才重渲染注入块。
+	Version(ctx context.Context) (int64, error)
 	// Count 返回本空间记忆条数。
 	Count(ctx context.Context) (int, error)
 	// Lock 取 dream 互斥锁（meta 行 + 过期时间）。返回 (unlock, ok, err)。

@@ -16,11 +16,11 @@ const indexMarker = "<memory-index"
 
 // renderInject 渲染注入块：索引（按画像类型分组、updated_at 倒序、
 // 配额截断）+ AlwaysInject 类型的完整正文。空间为空时返回空串——
-// 不注入任何块。
-func (m *Memory) renderInject(ctx context.Context) (string, error) {
+// 不注入任何块。indexBytes/bodyBytes 只统计块内数据量，供日志用。
+func (m *Memory) renderInject(ctx context.Context) (block string, indexBytes, bodyBytes int, err error) {
 	heads, err := m.store.List(ctx)
 	if err != nil || len(heads) == 0 {
-		return "", err
+		return "", 0, 0, err
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "<memory-index updated=%q>\n", time.Now().Format(time.RFC3339))
@@ -52,6 +52,7 @@ func (m *Memory) renderInject(ctx context.Context) (string, error) {
 		b.WriteString("- …[index truncated, use memory list/read for full view]\n")
 	}
 	b.WriteString("</memory-index>")
+	indexBytes = b.Len()
 
 	// 常驻正文：AlwaysInject 类型整块带上，单条 4KB、总量封顶。
 	var pinned []string
@@ -63,7 +64,7 @@ func (m *Memory) renderInject(ctx context.Context) (string, error) {
 	if len(pinned) > 0 {
 		rows, err := m.store.BodiesOf(ctx, pinned)
 		if err != nil {
-			return "", err
+			return "", 0, 0, err
 		}
 		total := 0
 		for _, r := range rows {
@@ -77,6 +78,7 @@ func (m *Memory) renderInject(ctx context.Context) (string, error) {
 			fmt.Fprintf(&b, "\n<memory name=%q type=%q>\n%s\n</memory>", r.Name, r.Type, body)
 			total += len(body)
 		}
+		bodyBytes = total
 	}
-	return b.String(), nil
+	return b.String(), indexBytes, bodyBytes, nil
 }

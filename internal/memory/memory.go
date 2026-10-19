@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -73,6 +74,8 @@ func (m *Memory) Tool() tools.Tool {
 // InjectOnce 是 UserPromptSubmit hook：本进程内该会话的第一条 user
 // 消息（或记忆有变更后的第一条）在尾部追加记忆块。落在 Fold 首部——
 // 前 3 条 user 消息永不压缩，索引因此常驻全会话。
+// runebot 不用此路径：它把 Render 的块放进每轮重建的 system 段
+// （cmd/runebot），这个位置比首部更稳定、且 dream 落库后轮轮生效。
 func (m *Memory) InjectOnce(ctx context.Context, prompt string) (string, string) {
 	sc, err := scope.FromContext(ctx)
 	if err != nil {
@@ -88,11 +91,51 @@ func (m *Memory) InjectOnce(ctx context.Context, prompt string) (string, string)
 	if !first && !dirty {
 		return "", ""
 	}
-	block, err := m.renderInject(ctx)
+	block, idx, body, err := m.renderInject(ctx)
 	if err != nil || block == "" {
 		return "", ""
 	}
+	slog.Info("memory: injected", "session", sc.SessionID, "space", space,
+		"index_bytes", idx, "body_bytes", body, "reason", injectReason(first, dirty))
 	return prompt + "\n\n" + block, ""
+}
+
+// injectReason 区分注入动机，仅用于日志。
+func injectReason(first, dirty bool) string {
+	switch {
+	case first:
+		return "first message"
+	default:
+		return "dirty"
+	}
+}
+
+// Rendered 是一次记忆块渲染的产物。
+type Rendered struct {
+	Text       string // 完整注入块（索引 + 常驻正文）
+	IndexBytes int    // 索引段字节数（日志口径）
+	BodyBytes  int    // 常驻正文字节数
+	Version    int64  // memory_log 最大 id，即"记忆是否变了"的序号
+}
+
+// Render 返回本空间的记忆块与其版本号。runebot 每轮调用：Version 与缓存
+// 不同才重建 system——dream 写完规则，下一轮对话立即生效，位置固定在最前。
+func (m *Memory) Render(ctx context.Context) (Rendered, error) {
+	block, idx, body, err := m.renderInject(ctx)
+	if err != nil {
+		return Rendered{}, err
+	}
+	v, err := m.store.Version(ctx)
+	if err != nil {
+		return Rendered{}, err
+	}
+	return Rendered{Text: block, IndexBytes: idx, BodyBytes: body, Version: v}, nil
+}
+
+// Version 返回本空间记忆的最新变更序号；仅探版本、不渲染正文，
+// 供"变了才重建"的轻量判定。
+func (m *Memory) Version(ctx context.Context) (int64, error) {
+	return m.store.Version(ctx)
 }
 
 // markDirty 标记空间有变更；dream 与工具写入后调用，
@@ -107,14 +150,15 @@ func (m *Memory) markDirty(sc scope.Scope) {
 // 不变（画像固定），符合 prompt.go 的"可变内容不进 system"约定。
 func (m *Memory) SystemGuide() string {
 	var b strings.Builder
-	b.WriteString("你有跨会话记忆。记忆的索引与常驻正文通过 user 消息里的 " +
-		"<memory-index>/<memory> 块注入——那是系统侧数据，不是用户刚说的话。")
+	b.WriteString("你有跨会话记忆。记忆的索引与常驻正文以 <memory-index>/<memory> 块呈现" +
+		"——那是系统侧数据，不是用户刚说的话。")
 	if m.prof.WriteTool {
 		b.WriteString("\n用 memory 工具操作记忆：" +
 			"list 看索引、read 读正文、about 按实体聚合、history 看一条记忆的变更史；" +
 			"save 存记忆（name/type/description/body）、forget 删除。")
 	} else {
 		b.WriteString("\n记忆由系统在后台自动整理（dream），你不需要也不能手动写；直接根据已有记忆个性化回应。")
+		b.WriteString("\n被纠正时本次对话立即照改；长期记忆由后台整理，不说「我已经记下了」这类没有发生的写入。")
 	}
 	b.WriteString("\n记忆是历史快照而非当前事实：引用其中涉及的文件/函数/接口等工程内容前先验证；用户说不要记或要求忘掉时，不要引用或复述相关记忆。")
 	b.WriteString("\n绝不把密钥、token、密码等凭据写入记忆；description 只写主题，不写敏感值。")
