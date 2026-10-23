@@ -305,6 +305,30 @@ func TestTurnInputAttachmentsPersist(t *testing.T) {
 	t.Fatalf("persisted rows lack parts: %+v", rows)
 }
 
+// 本轮 user 消息进 history 视图时必须带落库时刻：runtime-context 的间隔
+// 靠它定位"上一条用户消息"，缺了会越过它取到库里加载的旧消息。
+func TestTurnUserMessageCarriesCreatedAt(t *testing.T) {
+	ran := make(chan []agent.Message, 1)
+	mgr := NewManager(Config{}, fakeHarness(
+		func(ctx context.Context, hist []agent.Message) ([]agent.Message, error) {
+			ran <- hist
+			return hist, nil
+		}), newFakeStore(), nil)
+	before := time.Now().UnixMilli()
+	if err := mgr.Submit(context.Background(), key(), TurnInput{Prompt: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case hist := <-ran:
+		last := hist[len(hist)-1]
+		if last.CreatedAt < before {
+			t.Fatalf("CreatedAt = %d, want >= %d", last.CreatedAt, before)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("turn never ran")
+	}
+}
+
 func TestOnTurnCompleteFiresOnlyOnCompletedTurns(t *testing.T) {
 	store := newFakeStore()
 	var fired []string

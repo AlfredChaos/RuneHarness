@@ -14,12 +14,14 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -274,12 +276,13 @@ func main() {
 	// session_state，key 按 ctx 里的 session id），槽位间复用安全。
 	comp, err := compact.New(model, store, compact.Config{
 		Window: cfg.ContextTokens, MaxOutput: cfg.MaxOutputTokens,
-		Auto:         cfg.AutoCompact,
-		Overhead:     compact.TextTokens(string(specsJSON)),
-		Reattach:     todos.Snapshot,
-		CompactFrac:  0.5,                     // 占用过半就压缩（bot 决策 2026-10-19）
-		HeadMessages: -1,                      // bot 会话首部是旧寒暄，不钉
-		Prompt:       compact.CompanionPrompt, // 纠正优先、带标签的陪伴版
+		Auto:          cfg.AutoCompact,
+		Overhead:      compact.TextTokens(string(specsJSON)),
+		Reattach:      todos.Snapshot,
+		CompactFrac:   0.5,                     // 占用过半就压缩（bot 决策 2026-10-19）
+		CompactTokens: compactTokens(),         // 1M 窗口下占比线 500K 不可达，加绝对预算
+		HeadMessages:  -1,                      // bot 会话首部是旧寒暄，不钉
+		Prompt:        compact.CompanionPrompt, // 纠正优先、带标签的陪伴版
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -291,7 +294,7 @@ func main() {
 		// 用户消息到达即取消（runner 管互斥与取消）。
 		IdleCompact: func(ctx context.Context, history []agent.Message) []agent.Message {
 			est := compact.Estimate(history, compact.TextTokens(string(specsJSON)))
-			if est < comp.Config().ReminderLine() {
+			if est < min(comp.Config().ReminderLine(), comp.Config().CompactLine()) {
 				return nil
 			}
 			next, err := comp.Compact(ctx, history, "idle")
@@ -384,6 +387,7 @@ func main() {
 					"version", r.Version, "reason", reason)
 				sysVer = v
 				sys = agent.Message{Role: agent.RoleSystem, Content: prompt.BuildBot(slotEnv)}
+				warnPostBudget(comp.Config(), sys.Content)
 				return sys
 			}
 			return runner.TurnRunner(func(turnCtx context.Context, history []agent.Message) ([]agent.Message, error) {
@@ -457,6 +461,30 @@ func envOr(key, def string) string {
 	return def
 }
 
+// compactTokens 是 bot 的绝对压缩预算（RUNE_COMPACT_TOKENS，默认 80K）。
+// 7 个月历史全量回放（235K token）造成旧故事回流、代称混乱，压缩线要按
+// 量触发，不能等到窗口占比。0 或非法值回落默认；负数关闭预算。
+func compactTokens() int {
+	const def = 80_000
+	v, err := strconv.Atoi(os.Getenv("RUNE_COMPACT_TOKENS"))
+	if err != nil || v == 0 {
+		return def
+	}
+	return max(v, 0)
+}
+
+// warnPostBudget 在 system 重建时检查压缩余量：最坏压缩后体积（system +
+// 摘要上限 + 尾部预算 + 工具清单）超过压缩线 80% 就写 warn。system 随记忆
+// 增长，涨到让压缩无效时会熔断、继而被阻断线拒发——要在那之前看到日志。
+func warnPostBudget(cfg compact.Config, system string) {
+	st := compact.TextTokens(system)
+	if r := cfg.PostBudgetRatio(st); r > compact.WarnRatio {
+		slog.Warn("compact: post-compaction headroom low",
+			"system_tokens", st, "worst_post_tokens", cfg.WorstPostTokens(st),
+			"compact_line", cfg.CompactLine(), "ratio", fmt.Sprintf("%.2f", r))
+	}
+}
+
 // cronNoticeTitle 从任务 prompt 提炼通知标题：首个非空行截 24 字，
 // 空 prompt 回落「定时任务」。
 func cronNoticeTitle(t cron.Task) string {
@@ -514,6 +542,7 @@ func lastUserGap(view []agent.Message) time.Duration {
 }
 
 // formatGap 把间隔压成口语量级："3 分钟" / "5 小时" / "3 天"。
+// 天数四舍五入：47 小时说"2 天"，不说"1 天"（模型会把 1 天转述成"昨天"）。
 func formatGap(d time.Duration) string {
 	switch {
 	case d < time.Hour:
@@ -521,7 +550,7 @@ func formatGap(d time.Duration) string {
 	case d < 24*time.Hour:
 		return fmt.Sprintf("%d 小时", int(d.Hours()))
 	default:
-		return fmt.Sprintf("%d 天", int(d.Hours()/24))
+		return fmt.Sprintf("%d 天", int(math.Round(d.Hours()/24)))
 	}
 }
 

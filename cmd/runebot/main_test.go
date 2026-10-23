@@ -20,6 +20,7 @@ func TestFormatGap(t *testing.T) {
 		{59 * time.Minute, "59 分钟"},
 		{5 * time.Hour, "5 小时"},
 		{26 * time.Hour, "1 天"},
+		{47 * time.Hour, "2 天"}, // 向下取整会得到"1 天"，被模型转述成"昨天"
 		{3 * 24 * time.Hour, "3 天"},
 	}
 	for _, tc := range cases {

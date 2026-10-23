@@ -38,6 +38,10 @@ type Config struct {
 	// 默认 0 关闭，行为与既有三条线一致。副作用：frac 生效时压缩线先于提醒线
 	// 触发，提醒不再出现，属预期。
 	CompactFrac float64
+	// CompactTokens >0 时压缩线再收紧为不超过该绝对值。大窗口（1M）下占比线
+	// 落在 500K，陪伴会话的 token 数永远到不了；绝对预算让历史按量压缩，
+	// 不依赖窗口大小。0 关闭。
+	CompactTokens int
 	// HeadMessages 是首部钉住的真实用户消息数；0=默认 3，负数=不钉。
 	// bot 会话的前 3 条消息可能是半年前的寒暄，钉住没有价值——记忆改由
 	// system 段常驻（runebot 路径），不再依赖首部。
@@ -65,8 +69,31 @@ func (c Config) CompactLine() int {
 			line = f
 		}
 	}
+	if c.CompactTokens > 0 && c.CompactTokens < line {
+		line = c.CompactTokens
+	}
 	return line
 }
+
+// WorstPostTokens 估算压缩后视图的最坏体积：system + 摘要上限 + 尾部预算上限
+// + 工具清单。首部不计（bot 传 HeadMessages<0）；有首部时再加 headBudget。
+// 它回答"压缩完会不会仍然高于压缩线"——高于则 summarize 判 errIneffective，
+// 连续 3 次熔断。systemTokens 是 system 消息的估算 token。
+func (c Config) WorstPostTokens(systemTokens int) int {
+	n := systemTokens + c.Overhead + summaryBudget + tailBudget
+	if c.headLimit() > 0 {
+		n += headBudget
+	}
+	return n
+}
+
+// PostBudgetRatio 是 WorstPostTokens 占压缩线的比例；>WarnRatio 表示余量不足。
+func (c Config) PostBudgetRatio(systemTokens int) float64 {
+	return float64(c.WorstPostTokens(systemTokens)) / float64(c.CompactLine())
+}
+
+// WarnRatio 是余量告警阈值：最坏压缩后体积超过压缩线的 80% 就该关注。
+const WarnRatio = 0.8
 
 // BlockLine 是阻断线：W − 20K。auto 关闭或熔断时，用量超过它就拒发——
 // 再往上，压缩请求连摘要输出都放不下。
@@ -79,7 +106,6 @@ func (c Config) headLimit() int {
 	}
 	return c.HeadMessages
 }
-
 
 // Compactor 实现 agent.Compactor。无内存中的会话状态：熔断计数落 Store，
 // 同一个实例可服务 TUI /resume 换绑后的不同会话。

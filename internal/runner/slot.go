@@ -182,6 +182,9 @@ func (s *slot) runTurn(in TurnInput) {
 		Content: in.Prompt,
 		Parts:   in.Attachments, // nil 透传为 nil：无附件时零行为变化
 		Channel: s.key.Channel,
+		// 内存视图里的消息不经 Store 回读，必须自带落库时刻，否则
+		// runtime-context 的"距上一条消息"会越过它去找库里加载的旧消息。
+		CreatedAt: time.Now().UnixMilli(),
 	}
 	sessCtx := scope.WithSession(s.slotCtx, s.sessionID)
 	if _, err := s.manager.store.Append(sessCtx, userMsg); err != nil {

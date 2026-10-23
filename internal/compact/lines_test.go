@@ -8,22 +8,26 @@ import (
 	"runeharness/internal/agent"
 )
 
-// 压缩线：frac=0 走旧线 W−33K；frac>0 取 min(W−33K, ⌊W×frac⌋)。
+// 压缩线：frac=0 走旧线 W−33K；frac>0 取 min(W−33K, ⌊W×frac⌋)；
+// tokens>0 再取绝对预算（1M 窗口下占比线 500K 不可达，预算才起作用）。
 // W=80K frac=0.5 → 40K，且 提醒(24K) < 压缩(40K) < 阻断(60K) 次序成立。
 func TestCompactLineFrac(t *testing.T) {
 	cases := []struct {
 		name   string
 		window int
 		frac   float64
+		tokens int
 		want   int
 	}{
-		{"frac 0 keeps old line", 128_000, 0, 95_000},
-		{"1M window frac .5 → 500K", 1_000_000, 0.5, 500_000},
-		{"80K window frac .5 → 40K", 80_000, 0.5, 40_000},
-		{"frac too high falls back to old line", 80_000, 0.99, 47_000},
+		{"frac 0 keeps old line", 128_000, 0, 0, 95_000},
+		{"1M window frac .5 → 500K", 1_000_000, 0.5, 0, 500_000},
+		{"80K window frac .5 → 40K", 80_000, 0.5, 0, 40_000},
+		{"frac too high falls back to old line", 80_000, 0.99, 0, 47_000},
+		{"1M window absolute budget wins", 1_000_000, 0.5, 80_000, 80_000},
+		{"budget above frac line is ignored", 80_000, 0.5, 70_000, 40_000},
 	}
 	for _, tc := range cases {
-		c := Config{Window: tc.window, CompactFrac: tc.frac}
+		c := Config{Window: tc.window, CompactFrac: tc.frac, CompactTokens: tc.tokens}
 		if got := c.CompactLine(); got != tc.want {
 			t.Fatalf("%s: CompactLine = %d, want %d", tc.name, got, tc.want)
 		}
@@ -131,5 +135,26 @@ func TestRenderInputClipsOversizedEvent(t *testing.T) {
 	}
 	if TextTokens(in) > c.inputLimit()+8 {
 		t.Fatalf("clipped input = %d tokens > limit %d", TextTokens(in), c.inputLimit())
+	}
+}
+
+// 压缩后最坏体积 = system + 工具 + 摘要上限 + 尾部预算（+ 首部预算）。
+// bot 口径（80K 线、无首部）：system 6K 时余量充足；system 涨到 30K 以上
+// 超过压缩线 80%，应告警——再涨就会让压缩无效、熔断。
+func TestPostBudgetHeadroom(t *testing.T) {
+	c := Config{Window: 1_000_000, CompactFrac: 0.5, CompactTokens: 80_000, HeadMessages: -1, Overhead: 2_000}
+	if got := c.WorstPostTokens(6_000); got != 6_000+2_000+8_000+40_000 {
+		t.Fatalf("WorstPostTokens = %d", got)
+	}
+	if r := c.PostBudgetRatio(6_000); r > WarnRatio {
+		t.Fatalf("typical bot system should have headroom, ratio=%.2f", r)
+	}
+	if r := c.PostBudgetRatio(20_000); r <= WarnRatio {
+		t.Fatalf("bloated system should trip the warning, ratio=%.2f", r)
+	}
+	pinned := c
+	pinned.HeadMessages = 0 // 默认钉 3 条，多出 headBudget
+	if pinned.WorstPostTokens(6_000) != c.WorstPostTokens(6_000)+headBudget {
+		t.Fatal("pinned head must add headBudget")
 	}
 }
